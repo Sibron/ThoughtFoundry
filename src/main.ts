@@ -7,6 +7,8 @@ import { renderInbox } from './pages/inbox'
 import { renderProcess } from './pages/process'
 import { renderGraph } from './pages/graph'
 import { renderBook } from './pages/book'
+import { renderThemes } from './pages/themes'
+import { renderSettings } from './pages/settings'
 
 const app = document.getElementById('app') as HTMLElement
 
@@ -26,9 +28,11 @@ createRouter({
     if (session) { navigateTo('/capture'); return }
     renderLogin(app)
   },
-  '/capture': () => guard(renderCapture),
-  '/inbox':   () => guard(renderInbox),
-  '/process': () => guard(renderProcess),
-  '/graph':   () => guard(renderGraph),
-  '/book':    () => guard(renderBook)
+  '/capture':  () => guard(renderCapture),
+  '/inbox':    () => guard(renderInbox),
+  '/process':  () => guard(renderProcess),
+  '/graph':    () => guard(renderGraph),
+  '/book':     () => guard(renderBook),
+  '/themes':   () => guard(renderThemes),
+  '/settings': () => guard(renderSettings)
 })
