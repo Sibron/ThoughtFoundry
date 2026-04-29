@@ -47,10 +47,15 @@ const OFFLINE_QUEUE_KEY = 'offline_queue'
 export async function fetchNotes(
   page = 0,
   pageSize = 50,
-  status?: NoteStatus
+  status?: NoteStatus,
+  search?: string
 ): Promise<Note[]> {
   let q = supabase.from('notes').select('*').order('created_at', { ascending: false })
   if (status) q = q.eq('status', status)
+  if (search && search.trim()) {
+    const safe = search.trim().replace(/[%,]/g, ' ')
+    q = q.or(`content.ilike.%${safe}%,ai_title.ilike.%${safe}%,ai_summary.ilike.%${safe}%`)
+  }
   const { data, error } = await q.range(page * pageSize, (page + 1) * pageSize - 1)
   if (error) throw error
   return (data ?? []) as Note[]
@@ -98,6 +103,18 @@ export async function updateNote(id: string, note: NoteUpdate): Promise<Note> {
 
 export async function deleteNote(id: string): Promise<void> {
   const { error } = await supabase.from('notes').delete().eq('id', id)
+  if (error) throw error
+}
+
+export async function bulkUpdateStatus(ids: string[], status: NoteStatus): Promise<void> {
+  if (ids.length === 0) return
+  const { error } = await supabase.from('notes').update({ status }).in('id', ids)
+  if (error) throw error
+}
+
+export async function bulkDelete(ids: string[]): Promise<void> {
+  if (ids.length === 0) return
+  const { error } = await supabase.from('notes').delete().in('id', ids)
   if (error) throw error
 }
 
