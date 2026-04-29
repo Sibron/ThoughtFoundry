@@ -14,10 +14,19 @@ export async function renderInbox(app: HTMLElement): Promise<void> {
       <span class="topbar-title">Inbox</span>
       <div class="topbar-actions">
         <button class="topbar-btn" id="goto-capture">+ Nieuw</button>
+        <button class="topbar-btn" id="goto-process">Verwerken</button>
+        <button class="topbar-btn" id="goto-graph">Graaf</button>
+        <button class="topbar-btn" id="goto-book">Boek</button>
         <button class="topbar-btn" id="logout-btn" title="Afmelden">&#x238B;</button>
       </div>
     </div>
     <div class="inbox-body">
+      <div class="inbox-tabs">
+        <button class="inbox-tab" data-status="" aria-current="true">Alle</button>
+        <button class="inbox-tab" data-status="inbox">Inbox</button>
+        <button class="inbox-tab" data-status="verwerkt">Verwerkt</button>
+        <button class="inbox-tab" data-status="archief">Archief</button>
+      </div>
       <input type="text" id="inbox-filter" placeholder="Zoeken…" class="inbox-filter" />
       <div id="inbox-list" class="inbox-list">
         <div class="inbox-loading">Laden…</div>
@@ -29,6 +38,9 @@ export async function renderInbox(app: HTMLElement): Promise<void> {
   injectInboxStyles()
 
   document.getElementById('goto-capture')?.addEventListener('click', () => navigateTo('/capture'))
+  document.getElementById('goto-process')?.addEventListener('click', () => navigateTo('/process'))
+  document.getElementById('goto-graph')?.addEventListener('click', () => navigateTo('/graph'))
+  document.getElementById('goto-book')?.addEventListener('click', () => navigateTo('/book'))
   document.getElementById('logout-btn')?.addEventListener('click', async () => {
     await signOut()
     navigateTo('/login')
@@ -37,14 +49,27 @@ export async function renderInbox(app: HTMLElement): Promise<void> {
   let page = 0
   let allNotes: Note[] = []
   let filterText = ''
+  let statusFilter: 'inbox' | 'verwerkt' | 'archief' | undefined = undefined
 
   const listEl = document.getElementById('inbox-list') as HTMLDivElement
   const loadMoreBtn = document.getElementById('load-more') as HTMLButtonElement
   const filterInput = document.getElementById('inbox-filter') as HTMLInputElement
 
+  document.querySelectorAll<HTMLButtonElement>('.inbox-tab').forEach(tab => {
+    tab.addEventListener('click', async () => {
+      document.querySelectorAll('.inbox-tab').forEach(t => t.removeAttribute('aria-current'))
+      tab.setAttribute('aria-current', 'true')
+      const v = tab.dataset['status']
+      statusFilter = v ? (v as 'inbox' | 'verwerkt' | 'archief') : undefined
+      page = 0
+      allNotes = []
+      await loadNotes()
+    })
+  })
+
   async function loadNotes(): Promise<void> {
     try {
-      const notes = await fetchNotes(page)
+      const notes = await fetchNotes(page, 50, statusFilter)
       allNotes = page === 0 ? notes : [...allNotes, ...notes]
       loadMoreBtn.style.display = notes.length === 50 ? 'flex' : 'none'
       renderList()
@@ -294,6 +319,25 @@ function injectInboxStyles(): void {
     .inbox-load-more {
       margin: var(--s-3) auto;
       width: auto;
+    }
+    .inbox-tabs {
+      display: flex;
+      gap: var(--s-2);
+      flex-wrap: wrap;
+    }
+    .inbox-tab {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--r-sm);
+      padding: var(--s-2) var(--s-3);
+      cursor: pointer;
+      font-size: var(--fs-sm);
+      color: var(--text-muted);
+    }
+    .inbox-tab[aria-current="true"] {
+      background: var(--accent);
+      color: #fff;
+      border-color: var(--accent);
     }
   `
   document.head.appendChild(style)
