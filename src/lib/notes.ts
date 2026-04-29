@@ -1,17 +1,21 @@
 import { supabase } from './supabase'
 
+export type NoteStatus = 'inbox' | 'verwerkt' | 'archief'
+
 export interface Note {
   id: string
   user_id: string
   content: string
   mini_notes: string | null
-  status: 'inbox' | 'verwerkt' | 'archief'
+  status: NoteStatus
   types: string[]
   tags: string[]
   source_url: string | null
   source_title: string | null
   source_author: string | null
   ai_summary: string | null
+  ai_title: string | null
+  processed_at: string | null
   created_at: string
   updated_at: string
 }
@@ -26,29 +30,55 @@ export interface NoteInsert {
 
 export interface NoteUpdate {
   content?: string
-  mini_notes?: string
-  source_url?: string
-  source_title?: string
-  source_author?: string
-  status?: 'inbox' | 'verwerkt' | 'archief'
+  mini_notes?: string | null
+  source_url?: string | null
+  source_title?: string | null
+  source_author?: string | null
+  status?: NoteStatus
+  types?: string[]
+  tags?: string[]
+  ai_summary?: string | null
+  ai_title?: string | null
+  processed_at?: string | null
 }
 
 const OFFLINE_QUEUE_KEY = 'offline_queue'
 
-export async function fetchNotes(page = 0, pageSize = 50): Promise<Note[]> {
-  const { data, error } = await supabase
-    .from('notes')
-    .select('*')
-    .order('created_at', { ascending: false })
-    .range(page * pageSize, (page + 1) * pageSize - 1)
+export async function fetchNotes(
+  page = 0,
+  pageSize = 50,
+  status?: NoteStatus
+): Promise<Note[]> {
+  let q = supabase.from('notes').select('*').order('created_at', { ascending: false })
+  if (status) q = q.eq('status', status)
+  const { data, error } = await q.range(page * pageSize, (page + 1) * pageSize - 1)
   if (error) throw error
   return (data ?? []) as Note[]
 }
 
+export async function fetchNoteById(id: string): Promise<Note | null> {
+  const { data, error } = await supabase.from('notes').select('*').eq('id', id).maybeSingle()
+  if (error) throw error
+  return (data ?? null) as Note | null
+}
+
+export async function countByStatus(status: NoteStatus): Promise<number> {
+  const { count, error } = await supabase
+    .from('notes')
+    .select('id', { count: 'exact', head: true })
+    .eq('status', status)
+  if (error) throw error
+  return count ?? 0
+}
+
 export async function insertNote(note: NoteInsert): Promise<Note> {
+  const { data: userData } = await supabase.auth.getUser()
+  const userId = userData.user?.id
+  if (!userId) throw new Error('Niet aangemeld')
+
   const { data, error } = await supabase
     .from('notes')
-    .insert({ ...note, status: 'inbox' })
+    .insert({ ...note, status: 'inbox', user_id: userId })
     .select()
     .single()
   if (error) throw error
@@ -71,6 +101,8 @@ export async function deleteNote(id: string): Promise<void> {
   if (error) throw error
 }
 
+// ── Offline queue (IndexedDB) ───────────────────────────────────────────────
+
 function openDB(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const req = indexedDB.open('thoughtfoundry', 1)
@@ -90,6 +122,20 @@ export async function queueOfflineNote(note: NoteInsert): Promise<void> {
     tx.oncomplete = () => resolve()
     tx.onerror = () => reject(tx.error)
   })
+}
+
+export async function offlineQueueSize(): Promise<number> {
+  try {
+    const db = await openDB()
+    return await new Promise<number>((resolve, reject) => {
+      const tx = db.transaction(OFFLINE_QUEUE_KEY, 'readonly')
+      const req = tx.objectStore(OFFLINE_QUEUE_KEY).count()
+      req.onsuccess = () => resolve(req.result)
+      req.onerror = () => reject(req.error)
+    })
+  } catch {
+    return 0
+  }
 }
 
 export async function flushOfflineQueue(): Promise<number> {

@@ -1,17 +1,20 @@
-import { insertNote, queueOfflineNote, flushOfflineQueue, type NoteInsert } from '../lib/notes'
+import { insertNote, queueOfflineNote, flushOfflineQueue, offlineQueueSize, type NoteInsert } from '../lib/notes'
 import { signOut } from '../lib/auth'
 import { navigateTo } from '../router'
 
 export async function renderCapture(app: HTMLElement): Promise<void> {
-  if (navigator.onLine) {
-    flushOfflineQueue().catch(() => { /* silent */ })
-  }
+  // Best-effort flush on render — the helper itself returns silently if offline.
+  flushOfflineQueue().catch(() => { /* silent */ })
 
   app.innerHTML = `
     <div class="topbar">
       <span class="topbar-title">ThoughtFoundry</span>
       <div class="topbar-actions">
+        <span class="online-indicator" id="online-indicator" title=""></span>
         <button class="topbar-btn" id="goto-inbox">Inbox</button>
+        <button class="topbar-btn" id="goto-process">Verwerken</button>
+        <button class="topbar-btn" id="goto-graph">Graaf</button>
+        <button class="topbar-btn" id="goto-book">Boek</button>
         <button class="topbar-btn" id="logout-btn" title="Afmelden">&#x238B;</button>
       </div>
     </div>
@@ -66,6 +69,9 @@ export async function renderCapture(app: HTMLElement): Promise<void> {
   textarea.focus()
 
   document.getElementById('goto-inbox')?.addEventListener('click', () => navigateTo('/inbox'))
+  document.getElementById('goto-process')?.addEventListener('click', () => navigateTo('/process'))
+  document.getElementById('goto-graph')?.addEventListener('click', () => navigateTo('/graph'))
+  document.getElementById('goto-book')?.addEventListener('click', () => navigateTo('/book'))
   document.getElementById('logout-btn')?.addEventListener('click', async () => {
     await signOut()
     navigateTo('/login')
@@ -84,10 +90,10 @@ export async function renderCapture(app: HTMLElement): Promise<void> {
     saveBtn.disabled = true
 
     const note: NoteInsert = { content }
-    if (miniTextarea.value.trim()) note.mini_notes = miniTextarea.value.trim()
-    if (sourceUrl.value.trim()) note.source_url = sourceUrl.value.trim()
-    if (sourceTitle.value.trim()) note.source_title = sourceTitle.value.trim()
-    if (sourceAuthor.value.trim()) note.source_author = sourceAuthor.value.trim()
+    if (miniTextarea.value.trim())  note.mini_notes = miniTextarea.value.trim()
+    if (sourceUrl.value.trim())     note.source_url = sourceUrl.value.trim()
+    if (sourceTitle.value.trim())   note.source_title = sourceTitle.value.trim()
+    if (sourceAuthor.value.trim())  note.source_author = sourceAuthor.value.trim()
 
     try {
       if (navigator.onLine) {
@@ -103,6 +109,7 @@ export async function renderCapture(app: HTMLElement): Promise<void> {
       ;(document.getElementById('extra-details') as HTMLDetailsElement).open = false
       ;(document.getElementById('bron-details') as HTMLDetailsElement).open = false
       showToast(navigator.onLine ? 'Opgeslagen' : 'Opgeslagen (offline wachtrij)')
+      await refreshOnlineIndicator()
     } catch (err) {
       showToast('Opslaan mislukt. Probeer opnieuw.')
       console.error(err)
@@ -111,6 +118,37 @@ export async function renderCapture(app: HTMLElement): Promise<void> {
       textarea.focus()
     }
   })
+
+  // Online/offline indicator + auto-flush on reconnect
+  await refreshOnlineIndicator()
+
+  const onOnline = async () => {
+    const flushed = await flushOfflineQueue()
+    if (flushed > 0) showToast(`${flushed} offline-nota('s) gesynchroniseerd`)
+    await refreshOnlineIndicator()
+  }
+  const onOffline = () => refreshOnlineIndicator()
+  window.addEventListener('online', onOnline)
+  window.addEventListener('offline', onOffline)
+}
+
+async function refreshOnlineIndicator(): Promise<void> {
+  const el = document.getElementById('online-indicator')
+  if (!el) return
+  const queue = await offlineQueueSize().catch(() => 0)
+  if (!navigator.onLine) {
+    el.textContent = queue > 0 ? `⚫ offline (${queue})` : '⚫ offline'
+    el.className = 'online-indicator offline'
+    el.title = `Offline${queue > 0 ? ` — ${queue} nota('s) wachten op sync` : ''}`
+  } else if (queue > 0) {
+    el.textContent = `🟡 sync (${queue})`
+    el.className = 'online-indicator sync'
+    el.title = `${queue} nota('s) wachten op sync`
+  } else {
+    el.textContent = '🟢 online'
+    el.className = 'online-indicator online'
+    el.title = 'Online'
+  }
 }
 
 function showToast(msg: string): void {
@@ -177,6 +215,16 @@ function injectCaptureStyles(): void {
       background: var(--bg);
       padding: var(--s-3) 0;
     }
+    .online-indicator {
+      font-size: 12px;
+      padding: 2px var(--s-2);
+      border-radius: var(--r-sm);
+      color: var(--text-muted);
+      cursor: default;
+    }
+    .online-indicator.offline { color: var(--danger); }
+    .online-indicator.sync    { color: #B57C00; }
+    .online-indicator.online  { color: var(--accent-hover); }
   `
   document.head.appendChild(style)
 }
