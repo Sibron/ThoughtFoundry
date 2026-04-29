@@ -1,6 +1,7 @@
 import { fetchNotes, type Note } from '../lib/notes'
 import { fetchThemes, fetchAllNoteThemes, type Theme } from '../lib/themes'
 import { fetchChapters, saveChapter, deleteChapter, type Chapter } from '../lib/chapters'
+import { fetchBooks, createBook, updateBook, deleteBook, type Book } from '../lib/books'
 import { generateChapter, type ChapterPlan } from '../lib/ai'
 import { getCostStatus, formatUsd } from '../lib/cost'
 import { signOut } from '../lib/auth'
@@ -15,6 +16,8 @@ export async function renderBook(app: HTMLElement): Promise<void> {
         <button class="topbar-btn" id="goto-inbox">Inbox</button>
         <button class="topbar-btn" id="goto-process">Verwerken</button>
         <button class="topbar-btn" id="goto-graph">Graaf</button>
+        <button class="topbar-btn" id="goto-themes">Thema's</button>
+        <button class="topbar-btn" id="goto-settings">⚙</button>
         <button class="topbar-btn" id="logout-btn" title="Afmelden">&#x238B;</button>
       </div>
     </div>
@@ -31,13 +34,16 @@ export async function renderBook(app: HTMLElement): Promise<void> {
   let themes: Theme[] = []
   let noteThemes: { note_id: string; theme_id: string }[] = []
   let chapters: Chapter[] = []
+  let books: Book[] = []
+  let activeTab: 'chapters' | 'books' = 'chapters'
 
   try {
-    [notes, themes, noteThemes, chapters] = await Promise.all([
+    [notes, themes, noteThemes, chapters, books] = await Promise.all([
       fetchNotes(0, 500, 'verwerkt'),
       fetchThemes(),
       fetchAllNoteThemes(),
-      fetchChapters()
+      fetchChapters(),
+      fetchBooks()
     ])
   } catch (err) {
     document.getElementById('book-body')!.innerHTML =
@@ -60,6 +66,25 @@ export async function renderBook(app: HTMLElement): Promise<void> {
   function renderShell(): void {
     const body = document.getElementById('book-body')!
     body.innerHTML = `
+      <div class="book-tabs">
+        <button class="book-tab" data-tab="chapters" ${activeTab === 'chapters' ? 'aria-current="true"' : ''}>Hoofdstukken</button>
+        <button class="book-tab" data-tab="books" ${activeTab === 'books' ? 'aria-current="true"' : ''}>Boeken</button>
+      </div>
+      <div id="book-tabpanel"></div>
+    `
+    body.querySelectorAll<HTMLButtonElement>('.book-tab').forEach(t => {
+      t.addEventListener('click', () => {
+        activeTab = t.dataset['tab'] as 'chapters' | 'books'
+        renderShell()
+      })
+    })
+    if (activeTab === 'chapters') renderChaptersTab()
+    else renderBooksTab()
+  }
+
+  function renderChaptersTab(): void {
+    const panel = document.getElementById('book-tabpanel')!
+    panel.innerHTML = `
       <section class="book-section">
         <header class="book-section-header">
           <h2>Hoofdstuk-werkbank</h2>
@@ -110,6 +135,230 @@ export async function renderBook(app: HTMLElement): Promise<void> {
     renderSaved()
 
     document.getElementById('generate-btn')?.addEventListener('click', onGenerate)
+  }
+
+  function renderBooksTab(): void {
+    const panel = document.getElementById('book-tabpanel')!
+    panel.innerHTML = `
+      <section class="book-section">
+        <header class="book-section-header">
+          <h2>Nieuw boek</h2>
+          <p class="muted">Bundel meerdere hoofdstukken tot één export.</p>
+        </header>
+        <div class="book-controls">
+          <label class="field">
+            <span class="field-label">Titel</span>
+            <input type="text" id="new-book-title" placeholder="Bv. 'Werken met autisme — een handleiding'" />
+          </label>
+          <label class="field">
+            <span class="field-label">Inleiding (optioneel)</span>
+            <textarea id="new-book-intro" rows="2" placeholder="Korte intro voor de lezer"></textarea>
+          </label>
+        </div>
+        <div class="book-actions">
+          <button class="btn btn-primary" id="create-book-btn">Boek aanmaken</button>
+        </div>
+      </section>
+
+      <section class="book-section">
+        <header class="book-section-header">
+          <h2>Mijn boeken (${books.length})</h2>
+        </header>
+        <div id="books-list"></div>
+      </section>
+    `
+
+    document.getElementById('create-book-btn')?.addEventListener('click', onCreateBook)
+    renderBooksList()
+  }
+
+  async function onCreateBook(): Promise<void> {
+    const title = (document.getElementById('new-book-title') as HTMLInputElement).value.trim()
+    const intro = (document.getElementById('new-book-intro') as HTMLTextAreaElement).value.trim()
+    if (!title) { showToast('Titel is verplicht'); return }
+    const btn = document.getElementById('create-book-btn') as HTMLButtonElement
+    btn.disabled = true
+    try {
+      const created = await createBook({ title, intro: intro || undefined })
+      books.unshift(created)
+      renderBooksTab()
+      showToast('Boek aangemaakt')
+    } catch (err) {
+      showToast(`Mislukt: ${errMsg(err)}`)
+    } finally {
+      btn.disabled = false
+    }
+  }
+
+  function renderBooksList(): void {
+    const el = document.getElementById('books-list')!
+    if (books.length === 0) {
+      el.innerHTML = '<p class="muted">Nog geen boeken. Maak er een aan, en sleep hoofdstukken erin.</p>'
+      return
+    }
+    el.innerHTML = books.map(b => {
+      const includedIds = new Set(b.chapter_ids)
+      return `
+        <details class="book-row" data-id="${b.id}">
+          <summary class="book-row-summary">
+            <span class="book-row-title">${escHtml(b.title)}</span>
+            <span class="muted">${b.chapter_ids.length} hoofdstuk(ken)</span>
+          </summary>
+          <div class="book-row-edit">
+            <label class="field">
+              <span class="field-label">Titel</span>
+              <input type="text" data-edit-title value="${escHtml(b.title)}" />
+            </label>
+            <label class="field">
+              <span class="field-label">Inleiding</span>
+              <textarea data-edit-intro rows="2">${escHtml(b.intro ?? '')}</textarea>
+            </label>
+            <fieldset class="field">
+              <legend class="field-label">Hoofdstukken in dit boek (volgorde van selectie = volgorde in export)</legend>
+              <ol class="book-chapter-list" data-list>
+                ${b.chapter_ids.map(cid => {
+                  const c = chapters.find(x => x.id === cid)
+                  return `
+                    <li class="book-chapter-included" data-cid="${cid}">
+                      <span>${escHtml(c?.title ?? '(verwijderd hoofdstuk)')}</span>
+                      <button class="link-btn" data-action="up">↑</button>
+                      <button class="link-btn" data-action="down">↓</button>
+                      <button class="link-btn link-btn-danger" data-action="remove">×</button>
+                    </li>
+                  `
+                }).join('')}
+              </ol>
+              ${chapters.filter(c => !includedIds.has(c.id)).length > 0 ? `
+                <details class="book-add-chapter">
+                  <summary>+ Hoofdstuk toevoegen</summary>
+                  <select data-add-select>
+                    <option value="">— kies hoofdstuk —</option>
+                    ${chapters.filter(c => !includedIds.has(c.id))
+                      .map(c => `<option value="${c.id}">${escHtml(c.title)}</option>`).join('')}
+                  </select>
+                  <button class="btn btn-ghost" data-action="add">Toevoegen</button>
+                </details>
+              ` : '<p class="muted">Alle hoofdstukken al toegevoegd.</p>'}
+            </fieldset>
+            <div class="book-actions">
+              <button class="btn btn-primary" data-action="save">Opslaan</button>
+              <button class="btn btn-ghost" data-action="export">Exporteer .md</button>
+              <button class="btn btn-danger" data-action="delete">Verwijder</button>
+            </div>
+          </div>
+        </details>
+      `
+    }).join('')
+
+    el.querySelectorAll<HTMLDetailsElement>('.book-row').forEach(row => attachBookRowListeners(row))
+  }
+
+  function attachBookRowListeners(row: HTMLDetailsElement): void {
+    const id = row.dataset['id']!
+
+    row.querySelectorAll<HTMLButtonElement>('[data-action="remove"]').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.preventDefault()
+        const li = (e.currentTarget as HTMLElement).closest('li')
+        li?.remove()
+      })
+    })
+    row.querySelectorAll<HTMLButtonElement>('[data-action="up"]').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.preventDefault()
+        const li = (e.currentTarget as HTMLElement).closest('li')
+        const prev = li?.previousElementSibling
+        if (li && prev) li.parentElement!.insertBefore(li, prev)
+      })
+    })
+    row.querySelectorAll<HTMLButtonElement>('[data-action="down"]').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.preventDefault()
+        const li = (e.currentTarget as HTMLElement).closest('li')
+        const next = li?.nextElementSibling
+        if (li && next) li.parentElement!.insertBefore(next, li)
+      })
+    })
+
+    row.querySelector<HTMLButtonElement>('[data-action="add"]')?.addEventListener('click', (e) => {
+      e.preventDefault()
+      const select = row.querySelector<HTMLSelectElement>('[data-add-select]')!
+      const cid = select.value
+      if (!cid) return
+      const list = row.querySelector<HTMLOListElement>('[data-list]')!
+      const c = chapters.find(x => x.id === cid)
+      if (!c) return
+      const li = document.createElement('li')
+      li.className = 'book-chapter-included'
+      li.dataset['cid'] = cid
+      li.innerHTML = `
+        <span>${escHtml(c.title)}</span>
+        <button class="link-btn" data-action="up">↑</button>
+        <button class="link-btn" data-action="down">↓</button>
+        <button class="link-btn link-btn-danger" data-action="remove">×</button>
+      `
+      list.appendChild(li)
+      // Re-attach listeners on this new li
+      attachBookRowListeners(row)
+      // Remove from select
+      select.querySelector(`option[value="${cid}"]`)?.remove()
+      select.value = ''
+    })
+
+    row.querySelector<HTMLButtonElement>('[data-action="save"]')?.addEventListener('click', (e) => {
+      e.preventDefault()
+      onSaveBook(row, id)
+    })
+
+    row.querySelector<HTMLButtonElement>('[data-action="export"]')?.addEventListener('click', (e) => {
+      e.preventDefault()
+      onExportBook(row, id)
+    })
+
+    row.querySelector<HTMLButtonElement>('[data-action="delete"]')?.addEventListener('click', async (e) => {
+      e.preventDefault()
+      if (!confirm('Boek verwijderen? Hoofdstukken zelf blijven bestaan.')) return
+      try {
+        await deleteBook(id)
+        books = books.filter(x => x.id !== id)
+        renderBooksTab()
+        showToast('Verwijderd')
+      } catch (err) {
+        showToast(`Mislukt: ${errMsg(err)}`)
+      }
+    })
+  }
+
+  async function onSaveBook(row: HTMLDetailsElement, id: string): Promise<void> {
+    const title = row.querySelector<HTMLInputElement>('[data-edit-title]')!.value.trim()
+    const intro = row.querySelector<HTMLTextAreaElement>('[data-edit-intro]')!.value.trim()
+    const chapterIds = Array.from(row.querySelectorAll<HTMLLIElement>('li.book-chapter-included'))
+      .map(li => li.dataset['cid']!)
+      .filter(Boolean)
+    if (!title) { showToast('Titel is verplicht'); return }
+    try {
+      const updated = await updateBook(id, { title, intro: intro || null, chapter_ids: chapterIds })
+      const idx = books.findIndex(x => x.id === id)
+      if (idx !== -1) books[idx] = updated
+      renderBooksTab()
+      showToast('Opgeslagen')
+    } catch (err) {
+      showToast(`Mislukt: ${errMsg(err)}`)
+    }
+  }
+
+  function onExportBook(row: HTMLDetailsElement, id: string): void {
+    const title = row.querySelector<HTMLInputElement>('[data-edit-title]')!.value.trim()
+    const intro = row.querySelector<HTMLTextAreaElement>('[data-edit-intro]')!.value.trim()
+    const chapterIds = Array.from(row.querySelectorAll<HTMLLIElement>('li.book-chapter-included'))
+      .map(li => li.dataset['cid']!)
+      .filter(Boolean)
+    const orderedChapters = chapterIds
+      .map(cid => chapters.find(c => c.id === cid))
+      .filter((c): c is Chapter => !!c)
+    const md = renderBookMarkdown(title, intro, orderedChapters, notes)
+    const fallback = books.find(b => b.id === id)?.title ?? title
+    downloadMarkdown(`${slugify(fallback) || 'boek'}.md`, md)
   }
 
   function selectedNoteIds(): string[] {
@@ -352,6 +601,34 @@ function renderMarkdown(plan: { title: string; summary: string; sections: { head
   return lines.join('\n')
 }
 
+function renderBookMarkdown(title: string, intro: string, chapters: Chapter[], notes: Note[]): string {
+  const lines: string[] = []
+  lines.push(`# ${title}`, '')
+  if (intro) lines.push(intro, '')
+
+  if (chapters.length > 1) {
+    lines.push('## Inhoud', '')
+    chapters.forEach((c, i) => {
+      lines.push(`${i + 1}. ${c.title}`)
+    })
+    lines.push('')
+  }
+
+  chapters.forEach((c, i) => {
+    lines.push('---', '')
+    const md = renderMarkdown(
+      { title: `Hoofdstuk ${i + 1}: ${c.title}`, summary: c.summary ?? '', sections: c.outline },
+      notes
+    )
+    // Strip the trailing "Gegenereerd via" footer per chapter
+    const trimmed = md.split('\n---\n')[0]
+    lines.push(trimmed, '')
+  })
+
+  lines.push('---', `*Gegenereerd via ThoughtFoundry — ${new Date().toLocaleDateString('nl-NL')}*`)
+  return lines.join('\n')
+}
+
 function downloadMarkdown(filename: string, content: string): void {
   const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' })
   const url = URL.createObjectURL(blob)
@@ -374,6 +651,8 @@ function attachTopbar(): void {
   document.getElementById('goto-inbox')?.addEventListener('click', () => navigateTo('/inbox'))
   document.getElementById('goto-process')?.addEventListener('click', () => navigateTo('/process'))
   document.getElementById('goto-graph')?.addEventListener('click', () => navigateTo('/graph'))
+  document.getElementById('goto-themes')?.addEventListener('click', () => navigateTo('/themes'))
+  document.getElementById('goto-settings')?.addEventListener('click', () => navigateTo('/settings'))
   document.getElementById('logout-btn')?.addEventListener('click', async () => {
     await signOut()
     navigateTo('/login')
@@ -409,12 +688,100 @@ function injectBookStyles(): void {
       flex: 1;
       display: flex;
       flex-direction: column;
-      gap: var(--s-5);
+      gap: var(--s-3);
       padding: var(--s-4);
       max-width: 960px;
       width: 100%;
       margin: 0 auto;
     }
+    #book-tabpanel {
+      display: flex;
+      flex-direction: column;
+      gap: var(--s-5);
+    }
+    .book-tabs {
+      display: flex;
+      gap: var(--s-2);
+    }
+    .book-tab {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--r-sm);
+      padding: var(--s-2) var(--s-3);
+      cursor: pointer;
+      font-size: var(--fs-sm);
+      color: var(--text-muted);
+    }
+    .book-tab[aria-current="true"] {
+      background: var(--accent);
+      color: #fff;
+      border-color: var(--accent);
+    }
+    .book-row {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--r-md);
+      overflow: hidden;
+      margin-bottom: var(--s-2);
+    }
+    .book-row-summary {
+      list-style: none;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: var(--s-3);
+      padding: var(--s-3) var(--s-4);
+    }
+    .book-row-summary::-webkit-details-marker { display: none; }
+    .book-row-title { flex: 1; font-weight: 500; }
+    .book-row-edit {
+      padding: var(--s-3) var(--s-4);
+      border-top: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      gap: var(--s-3);
+    }
+    .book-chapter-list {
+      list-style: none;
+      padding-left: 0;
+      display: flex;
+      flex-direction: column;
+      gap: var(--s-1);
+    }
+    .book-chapter-included {
+      display: flex;
+      align-items: center;
+      gap: var(--s-2);
+      padding: var(--s-2);
+      background: var(--surface);
+      border-radius: var(--r-sm);
+      font-size: var(--fs-sm);
+    }
+    .book-chapter-included span { flex: 1; }
+    .link-btn {
+      background: none;
+      border: 1px solid var(--border);
+      border-radius: var(--r-sm);
+      cursor: pointer;
+      padding: 2px 8px;
+      font-size: 14px;
+      color: var(--text-muted);
+    }
+    .link-btn:hover { background: var(--bg); color: var(--text); }
+    .link-btn-danger:hover { color: var(--danger); border-color: var(--danger); }
+    .book-add-chapter {
+      margin-top: var(--s-2);
+      display: flex;
+      flex-direction: column;
+      gap: var(--s-2);
+    }
+    .book-add-chapter summary {
+      cursor: pointer;
+      font-size: var(--fs-sm);
+      color: var(--text-muted);
+    }
+    .book-add-chapter select { margin-right: var(--s-2); }
+    .book-add-chapter .btn { width: auto; }
     .book-section {
       background: var(--surface);
       border: 1px solid var(--border);
