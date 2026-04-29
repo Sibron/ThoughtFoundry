@@ -1,9 +1,9 @@
 import { signOut } from '../lib/auth'
 import { supabase } from '../lib/supabase'
 import { navigateTo } from '../router'
-import { getMonthlyCap, setMonthlyCap, getCostStatus, formatUsd } from '../lib/cost'
+import { getMonthlyCap, setMonthlyCapServer, getCostStatus, formatUsd } from '../lib/cost'
 import { fetchRecentUsage, summarize, type UsageRow } from '../lib/usage'
-import { buildExport, downloadJson } from '../lib/exporter'
+import { buildExport, downloadJson, importPayload, type ExportPayload } from '../lib/exporter'
 import { countByStatus } from '../lib/notes'
 
 export async function renderSettings(app: HTMLElement): Promise<void> {
@@ -129,6 +129,13 @@ export async function renderSettings(app: HTMLElement): Promise<void> {
       <p class="muted">Download al je nota's, thema's, koppelingen, hoofdstukken en boeken als JSON. Volledig portable; geen vendor lock-in.</p>
       <button class="btn btn-primary" id="export-btn">Exporteer JSON</button>
     </section>
+
+    <section class="settings-section">
+      <h2>Data-import</h2>
+      <p class="muted">Lees een eerder geëxporteerd JSON-bestand terug in. Bestaande rijen met dezelfde id worden overschreven (idempotent). De <code>user_id</code> wordt automatisch vervangen door de huidige gebruiker.</p>
+      <input type="file" id="import-file" accept="application/json,.json" />
+      <div id="import-result"></div>
+    </section>
   `
 
   document.getElementById('settings-logout')?.addEventListener('click', async () => {
@@ -136,11 +143,15 @@ export async function renderSettings(app: HTMLElement): Promise<void> {
     navigateTo('/login')
   })
 
-  document.getElementById('cap-save')?.addEventListener('click', () => {
+  document.getElementById('cap-save')?.addEventListener('click', async () => {
     const v = Number((document.getElementById('cap-input') as HTMLInputElement).value)
     if (!Number.isFinite(v) || v <= 0) { showToast('Geef een positief getal'); return }
-    setMonthlyCap(v)
-    showToast('Cap bijgewerkt')
+    try {
+      await setMonthlyCapServer(v)
+      showToast('Cap bijgewerkt (gesynchroniseerd)')
+    } catch (err) {
+      showToast(`Lokaal opgeslagen, server-sync mislukt: ${errMsg(err)}`)
+    }
   })
 
   document.getElementById('export-btn')?.addEventListener('click', async () => {
@@ -157,6 +168,36 @@ export async function renderSettings(app: HTMLElement): Promise<void> {
     } finally {
       btn.disabled = false
       btn.textContent = 'Exporteer JSON'
+    }
+  })
+
+  document.getElementById('import-file')?.addEventListener('change', async (e) => {
+    const file = (e.currentTarget as HTMLInputElement).files?.[0]
+    if (!file) return
+    const resultEl = document.getElementById('import-result')!
+    resultEl.innerHTML = '<p class="muted">Bezig met importeren…</p>'
+    try {
+      const text = await file.text()
+      const parsed = JSON.parse(text) as ExportPayload
+      if (!confirm(`Import-bestand: ${file.name}. Bestaande rijen met dezelfde id worden overschreven. Doorgaan?`)) {
+        resultEl.innerHTML = '<p class="muted">Geannuleerd.</p>'
+        return
+      }
+      const results = await importPayload(parsed)
+      const total = results.reduce((sum, r) => sum + r.imported, 0)
+      const errors = results.flatMap(r => r.errors.map(e2 => `${r.table}: ${e2}`))
+      resultEl.innerHTML = `
+        <div class="import-summary">
+          <p><strong>${total} rijen verwerkt.</strong></p>
+          <ul class="import-table-list">
+            ${results.map(r => `<li>${escHtml(r.table)}: ${r.imported}${r.errors.length ? ' <span class="error-text">— ' + escHtml(r.errors.join('; ')) + '</span>' : ''}</li>`).join('')}
+          </ul>
+          ${errors.length ? '<p class="error-text">Sommige tabellen faalden — controleer de schema-versie en RLS.</p>' : '<p class="muted">Herlaad een pagina om de wijzigingen te zien.</p>'}
+        </div>
+      `
+      showToast(errors.length ? 'Import met fouten' : 'Import klaar')
+    } catch (err) {
+      resultEl.innerHTML = `<p class="error-text">Mislukt: ${escHtml(errMsg(err))}</p>`
     }
   })
 }
@@ -298,6 +339,24 @@ function injectSettingsStyles(): void {
       color: var(--text-muted);
     }
     .muted { color: var(--text-muted); font-size: var(--fs-sm); }
+    .import-summary {
+      background: var(--bg);
+      border-radius: var(--r-sm);
+      padding: var(--s-3);
+      font-size: var(--fs-sm);
+    }
+    .import-table-list {
+      list-style: none;
+      padding: 0;
+      margin: var(--s-2) 0;
+    }
+    .error-text { color: var(--danger); font-size: var(--fs-sm); }
+    code {
+      background: var(--bg);
+      padding: 2px 4px;
+      border-radius: 4px;
+      font-size: 13px;
+    }
   `
   document.head.appendChild(style)
 }

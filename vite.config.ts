@@ -19,6 +19,29 @@ export default defineConfig({
           { src: '/icons/icon-192.png', sizes: '192x192', type: 'image/png' },
           { src: '/icons/icon-512.png', sizes: '512x512', type: 'image/png' },
           { src: '/icons/icon-maskable.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' }
+        ],
+        shortcuts: [
+          {
+            name: 'Capture',
+            short_name: 'Capture',
+            description: 'Snel een nieuw idee vastleggen',
+            url: '/#/capture',
+            icons: [{ src: '/icons/icon-192.png', sizes: '192x192' }]
+          },
+          {
+            name: 'Verwerken',
+            short_name: 'Verwerken',
+            description: 'Inbox verwerken met AI',
+            url: '/#/process',
+            icons: [{ src: '/icons/icon-192.png', sizes: '192x192' }]
+          },
+          {
+            name: 'Inbox',
+            short_name: 'Inbox',
+            description: 'Doorblader je nota\'s',
+            url: '/#/inbox',
+            icons: [{ src: '/icons/icon-192.png', sizes: '192x192' }]
+          }
         ]
       },
       workbox: {

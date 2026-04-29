@@ -53,6 +53,12 @@ export async function deleteTheme(id: string): Promise<void> {
   if (error) throw error
 }
 
+export async function mergeThemes(sourceId: string, targetId: string): Promise<void> {
+  if (sourceId === targetId) return
+  const { error } = await supabase.rpc('merge_themes', { p_source: sourceId, p_target: targetId })
+  if (error) throw error
+}
+
 // ── note_themes ─────────────────────────────────────────────────────────────
 
 export async function fetchThemesForNote(noteId: string): Promise<string[]> {

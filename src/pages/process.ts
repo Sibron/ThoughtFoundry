@@ -6,8 +6,8 @@ import {
   type Theme
 } from '../lib/themes'
 import { createLink } from '../lib/links'
-import { processNote, type NoteSuggestion } from '../lib/ai'
-import { getCostStatus, getMonthlyCap, setMonthlyCap, formatUsd, type CostStatus } from '../lib/cost'
+import { processNote, embedNote, type NoteSuggestion } from '../lib/ai'
+import { getCostStatus, getMonthlyCap, setMonthlyCap, setMonthlyCapServer, formatUsd, type CostStatus } from '../lib/cost'
 import { signOut } from '../lib/auth'
 import { navigateTo } from '../router'
 
@@ -271,6 +271,10 @@ export async function renderProcess(app: HTMLElement): Promise<void> {
       cursor++
       currentSuggestion = null
       renderCurrent()
+
+      // Best-effort: embed the note for future similarity search.
+      // Fails silently if VOYAGE_API_KEY isn't configured or pgvector is missing.
+      embedNote(note.id).catch(() => { /* silent */ })
     } catch (err) {
       acceptBtn.disabled = false
       acceptBtn.textContent = 'Accepteer & volgende'
@@ -322,12 +326,13 @@ export async function renderProcess(app: HTMLElement): Promise<void> {
       <span class="cost-pill cost-info">Inbox: <strong>${inboxLeft}</strong></span>
       <button class="topbar-btn" id="cap-edit">cap bijwerken</button>
     `
-    document.getElementById('cap-edit')?.addEventListener('click', () => {
+    document.getElementById('cap-edit')?.addEventListener('click', async () => {
       const v = prompt('Maandelijkse AI-cap in USD:', String(getMonthlyCap()))
       if (v == null) return
       const n = Number(v)
       if (Number.isFinite(n) && n > 0) {
-        setMonthlyCap(n)
+        setMonthlyCap(n) // optimistic local update
+        try { await setMonthlyCapServer(n) } catch { /* fall through to local-only */ }
         getCostStatus().then(renderCost)
       }
     })

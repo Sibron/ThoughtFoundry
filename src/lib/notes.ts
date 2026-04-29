@@ -44,14 +44,35 @@ export interface NoteUpdate {
 
 const OFFLINE_QUEUE_KEY = 'offline_queue'
 
+export interface FetchFilters {
+  status?: NoteStatus
+  search?: string
+  themeId?: string
+  tag?: string
+}
+
 export async function fetchNotes(
   page = 0,
   pageSize = 50,
   status?: NoteStatus,
-  search?: string
+  search?: string,
+  filters?: { themeId?: string; tag?: string }
 ): Promise<Note[]> {
+  let restrictIds: string[] | null = null
+  if (filters?.themeId) {
+    const { data: nt, error: ntErr } = await supabase
+      .from('note_themes')
+      .select('note_id')
+      .eq('theme_id', filters.themeId)
+    if (ntErr) throw ntErr
+    restrictIds = (nt ?? []).map(r => r.note_id as string)
+    if (restrictIds.length === 0) return []
+  }
+
   let q = supabase.from('notes').select('*').order('created_at', { ascending: false })
   if (status) q = q.eq('status', status)
+  if (restrictIds) q = q.in('id', restrictIds)
+  if (filters?.tag) q = q.contains('tags', [filters.tag])
   if (search && search.trim()) {
     const safe = search.trim().replace(/[%,]/g, ' ')
     q = q.or(`content.ilike.%${safe}%,ai_title.ilike.%${safe}%,ai_summary.ilike.%${safe}%`)

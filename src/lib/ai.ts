@@ -56,3 +56,19 @@ export async function generateChapter(input: {
   if (input.model)   body['model']   = input.model
   return invoke('generate-chapter', body)
 }
+
+export interface SimilarNote {
+  id: string
+  content: string
+  ai_title: string | null
+  similarity: number
+}
+
+export async function fetchSimilarNotes(noteId: string, count = 5): Promise<SimilarNote[]> {
+  const { data, error } = await supabase.rpc('similar_to_note', { p_note_id: noteId, match_count: count })
+  if (error) {
+    console.warn('similar_to_note rpc failed:', error.message)
+    return []
+  }
+  return (data ?? []) as SimilarNote[]
+}

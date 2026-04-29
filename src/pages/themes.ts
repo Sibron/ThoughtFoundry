@@ -3,6 +3,7 @@ import {
   createTheme,
   updateTheme,
   deleteTheme,
+  mergeThemes,
   fetchAllNoteThemes,
   type Theme
 } from '../lib/themes'
@@ -124,6 +125,16 @@ export async function renderThemes(app: HTMLElement): Promise<void> {
               </label>
             `).join('')}
           </fieldset>
+          <details class="merge-block">
+            <summary class="muted">Mergen in ander thema</summary>
+            <div class="merge-form">
+              <select data-merge-target>
+                <option value="">— kies doel-thema —</option>
+                ${themes.filter(o => o.id !== t.id).map(o => `<option value="${o.id}">${escHtml(o.name)}</option>`).join('')}
+              </select>
+              <button class="btn btn-ghost" data-action="merge">Voer merge uit</button>
+            </div>
+          </details>
           <div class="theme-actions">
             <button class="btn btn-primary" data-action="save">Opslaan</button>
             <button class="btn btn-danger" data-action="delete">Verwijder</button>
@@ -136,7 +147,34 @@ export async function renderThemes(app: HTMLElement): Promise<void> {
       const id = row.dataset['id']!
       row.querySelector<HTMLButtonElement>('[data-action="save"]')?.addEventListener('click', () => onSave(row, id))
       row.querySelector<HTMLButtonElement>('[data-action="delete"]')?.addEventListener('click', () => onDelete(id))
+      row.querySelector<HTMLButtonElement>('[data-action="merge"]')?.addEventListener('click', () => onMerge(row, id))
     })
+  }
+
+  async function onMerge(row: HTMLElement, sourceId: string): Promise<void> {
+    const targetId = row.querySelector<HTMLSelectElement>('[data-merge-target]')!.value
+    if (!targetId) { showToast('Kies een doel-thema'); return }
+    const source = themes.find(t => t.id === sourceId)
+    const target = themes.find(t => t.id === targetId)
+    if (!source || !target) return
+    if (!confirm(`Alle nota's van "${source.name}" verplaatsen naar "${target.name}", en "${source.name}" verwijderen?`)) return
+    try {
+      await mergeThemes(sourceId, targetId)
+      // Re-fetch counts and themes
+      const noteThemes = await fetchAllNoteThemes()
+      counts = noteThemes.reduce<Record<string, number>>((acc, nt) => {
+        acc[nt.theme_id] = (acc[nt.theme_id] ?? 0) + 1
+        return acc
+      }, {})
+      themes = themes.filter(t => t.id !== sourceId)
+      delete counts[sourceId]
+      renderList()
+      const total = document.querySelector('.themes-section-header h2')
+      if (total) total.textContent = `Alle thema's (${themes.length})`
+      showToast('Gemerged')
+    } catch (err) {
+      showToast(`Mislukt: ${errMsg(err)}`)
+    }
   }
 
   async function onCreate(): Promise<void> {
@@ -348,6 +386,19 @@ function injectThemesStyles(): void {
       gap: var(--s-2);
     }
     .theme-actions .btn { width: auto; }
+    .merge-block summary {
+      cursor: pointer;
+      padding: var(--s-1) 0;
+    }
+    .merge-form {
+      display: flex;
+      gap: var(--s-2);
+      align-items: center;
+      margin-top: var(--s-2);
+      flex-wrap: wrap;
+    }
+    .merge-form select { flex: 1; min-width: 180px; }
+    .merge-form .btn { width: auto; }
     .field { display: flex; flex-direction: column; gap: var(--s-1); }
     .field-label { font-size: var(--fs-sm); color: var(--text-muted); font-weight: 500; }
     .themes-loading,

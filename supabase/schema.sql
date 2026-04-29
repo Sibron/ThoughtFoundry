@@ -97,6 +97,13 @@ create table if not exists public.chapters (
   updated_at  timestamptz not null default now()
 );
 
+-- ── Phase 6: per-user settings (e.g. monthly cap) ───────────────────────────
+create table if not exists public.user_settings (
+  user_id          uuid primary key references auth.users(id) on delete cascade,
+  monthly_cap_usd  numeric(10, 2) not null default 5,
+  updated_at       timestamptz not null default now()
+);
+
 -- ── Phase 5: book bundles (multi-chapter) ───────────────────────────────────
 create table if not exists public.books (
   id          uuid primary key default gen_random_uuid(),
@@ -133,20 +140,21 @@ create trigger books_updated_at
   for each row execute procedure public.set_updated_at();
 
 -- ── RLS ─────────────────────────────────────────────────────────────────────
-alter table public.notes        enable row level security;
-alter table public.themes       enable row level security;
-alter table public.note_themes  enable row level security;
-alter table public.note_links   enable row level security;
-alter table public.ai_usage     enable row level security;
-alter table public.chapters     enable row level security;
-alter table public.books        enable row level security;
+alter table public.notes         enable row level security;
+alter table public.themes        enable row level security;
+alter table public.note_themes   enable row level security;
+alter table public.note_links    enable row level security;
+alter table public.ai_usage      enable row level security;
+alter table public.chapters      enable row level security;
+alter table public.books         enable row level security;
+alter table public.user_settings enable row level security;
 
 -- Helper: drop policy if exists, then recreate (idempotent re-runs)
 do $$
 declare t text;
 begin
   for t in select unnest(array[
-    'notes', 'themes', 'note_themes', 'note_links', 'ai_usage', 'chapters', 'books'
+    'notes', 'themes', 'note_themes', 'note_links', 'ai_usage', 'chapters', 'books', 'user_settings'
   ]) loop
     execute format('drop policy if exists "own select" on public.%I', t);
     execute format('drop policy if exists "own insert" on public.%I', t);
@@ -189,6 +197,11 @@ create policy "own select" on public.books       for select using (auth.uid() = 
 create policy "own insert" on public.books       for insert with check (auth.uid() = user_id);
 create policy "own update" on public.books       for update using (auth.uid() = user_id);
 create policy "own delete" on public.books       for delete using (auth.uid() = user_id);
+
+create policy "own select" on public.user_settings for select using (auth.uid() = user_id);
+create policy "own insert" on public.user_settings for insert with check (auth.uid() = user_id);
+create policy "own update" on public.user_settings for update using (auth.uid() = user_id);
+create policy "own delete" on public.user_settings for delete using (auth.uid() = user_id);
 
 -- ── Indexes ─────────────────────────────────────────────────────────────────
 create index if not exists notes_user_created     on public.notes(user_id, created_at desc);
@@ -238,3 +251,74 @@ returns numeric language sql stable as $$
   where user_id = auth.uid()
     and created_at >= date_trunc('month', now())
 $$;
+
+-- ── RPC: merge two themes ───────────────────────────────────────────────────
+-- Moves all note_themes from source → target, then deletes the source theme.
+-- Skips notes already linked to both (unique constraint).
+create or replace function public.merge_themes(p_source uuid, p_target uuid)
+returns void language plpgsql as $$
+begin
+  if p_source = p_target then return; end if;
+  -- Verify ownership for both themes (defence in depth on top of RLS)
+  if not exists (select 1 from public.themes where id = p_source and user_id = auth.uid())
+     or not exists (select 1 from public.themes where id = p_target and user_id = auth.uid()) then
+    raise exception 'Theme not found or not owned';
+  end if;
+
+  update public.note_themes
+     set theme_id = p_target
+   where theme_id = p_source
+     and user_id = auth.uid()
+     and note_id not in (
+       select note_id from public.note_themes
+       where theme_id = p_target and user_id = auth.uid()
+     );
+
+  delete from public.note_themes where theme_id = p_source and user_id = auth.uid();
+  delete from public.themes      where id = p_source       and user_id = auth.uid();
+end;
+$$;
+
+-- ── RPC: similar notes by id ────────────────────────────────────────────────
+-- Convenience over match_notes(): looks up the embedding for the given note
+-- and returns the closest others. Only created if pgvector is installed.
+do $$
+begin
+  if exists (select 1 from pg_extension where extname = 'vector') then
+    execute $func$
+      create or replace function public.similar_to_note(
+        p_note_id uuid,
+        match_count int default 5
+      )
+      returns table (id uuid, content text, ai_title text, similarity float)
+      language plpgsql stable as $body$
+      declare
+        v_embedding vector(1024);
+      begin
+        select embedding into v_embedding
+        from public.notes
+        where id = p_note_id and user_id = auth.uid();
+        if v_embedding is null then return; end if;
+        return query
+          select n.id, n.content, n.ai_title, 1 - (n.embedding <=> v_embedding) as similarity
+          from public.notes n
+          where n.user_id = auth.uid()
+            and n.embedding is not null
+            and n.id <> p_note_id
+          order by n.embedding <=> v_embedding
+          limit match_count;
+      end;
+      $body$;
+    $func$;
+  else
+    -- Stub so frontend RPC call returns empty gracefully without error.
+    execute $func$
+      create or replace function public.similar_to_note(
+        p_note_id uuid,
+        match_count int default 5
+      )
+      returns table (id uuid, content text, ai_title text, similarity float)
+      language sql stable as $body$ select null::uuid, null::text, null::text, null::float where false $body$;
+    $func$;
+  end if;
+end $$;

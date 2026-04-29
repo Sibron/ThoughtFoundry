@@ -21,6 +21,7 @@ A personal "thinking system" PWA for capturing atomic ideas. Built for a single 
 | **3** Graph view | ✅ | `/graph` — force-directed network of notes by theme + explicit links (Zettelkasten) |
 | **4** Book generation | ✅ | `/book` — cluster notes into chapter outlines, edit, export as Markdown |
 | **5** Curation & Export | ✅ | `/themes` CRUD, `/settings` (cost cap, AI usage log, JSON data export), inbox full-text search + bulk select, multi-chapter book bundling |
+| **6** Polish & Sync | ✅ | embedding pipeline (auto-embed on accept + similar-notes panel via `similar_to_note` RPC), inbox theme/tag chip filters + per-row theme dots, inline quick-capture, theme merge tool, JSON data import (round-trip), per-user cap synced via `user_settings` table, PWA app shortcuts |
 
 ## Setup
 
