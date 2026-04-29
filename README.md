@@ -20,6 +20,7 @@ A personal "thinking system" PWA for capturing atomic ideas. Built for a single 
 | **2** AI processing | ✅ | `/process` — Claude suggests title, summary, types, tags, theme matches, related notes; cost tracker with monthly cap |
 | **3** Graph view | ✅ | `/graph` — force-directed network of notes by theme + explicit links (Zettelkasten) |
 | **4** Book generation | ✅ | `/book` — cluster notes into chapter outlines, edit, export as Markdown |
+| **5** Curation & Export | ✅ | `/themes` CRUD, `/settings` (cost cap, AI usage log, JSON data export), inbox full-text search + bulk select, multi-chapter book bundling |
 
 ## Setup
 
@@ -101,12 +102,13 @@ All token usage is logged to the `ai_usage` table for inspection.
 
 ```
 src/
-  pages/        login, capture, inbox, process, graph, book
-  lib/          supabase, auth, notes, themes, links, chapters, ai, cost
+  pages/        login, capture, inbox, process, graph, book, themes, settings
+  lib/          supabase, auth, notes, themes, links, chapters, books, ai,
+                cost, usage, exporter
   router.ts     hash router
   main.ts       entry
 supabase/
-  schema.sql    full schema (Phase 1+2+3+4, idempotent)
+  schema.sql    full schema (Phase 1–5, idempotent)
   functions/
     process-note/      Claude → suggestion JSON
     embed-note/        Voyage → vector(1024)

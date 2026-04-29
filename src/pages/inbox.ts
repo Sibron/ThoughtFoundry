@@ -2,7 +2,10 @@ import {
   fetchNotes,
   updateNote,
   deleteNote,
+  bulkUpdateStatus,
+  bulkDelete,
   type Note,
+  type NoteStatus,
   type NoteUpdate
 } from '../lib/notes'
 import { signOut } from '../lib/auth'
@@ -17,6 +20,8 @@ export async function renderInbox(app: HTMLElement): Promise<void> {
         <button class="topbar-btn" id="goto-process">Verwerken</button>
         <button class="topbar-btn" id="goto-graph">Graaf</button>
         <button class="topbar-btn" id="goto-book">Boek</button>
+        <button class="topbar-btn" id="goto-themes">Thema's</button>
+        <button class="topbar-btn" id="goto-settings">⚙</button>
         <button class="topbar-btn" id="logout-btn" title="Afmelden">&#x238B;</button>
       </div>
     </div>
@@ -27,12 +32,23 @@ export async function renderInbox(app: HTMLElement): Promise<void> {
         <button class="inbox-tab" data-status="verwerkt">Verwerkt</button>
         <button class="inbox-tab" data-status="archief">Archief</button>
       </div>
-      <input type="text" id="inbox-filter" placeholder="Zoeken…" class="inbox-filter" />
+      <div class="inbox-toolbar">
+        <input type="text" id="inbox-filter" placeholder="Zoeken in content, titel, samenvatting…" class="inbox-filter" />
+        <label class="inbox-select-all"><input type="checkbox" id="select-all" /> alles</label>
+      </div>
+      <div class="inbox-bulkbar" id="inbox-bulkbar" hidden>
+        <span id="bulk-count" class="muted"></span>
+        <button class="btn btn-ghost" data-bulk="archive">Archiveer</button>
+        <button class="btn btn-ghost" data-bulk="restore">→ Inbox</button>
+        <button class="btn btn-danger" data-bulk="delete">Verwijder</button>
+        <button class="btn btn-ghost" id="bulk-clear">Annuleer</button>
+      </div>
       <div id="inbox-list" class="inbox-list">
         <div class="inbox-loading">Laden…</div>
       </div>
       <button class="btn btn-ghost inbox-load-more" id="load-more" style="display:none">Meer laden</button>
     </div>
+    <div class="toast" id="toast"></div>
   `
 
   injectInboxStyles()
@@ -41,6 +57,8 @@ export async function renderInbox(app: HTMLElement): Promise<void> {
   document.getElementById('goto-process')?.addEventListener('click', () => navigateTo('/process'))
   document.getElementById('goto-graph')?.addEventListener('click', () => navigateTo('/graph'))
   document.getElementById('goto-book')?.addEventListener('click', () => navigateTo('/book'))
+  document.getElementById('goto-themes')?.addEventListener('click', () => navigateTo('/themes'))
+  document.getElementById('goto-settings')?.addEventListener('click', () => navigateTo('/settings'))
   document.getElementById('logout-btn')?.addEventListener('click', async () => {
     await signOut()
     navigateTo('/login')
@@ -48,54 +66,62 @@ export async function renderInbox(app: HTMLElement): Promise<void> {
 
   let page = 0
   let allNotes: Note[] = []
-  let filterText = ''
-  let statusFilter: 'inbox' | 'verwerkt' | 'archief' | undefined = undefined
+  let searchText = ''
+  let statusFilter: NoteStatus | undefined = undefined
+  const selected = new Set<string>()
+  let searchDebounce: ReturnType<typeof setTimeout> | null = null
 
   const listEl = document.getElementById('inbox-list') as HTMLDivElement
   const loadMoreBtn = document.getElementById('load-more') as HTMLButtonElement
   const filterInput = document.getElementById('inbox-filter') as HTMLInputElement
+  const selectAllEl = document.getElementById('select-all') as HTMLInputElement
+  const bulkBar = document.getElementById('inbox-bulkbar') as HTMLDivElement
+  const bulkCount = document.getElementById('bulk-count') as HTMLSpanElement
 
   document.querySelectorAll<HTMLButtonElement>('.inbox-tab').forEach(tab => {
     tab.addEventListener('click', async () => {
       document.querySelectorAll('.inbox-tab').forEach(t => t.removeAttribute('aria-current'))
       tab.setAttribute('aria-current', 'true')
       const v = tab.dataset['status']
-      statusFilter = v ? (v as 'inbox' | 'verwerkt' | 'archief') : undefined
+      statusFilter = v ? (v as NoteStatus) : undefined
       page = 0
       allNotes = []
+      selected.clear()
+      updateBulkBar()
       await loadNotes()
     })
   })
 
-  async function loadNotes(): Promise<void> {
-    try {
-      const notes = await fetchNotes(page, 50, statusFilter)
-      allNotes = page === 0 ? notes : [...allNotes, ...notes]
-      loadMoreBtn.style.display = notes.length === 50 ? 'flex' : 'none'
-      renderList()
-    } catch (err) {
-      listEl.innerHTML = '<div class="inbox-error">Laden mislukt.</div>'
-      console.error(err)
-    }
-  }
-
-  function renderList(): void {
-    const filtered = filterText
-      ? allNotes.filter(n => n.content.toLowerCase().includes(filterText.toLowerCase()))
-      : allNotes
-
-    if (filtered.length === 0) {
-      listEl.innerHTML = '<div class="inbox-empty">Geen notities gevonden.</div>'
-      return
-    }
-
-    listEl.innerHTML = filtered.map(note => renderNoteRow(note)).join('')
-    attachRowListeners()
-  }
-
   filterInput.addEventListener('input', () => {
-    filterText = filterInput.value
+    if (searchDebounce) clearTimeout(searchDebounce)
+    searchDebounce = setTimeout(async () => {
+      searchText = filterInput.value.trim()
+      page = 0
+      allNotes = []
+      selected.clear()
+      updateBulkBar()
+      await loadNotes()
+    }, 280)
+  })
+
+  selectAllEl.addEventListener('change', () => {
+    if (selectAllEl.checked) {
+      allNotes.forEach(n => selected.add(n.id))
+    } else {
+      selected.clear()
+    }
     renderList()
+    updateBulkBar()
+  })
+
+  document.querySelectorAll<HTMLButtonElement>('[data-bulk]').forEach(btn => {
+    btn.addEventListener('click', () => onBulkAction(btn.dataset['bulk'] as 'archive' | 'restore' | 'delete'))
+  })
+  document.getElementById('bulk-clear')?.addEventListener('click', () => {
+    selected.clear()
+    selectAllEl.checked = false
+    renderList()
+    updateBulkBar()
   })
 
   loadMoreBtn.addEventListener('click', async () => {
@@ -105,9 +131,74 @@ export async function renderInbox(app: HTMLElement): Promise<void> {
 
   await loadNotes()
 
+  async function loadNotes(): Promise<void> {
+    try {
+      const notes = await fetchNotes(page, 50, statusFilter, searchText || undefined)
+      allNotes = page === 0 ? notes : [...allNotes, ...notes]
+      loadMoreBtn.style.display = notes.length === 50 ? 'flex' : 'none'
+      renderList()
+    } catch (err) {
+      listEl.innerHTML = `<div class="inbox-error">Laden mislukt: ${escHtml(errMsg(err))}</div>`
+      console.error(err)
+    }
+  }
+
+  function renderList(): void {
+    if (allNotes.length === 0) {
+      listEl.innerHTML = '<div class="inbox-empty">Geen notities gevonden.</div>'
+      selectAllEl.checked = false
+      return
+    }
+    listEl.innerHTML = allNotes.map(note => renderNoteRow(note, selected.has(note.id))).join('')
+    attachRowListeners()
+    selectAllEl.checked = allNotes.length > 0 && allNotes.every(n => selected.has(n.id))
+  }
+
+  function updateBulkBar(): void {
+    if (selected.size === 0) {
+      bulkBar.hidden = true
+      return
+    }
+    bulkBar.hidden = false
+    bulkCount.textContent = `${selected.size} geselecteerd`
+  }
+
+  async function onBulkAction(action: 'archive' | 'restore' | 'delete'): Promise<void> {
+    const ids = Array.from(selected)
+    if (ids.length === 0) return
+    try {
+      if (action === 'delete') {
+        if (!confirm(`${ids.length} nota('s) definitief verwijderen?`)) return
+        await bulkDelete(ids)
+        allNotes = allNotes.filter(n => !selected.has(n.id))
+      } else {
+        const newStatus: NoteStatus = action === 'archive' ? 'archief' : 'inbox'
+        await bulkUpdateStatus(ids, newStatus)
+        allNotes = allNotes.map(n => selected.has(n.id) ? { ...n, status: newStatus } : n)
+        if (statusFilter && statusFilter !== newStatus) {
+          allNotes = allNotes.filter(n => !selected.has(n.id))
+        }
+      }
+      selected.clear()
+      renderList()
+      updateBulkBar()
+      showToast(`${ids.length} bijgewerkt`)
+    } catch (err) {
+      showToast(`Mislukt: ${errMsg(err)}`)
+    }
+  }
+
   function attachRowListeners(): void {
     listEl.querySelectorAll<HTMLElement>('.inbox-row').forEach(row => {
       const id = row.dataset['id']!
+
+      row.querySelector<HTMLInputElement>('.row-check')?.addEventListener('change', (e) => {
+        e.stopPropagation()
+        const cb = e.currentTarget as HTMLInputElement
+        if (cb.checked) selected.add(id); else selected.delete(id)
+        updateBulkBar()
+        selectAllEl.checked = allNotes.every(n => selected.has(n.id))
+      })
 
       row.querySelector('.row-header')?.addEventListener('click', () => {
         const expanded = row.classList.toggle('expanded')
@@ -125,9 +216,11 @@ export async function renderInbox(app: HTMLElement): Promise<void> {
         try {
           await deleteNote(id)
           allNotes = allNotes.filter(n => n.id !== id)
+          selected.delete(id)
           renderList()
+          updateBulkBar()
         } catch {
-          alert('Verwijderen mislukt.')
+          showToast('Verwijderen mislukt.')
         }
       })
     })
@@ -142,14 +235,14 @@ export async function renderInbox(app: HTMLElement): Promise<void> {
       const contentEl = row.querySelector<HTMLTextAreaElement>('.edit-content')!
       const miniEl = row.querySelector<HTMLTextAreaElement>('.edit-mini')
       const updates: NoteUpdate = { content: contentEl.value.trim() }
-      if (miniEl) updates.mini_notes = miniEl.value.trim() || undefined
+      if (miniEl) updates.mini_notes = miniEl.value.trim() || null
       updateNote(id, updates)
         .then(updated => {
           const idx = allNotes.findIndex(n => n.id === id)
           if (idx !== -1) allNotes[idx] = updated
           renderList()
         })
-        .catch(() => alert('Opslaan mislukt.'))
+        .catch(() => showToast('Opslaan mislukt.'))
     } else {
       row.classList.add('editing', 'expanded')
       const detailEl = row.querySelector('.row-detail')!
@@ -171,35 +264,44 @@ export async function renderInbox(app: HTMLElement): Promise<void> {
         try {
           await deleteNote(id)
           allNotes = allNotes.filter(n => n.id !== id)
+          selected.delete(id)
           renderList()
+          updateBulkBar()
         } catch {
-          alert('Verwijderen mislukt.')
+          showToast('Verwijderen mislukt.')
         }
       })
     }
   }
 }
 
-function renderNoteRow(note: Note): string {
-  const preview = note.content.slice(0, 200)
+function renderNoteRow(note: Note, isSelected: boolean): string {
+  const preview = note.ai_title ?? note.content.slice(0, 200)
   const date = relativeDate(note.created_at)
   const badgeClass = `badge badge-${note.status}`
   return `
     <div class="inbox-row" data-id="${note.id}">
-      <div class="row-header" role="button" tabindex="0" aria-expanded="false">
-        <div class="row-preview">${escHtml(preview)}${note.content.length > 200 ? '…' : ''}</div>
-        <div class="row-meta">
-          <span class="${badgeClass}">${escHtml(note.status)}</span>
-          <span class="row-date">${date}</span>
-        </div>
+      <div class="row-select">
+        <input type="checkbox" class="row-check" ${isSelected ? 'checked' : ''} aria-label="selecteer" />
       </div>
-      <div class="row-detail" aria-hidden="true">
-        <div class="row-full-content">${escHtml(note.content)}</div>
-        ${note.mini_notes ? `<div class="row-mini">${escHtml(note.mini_notes)}</div>` : ''}
-        ${note.source_url ? `<a class="row-source" href="${escHtml(note.source_url)}" target="_blank" rel="noopener">${escHtml(note.source_title ?? note.source_url)}</a>` : ''}
-        <div class="row-actions">
-          <button class="btn btn-ghost row-edit-btn" style="width:auto;min-height:36px">Bewerken</button>
-          <button class="btn btn-danger row-delete-btn" style="width:auto;min-height:36px">Verwijderen</button>
+      <div class="row-main">
+        <div class="row-header" role="button" tabindex="0" aria-expanded="false">
+          <div class="row-preview">${escHtml(preview)}${!note.ai_title && note.content.length > 200 ? '…' : ''}</div>
+          <div class="row-meta">
+            <span class="${badgeClass}">${escHtml(note.status)}</span>
+            <span class="row-date">${date}</span>
+          </div>
+        </div>
+        <div class="row-detail" aria-hidden="true">
+          ${note.ai_summary ? `<div class="row-mini"><em>${escHtml(note.ai_summary)}</em></div>` : ''}
+          <div class="row-full-content">${escHtml(note.content)}</div>
+          ${note.mini_notes ? `<div class="row-mini">${escHtml(note.mini_notes)}</div>` : ''}
+          ${note.source_url ? `<a class="row-source" href="${escHtml(note.source_url)}" target="_blank" rel="noopener">${escHtml(note.source_title ?? note.source_url)}</a>` : ''}
+          ${(note.tags ?? []).length ? `<div class="row-tags">${note.tags.map(t => `<span class="badge">${escHtml(t)}</span>`).join('')}</div>` : ''}
+          <div class="row-actions">
+            <button class="btn btn-ghost row-edit-btn" style="width:auto;min-height:36px">Bewerken</button>
+            <button class="btn btn-danger row-delete-btn" style="width:auto;min-height:36px">Verwijderen</button>
+          </div>
         </div>
       </div>
     </div>
@@ -226,6 +328,18 @@ function escHtml(str: string): string {
     .replace(/"/g, '&quot;')
 }
 
+function errMsg(err: unknown): string {
+  return err instanceof Error ? err.message : 'onbekende fout'
+}
+
+function showToast(msg: string): void {
+  const toast = document.getElementById('toast') as HTMLDivElement | null
+  if (!toast) return
+  toast.textContent = msg
+  toast.classList.add('show')
+  setTimeout(() => toast.classList.remove('show'), 2500)
+}
+
 function injectInboxStyles(): void {
   if (document.getElementById('inbox-styles')) return
   const style = document.createElement('style')
@@ -237,13 +351,37 @@ function injectInboxStyles(): void {
       flex-direction: column;
       padding: var(--s-4);
       gap: var(--s-3);
-      max-width: 720px;
+      max-width: 800px;
       width: 100%;
       margin: 0 auto;
     }
-    .inbox-filter {
-      flex-shrink: 0;
+    .inbox-toolbar {
+      display: flex;
+      gap: var(--s-2);
+      align-items: center;
     }
+    .inbox-filter {
+      flex: 1;
+    }
+    .inbox-select-all {
+      display: inline-flex;
+      align-items: center;
+      gap: var(--s-1);
+      font-size: var(--fs-sm);
+      color: var(--text-muted);
+      white-space: nowrap;
+    }
+    .inbox-bulkbar {
+      display: flex;
+      gap: var(--s-2);
+      align-items: center;
+      padding: var(--s-2) var(--s-3);
+      background: var(--surface);
+      border: 1px solid var(--accent);
+      border-radius: var(--r-sm);
+      flex-wrap: wrap;
+    }
+    .inbox-bulkbar .btn { width: auto; min-height: 32px; padding: var(--s-1) var(--s-3); }
     .inbox-list {
       display: flex;
       flex-direction: column;
@@ -260,9 +398,17 @@ function injectInboxStyles(): void {
       border: 1px solid var(--border);
       border-radius: var(--r-md);
       overflow: hidden;
+      display: flex;
+      align-items: stretch;
     }
+    .row-select {
+      display: flex;
+      align-items: flex-start;
+      padding: var(--s-3) var(--s-2) 0 var(--s-3);
+    }
+    .row-main { flex: 1; }
     .row-header {
-      padding: var(--s-4);
+      padding: var(--s-3) var(--s-4);
       cursor: pointer;
       user-select: none;
     }
@@ -308,6 +454,11 @@ function injectInboxStyles(): void {
       color: var(--accent);
       word-break: break-all;
     }
+    .row-tags {
+      display: flex;
+      gap: var(--s-1);
+      flex-wrap: wrap;
+    }
     .row-actions {
       display: flex;
       gap: var(--s-2);
@@ -339,6 +490,7 @@ function injectInboxStyles(): void {
       color: #fff;
       border-color: var(--accent);
     }
+    .muted { color: var(--text-muted); font-size: var(--fs-sm); }
   `
   document.head.appendChild(style)
 }
