@@ -10,10 +10,11 @@ export interface ExportPayload {
   chapters: unknown[]
   books: unknown[]
   ai_usage: unknown[]
+  user_settings: unknown[]
 }
 
 export async function buildExport(): Promise<ExportPayload> {
-  const tables = ['notes', 'themes', 'note_themes', 'note_links', 'chapters', 'books', 'ai_usage'] as const
+  const tables = ['notes', 'themes', 'note_themes', 'note_links', 'chapters', 'books', 'ai_usage', 'user_settings'] as const
   const out: Partial<ExportPayload> = {
     exported_at: new Date().toISOString(),
     schema_version: 1
@@ -39,7 +40,8 @@ const IMPORT_ORDER: Array<keyof ExportPayload> = [
   'note_links',
   'chapters',
   'books',
-  'ai_usage'
+  'ai_usage',
+  'user_settings'
 ]
 
 export async function importPayload(payload: ExportPayload): Promise<ImportResult[]> {
@@ -59,7 +61,10 @@ export async function importPayload(payload: ExportPayload): Promise<ImportResul
     }
     // Re-stamp user_id so import works regardless of source account.
     const stamped = rows.map(r => ({ ...r, user_id: userId }))
-    const conflictKey = table === 'note_themes' ? 'note_id,theme_id' : 'id'
+    const conflictKey =
+      table === 'note_themes'   ? 'note_id,theme_id' :
+      table === 'user_settings' ? 'user_id'          :
+      'id'
     const { error } = await supabase.from(table).upsert(stamped, { onConflict: conflictKey })
     if (error) {
       results.push({ table, imported: 0, errors: [error.message] })

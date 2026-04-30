@@ -9,8 +9,11 @@ import { renderGraph } from './pages/graph'
 import { renderBook } from './pages/book'
 import { renderThemes } from './pages/themes'
 import { renderSettings } from './pages/settings'
+import { initInstallPrompt } from './lib/install-prompt'
 
 const app = document.getElementById('app') as HTMLElement
+
+initInstallPrompt()
 
 async function guard(handler: (app: HTMLElement) => void | Promise<void>): Promise<void> {
   const session = await getSession()

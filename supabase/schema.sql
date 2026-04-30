@@ -139,6 +139,11 @@ create trigger books_updated_at
   before update on public.books
   for each row execute procedure public.set_updated_at();
 
+drop trigger if exists user_settings_updated_at on public.user_settings;
+create trigger user_settings_updated_at
+  before update on public.user_settings
+  for each row execute procedure public.set_updated_at();
+
 -- ── RLS ─────────────────────────────────────────────────────────────────────
 alter table public.notes         enable row level security;
 alter table public.themes        enable row level security;
