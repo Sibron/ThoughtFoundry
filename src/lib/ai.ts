@@ -8,6 +8,7 @@ export interface NoteSuggestion {
   matched_theme_ids: string[]
   new_themes: { name: string; description: string }[]
   related_note_ids: string[]
+  section: string
 }
 
 export interface ChapterPlan {

@@ -89,28 +89,46 @@ export async function renderProcess(app: HTMLElement): Promise<void> {
       renderCurrent()
     })
     document.getElementById('archive-note')?.addEventListener('click', async () => {
-      if (!confirm('Archiveren zonder verwerken?')) return
+      const prevStatus = note.status
       try {
         await updateNote(note.id, { status: 'archief' })
-        showToast('Gearchiveerd')
-        cursor++
-        currentSuggestion = null
-        renderCurrent()
+        showToastWithUndo(
+          'Gearchiveerd.',
+          'Ongedaan maken',
+          async () => {
+            try {
+              await updateNote(note.id, { status: prevStatus })
+              currentSuggestion = null
+              renderCurrent()
+            } catch {
+              showToast('Ongedaan maken mislukt')
+            }
+          },
+          () => {
+            cursor++
+            currentSuggestion = null
+            renderCurrent()
+          }
+        )
       } catch (err) {
         showToast(`Mislukt: ${errMsg(err)}`)
       }
     })
+
+    applyCostState()
   }
 
   async function runAi(): Promise<void> {
     const note = queue[cursor]
     if (!note) return
 
-    const status = await getCostStatus()
-    if (status.block) {
-      if (!confirm(`Maandelijkse cap (${formatUsd(status.capUsd)}) bereikt. Toch doorgaan?`)) return
-    } else if (status.warn) {
-      if (!confirm(`Je zit op ${(status.ratio * 100).toFixed(0)}% van je maandelijkse AI-budget. Doorgaan?`)) return
+    const freshCost = await getCostStatus()
+    cost = freshCost
+    renderCost(freshCost)
+
+    if (freshCost.block) {
+      applyCostState()
+      return
     }
 
     const btn = document.getElementById('run-ai') as HTMLButtonElement
@@ -120,12 +138,28 @@ export async function renderProcess(app: HTMLElement): Promise<void> {
       const { suggestion, usage } = await processNote(note.id, 'claude-haiku-4-5')
       currentSuggestion = suggestion
       renderSuggestion(note, suggestion)
-      renderCost(await getCostStatus())
+      cost = await getCostStatus()
+      renderCost(cost)
       showToast(`AI klaar (${formatUsd(usage.costUsd)})`)
     } catch (err) {
       showToast(`AI mislukt: ${errMsg(err)}`)
       btn.disabled = false
       btn.textContent = 'Opnieuw proberen'
+    }
+  }
+
+  function applyCostState(): void {
+    const btn = document.getElementById('run-ai') as HTMLButtonElement | null
+    if (!btn) return
+    if (cost.block) {
+      btn.disabled = true
+      if (!document.getElementById('ai-cap-msg')) {
+        const msg = document.createElement('p')
+        msg.id = 'ai-cap-msg'
+        msg.className = 'ai-cap-msg'
+        msg.textContent = 'Maandbudget bereikt. Verhoog de cap in Instellingen om door te gaan.'
+        btn.insertAdjacentElement('afterend', msg)
+      }
     }
   }
 
@@ -142,6 +176,10 @@ export async function renderProcess(app: HTMLElement): Promise<void> {
         + ${escHtml(nt.name)}${nt.description ? ` — <em>${escHtml(nt.description)}</em>` : ''}
       </label>
     `).join('')
+
+    const sectionOptions = SECTIONS.map(sec =>
+      `<option value="${sec.slug}"${s.section === sec.slug ? ' selected' : ''}>${escHtml(sec.label)}</option>`
+    ).join('')
 
     pane.innerHTML = `
       <h2 class="suggest-title">AI-suggesties</h2>
@@ -164,6 +202,14 @@ export async function renderProcess(app: HTMLElement): Promise<void> {
       <label class="field">
         <span class="field-label">Tags (komma-gescheiden)</span>
         <input type="text" id="s-tags" value="${escHtml((s.tags ?? []).join(', '))}" />
+      </label>
+
+      <label class="field">
+        <span class="field-label">Hoofdstuk-sectie</span>
+        <select id="s-section">
+          <option value=""${!s.section ? ' selected' : ''}>(geen)</option>
+          ${sectionOptions}
+        </select>
       </label>
 
       <fieldset class="field">
@@ -208,6 +254,7 @@ export async function renderProcess(app: HTMLElement): Promise<void> {
     const summary = (document.getElementById('s-summary') as HTMLTextAreaElement).value.trim()
     const typesArr = parseCsv((document.getElementById('s-types') as HTMLInputElement).value)
     const tagsArr = parseCsv((document.getElementById('s-tags') as HTMLInputElement).value)
+    const sectionVal = (document.getElementById('s-section') as HTMLSelectElement).value
 
     const checkedThemeIds = Array.from(
       document.querySelectorAll<HTMLInputElement>('.chip-group:not(.chip-group-new) input[type=checkbox]:checked')
@@ -241,7 +288,8 @@ export async function renderProcess(app: HTMLElement): Promise<void> {
         types: typesArr,
         tags: tagsArr,
         status: 'verwerkt',
-        processed_at: new Date().toISOString()
+        processed_at: new Date().toISOString(),
+        section: sectionVal || null
       })
 
       // 3) Persist theme links
@@ -304,10 +352,14 @@ export async function renderProcess(app: HTMLElement): Promise<void> {
     const el = document.getElementById('process-cost')!
     const pct = (status.ratio * 100).toFixed(0)
     const cls = status.block ? 'cost-block' : status.warn ? 'cost-warn' : 'cost-ok'
+    const warnMsg = status.warn && !status.block
+      ? `<span class="cost-pill cost-warn-msg">Let op: ${pct}% van je AI-budget gebruikt deze maand.</span>`
+      : ''
     el.innerHTML = `
       <span class="cost-pill ${cls}">
         AI deze maand: <strong>${formatUsd(status.spendUsd)}</strong> / ${formatUsd(status.capUsd)} (${pct}%)
       </span>
+      ${warnMsg}
       <span class="cost-pill cost-info">Inbox: <strong>${inboxLeft}</strong></span>
       <button class="topbar-btn" id="cap-edit">cap bijwerken</button>
     `
@@ -317,7 +369,7 @@ export async function renderProcess(app: HTMLElement): Promise<void> {
       const n = Number(v)
       if (Number.isFinite(n) && n > 0) {
         setMonthlyCap(n)
-        getCostStatus().then(renderCost)
+        getCostStatus().then(s => { cost = s; renderCost(s) })
       }
     })
   }
@@ -327,7 +379,36 @@ export async function renderProcess(app: HTMLElement): Promise<void> {
   }
 }
 
+let _undoTimer: ReturnType<typeof setTimeout> | null = null
+
+function showToastWithUndo(
+  msg: string,
+  undoLabel: string,
+  onUndo: () => void,
+  onDismiss: () => void
+): void {
+  const toast = document.getElementById('toast') as HTMLDivElement | null
+  if (!toast) return
+  if (_undoTimer) { clearTimeout(_undoTimer); _undoTimer = null }
+
+  toast.innerHTML = `<span>${escHtml(msg)}</span><button class="toast-undo-btn" id="toast-undo">${escHtml(undoLabel)}</button>`
+  toast.classList.add('show')
+
+  document.getElementById('toast-undo')?.addEventListener('click', () => {
+    toast.classList.remove('show')
+    if (_undoTimer) { clearTimeout(_undoTimer); _undoTimer = null }
+    onUndo()
+  })
+
+  _undoTimer = setTimeout(() => {
+    toast.classList.remove('show')
+    _undoTimer = null
+    onDismiss()
+  }, 5000)
+}
+
 function showToast(msg: string): void {
+  if (_undoTimer) { clearTimeout(_undoTimer); _undoTimer = null }
   const toast = document.getElementById('toast') as HTMLDivElement | null
   if (!toast) return
   toast.textContent = msg
@@ -350,6 +431,14 @@ function errMsg(err: unknown): string {
 function formatDate(iso: string): string {
   return new Date(iso).toLocaleDateString('nl-NL', { day: 'numeric', month: 'short', year: 'numeric' })
 }
+
+const SECTIONS = [
+  { slug: 'probleemstelling',          label: 'Probleemstelling' },
+  { slug: 'theoretische_onderbouwing', label: 'Theoretische onderbouwing' },
+  { slug: 'ondersteunende_concepten',  label: 'Ondersteunende concepten' },
+  { slug: 'methodieken',               label: 'Methodieken / handvaten' },
+  { slug: 'reflectievragen',           label: 'Reflectie- of verdiepingsvragen' },
+]
 
 function injectProcessStyles(): void {
   if (document.getElementById('process-styles')) return
@@ -384,10 +473,20 @@ function injectProcessStyles(): void {
       border-color: #FFD27F;
       color: #8A5A00;
     }
+    .cost-pill.cost-warn-msg {
+      background: #FFF7E6;
+      border-color: #FFD27F;
+      color: #8A5A00;
+    }
     .cost-pill.cost-block {
       background: #FCE6E5;
       border-color: #F2A8A4;
       color: #8B0E04;
+    }
+    .ai-cap-msg {
+      font-size: var(--fs-sm);
+      color: #8B0E04;
+      margin-top: var(--s-1);
     }
     .process-grid {
       display: grid;
@@ -510,6 +609,23 @@ function injectProcessStyles(): void {
       color: var(--text-muted);
     }
     .muted { color: var(--text-muted); font-size: var(--fs-sm); }
+    #toast.show {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: var(--s-3);
+    }
+    .toast-undo-btn {
+      background: none;
+      border: 1px solid rgba(255,255,255,0.5);
+      color: inherit;
+      cursor: pointer;
+      font-size: var(--fs-sm);
+      padding: 2px var(--s-2);
+      border-radius: var(--r-sm);
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
   `
   document.head.appendChild(style)
 }
