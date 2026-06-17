@@ -14,6 +14,7 @@ export async function renderInbox(app: HTMLElement): Promise<void> {
   app.innerHTML = `
     ${renderTopbar('Inbox', 'inbox')}
     <div class="inbox-body">
+      <div id="review-banner" class="review-banner" hidden></div>
       <div class="inbox-tabs">
         <button class="inbox-tab" data-status="" aria-current="true">Alle</button>
         <button class="inbox-tab" data-status="inbox">Inbox</button>
@@ -108,6 +109,35 @@ export async function renderInbox(app: HTMLElement): Promise<void> {
   })
 
   await loadNotes()
+  showReviewBanner()
+
+  async function showReviewBanner(): Promise<void> {
+    try {
+      const old = await fetchNotes(0, 200, 'inbox')
+      const cutoff = Date.now() - 90 * 24 * 60 * 60 * 1000
+      const stale = old.filter(n => new Date(n.created_at).getTime() < cutoff)
+      const banner = document.getElementById('review-banner') as HTMLDivElement | null
+      if (!banner) return
+      if (stale.length === 0) { banner.hidden = true; return }
+      banner.hidden = false
+      banner.innerHTML = `
+        <span class="review-icon">&#x23F0;</span>
+        <span>${stale.length} nota${stale.length === 1 ? '' : "'s"} staat al meer dan 90 dagen onverwerkt in de inbox.</span>
+        <button class="btn-inline" id="review-filter-btn">Bekijk</button>
+        <button class="review-dismiss" id="review-dismiss" title="Sluiten">&#x2715;</button>
+      `
+      document.getElementById('review-filter-btn')?.addEventListener('click', () => {
+        const inboxTab = document.querySelector<HTMLButtonElement>('.inbox-tab[data-status="inbox"]')
+        inboxTab?.click()
+        banner.hidden = true
+      })
+      document.getElementById('review-dismiss')?.addEventListener('click', () => {
+        banner.hidden = true
+      })
+    } catch {
+      // non-critical, ignore
+    }
+  }
 
   async function loadNotes(): Promise<void> {
     try {
@@ -333,6 +363,41 @@ function injectInboxStyles(): void {
       width: 100%;
       margin: 0 auto;
     }
+    .review-banner {
+      display: flex;
+      align-items: center;
+      gap: var(--s-2);
+      padding: var(--s-2) var(--s-3);
+      background: #FFF7E6;
+      border: 1px solid #FFD27F;
+      border-radius: var(--r-sm);
+      font-size: var(--fs-sm);
+      color: #6B4A00;
+      flex-wrap: wrap;
+    }
+    .review-icon { font-size: 1rem; }
+    .review-banner span:nth-child(2) { flex: 1; }
+    .btn-inline {
+      background: none;
+      border: 1px solid currentColor;
+      border-radius: var(--r-sm);
+      padding: 2px var(--s-2);
+      font-size: var(--fs-sm);
+      cursor: pointer;
+      color: inherit;
+      font-weight: 500;
+    }
+    .btn-inline:hover { background: rgba(0,0,0,0.05); }
+    .review-dismiss {
+      background: none;
+      border: none;
+      cursor: pointer;
+      font-size: 1rem;
+      color: inherit;
+      padding: 0 2px;
+      opacity: 0.6;
+    }
+    .review-dismiss:hover { opacity: 1; }
     .inbox-toolbar {
       display: flex;
       gap: var(--s-2);

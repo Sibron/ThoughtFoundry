@@ -5,7 +5,7 @@ import {
   setThemesForNote,
   type Theme
 } from '../lib/themes'
-import { createLink } from '../lib/links'
+import { createLink, LINK_TYPE_LABELS, type LinkType } from '../lib/links'
 import { processNote, type NoteSuggestion } from '../lib/ai'
 import { getCostStatus, getMonthlyCap, setMonthlyCap, formatUsd, type CostStatus } from '../lib/cost'
 import { renderTopbar, attachTopbar } from '../lib/nav'
@@ -225,7 +225,14 @@ export async function renderProcess(app: HTMLElement): Promise<void> {
             ${s.related_note_ids.map(id => {
               const t = queue.find(n => n.id === id)
               const label = t ? (t.ai_title ?? t.content.slice(0, 80)) : id
-              return `<label class="chip-check"><input type="checkbox" value="${id}" checked/> ${escHtml(label)}</label>`
+              const typeOpts = Object.entries(LINK_TYPE_LABELS).map(([v, l]) =>
+                `<option value="${v}"${v === 'related' ? ' selected' : ''}>${escHtml(l)}</option>`
+              ).join('')
+              return `
+                <div class="related-row">
+                  <label class="chip-check"><input type="checkbox" class="related-check" value="${id}" checked/> ${escHtml(label)}</label>
+                  <select class="related-type" data-for="${id}">${typeOpts}</select>
+                </div>`
             }).join('')}
           </div>
         </fieldset>
@@ -265,8 +272,11 @@ export async function renderProcess(app: HTMLElement): Promise<void> {
     ).map(el => Number(el.dataset['newIdx']))
 
     const checkedRelated = Array.from(
-      document.querySelectorAll<HTMLInputElement>('.related-list input[type=checkbox]:checked')
-    ).map(el => el.value)
+      document.querySelectorAll<HTMLInputElement>('.related-list .related-check:checked')
+    ).map(el => ({
+      id: el.value,
+      type: (document.querySelector<HTMLSelectElement>(`.related-type[data-for="${el.value}"]`)?.value ?? 'related') as LinkType
+    }))
 
     try {
       // 1) Create any newly approved themes
@@ -296,9 +306,9 @@ export async function renderProcess(app: HTMLElement): Promise<void> {
       await setThemesForNote(note.id, allThemeIds)
 
       // 4) Persist note links (best-effort, ignore duplicates)
-      for (const targetId of checkedRelated) {
+      for (const { id: targetId, type: linkType } of checkedRelated) {
         try {
-          await createLink({ sourceId: note.id, targetId, reason: 'AI-suggestie' })
+          await createLink({ sourceId: note.id, targetId, type: linkType, reason: 'AI-suggestie' })
         } catch {
           // unique violation = already linked, ignore
         }
@@ -578,8 +588,16 @@ function injectProcessStyles(): void {
     .related-list {
       display: flex;
       flex-direction: column;
-      gap: var(--s-1);
+      gap: var(--s-2);
     }
+    .related-row {
+      display: flex;
+      align-items: center;
+      gap: var(--s-2);
+      flex-wrap: wrap;
+    }
+    .related-row .chip-check { flex: 1; min-width: 0; }
+    .related-type { font-size: var(--fs-sm); width: auto; }
     .suggest-actions {
       display: flex;
       gap: var(--s-2);
