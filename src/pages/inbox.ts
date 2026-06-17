@@ -8,23 +8,11 @@ import {
   type NoteStatus,
   type NoteUpdate
 } from '../lib/notes'
-import { signOut } from '../lib/auth'
-import { navigateTo } from '../router'
+import { renderTopbar, attachTopbar } from '../lib/nav'
 
 export async function renderInbox(app: HTMLElement): Promise<void> {
   app.innerHTML = `
-    <div class="topbar">
-      <span class="topbar-title">Inbox</span>
-      <div class="topbar-actions">
-        <button class="topbar-btn" id="goto-capture">+ Nieuw</button>
-        <button class="topbar-btn" id="goto-process">Verwerken</button>
-        <button class="topbar-btn" id="goto-graph">Graaf</button>
-        <button class="topbar-btn" id="goto-book">Boek</button>
-        <button class="topbar-btn" id="goto-themes">Thema's</button>
-        <button class="topbar-btn" id="goto-settings">⚙</button>
-        <button class="topbar-btn" id="logout-btn" title="Afmelden">&#x238B;</button>
-      </div>
-    </div>
+    ${renderTopbar('Inbox', 'inbox')}
     <div class="inbox-body">
       <div class="inbox-tabs">
         <button class="inbox-tab" data-status="" aria-current="true">Alle</button>
@@ -52,17 +40,7 @@ export async function renderInbox(app: HTMLElement): Promise<void> {
   `
 
   injectInboxStyles()
-
-  document.getElementById('goto-capture')?.addEventListener('click', () => navigateTo('/capture'))
-  document.getElementById('goto-process')?.addEventListener('click', () => navigateTo('/process'))
-  document.getElementById('goto-graph')?.addEventListener('click', () => navigateTo('/graph'))
-  document.getElementById('goto-book')?.addEventListener('click', () => navigateTo('/book'))
-  document.getElementById('goto-themes')?.addEventListener('click', () => navigateTo('/themes'))
-  document.getElementById('goto-settings')?.addEventListener('click', () => navigateTo('/settings'))
-  document.getElementById('logout-btn')?.addEventListener('click', async () => {
-    await signOut()
-    navigateTo('/login')
-  })
+  attachTopbar()
 
   let page = 0
   let allNotes: Note[] = []
