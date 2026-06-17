@@ -1,25 +1,23 @@
-import { insertNote, queueOfflineNote, flushOfflineQueue, offlineQueueSize, type NoteInsert } from '../lib/notes'
-import { signOut } from '../lib/auth'
+import { insertNote, queueOfflineNote, flushOfflineQueue, offlineQueueSize, fetchNotes, type NoteInsert } from '../lib/notes'
+import { renderTopbar, attachTopbar } from '../lib/nav'
 import { navigateTo } from '../router'
+
+const DRAFT_KEY = 'capture_draft'
+
+interface Draft {
+  content?: string
+  mini?: string
+  url?: string
+  title?: string
+  author?: string
+}
 
 export async function renderCapture(app: HTMLElement): Promise<void> {
   // Best-effort flush on render — the helper itself returns silently if offline.
   flushOfflineQueue().catch(() => { /* silent */ })
 
   app.innerHTML = `
-    <div class="topbar">
-      <span class="topbar-title">ThoughtFoundry</span>
-      <div class="topbar-actions">
-        <span class="online-indicator" id="online-indicator" title=""></span>
-        <button class="topbar-btn" id="goto-inbox">Inbox</button>
-        <button class="topbar-btn" id="goto-process">Verwerken</button>
-        <button class="topbar-btn" id="goto-graph">Graaf</button>
-        <button class="topbar-btn" id="goto-book">Boek</button>
-        <button class="topbar-btn" id="goto-themes">Thema's</button>
-        <button class="topbar-btn" id="goto-settings">⚙</button>
-        <button class="topbar-btn" id="logout-btn" title="Afmelden">&#x238B;</button>
-      </div>
-    </div>
+    ${renderTopbar('ThoughtFoundry', 'capture', '<span class="online-indicator" id="online-indicator" title=""></span>')}
     <div class="capture-body">
       <textarea
         id="capture-content"
@@ -51,11 +49,14 @@ export async function renderCapture(app: HTMLElement): Promise<void> {
       <div class="capture-footer">
         <button class="btn btn-primary" id="save-btn" disabled>Opslaan</button>
       </div>
+
+      <div class="capture-recent" id="capture-recent"></div>
     </div>
     <div class="toast" id="toast"></div>
   `
 
   injectCaptureStyles()
+  attachTopbar()
 
   const textarea = document.getElementById('capture-content') as HTMLTextAreaElement
   const miniTextarea = document.getElementById('capture-mini') as HTMLTextAreaElement
@@ -64,22 +65,35 @@ export async function renderCapture(app: HTMLElement): Promise<void> {
   const sourceAuthor = document.getElementById('capture-source-author') as HTMLInputElement
   const saveBtn = document.getElementById('save-btn') as HTMLButtonElement
 
-  textarea.addEventListener('input', () => {
+  // Restore an in-progress draft so a reload or accidental close never loses a thought.
+  restoreDraft({ textarea, miniTextarea, sourceUrl, sourceTitle, sourceAuthor })
+  saveBtn.disabled = textarea.value.trim() === ''
+  if (miniTextarea.value.trim()) (document.getElementById('extra-details') as HTMLDetailsElement).open = true
+  if (sourceUrl.value || sourceTitle.value || sourceAuthor.value) {
+    (document.getElementById('bron-details') as HTMLDetailsElement).open = true
+  }
+
+  const saveDraft = () => {
+    const draft: Draft = {
+      content: textarea.value,
+      mini: miniTextarea.value,
+      url: sourceUrl.value,
+      title: sourceTitle.value,
+      author: sourceAuthor.value
+    }
+    const empty = !draft.content?.trim() && !draft.mini?.trim() && !draft.url && !draft.title && !draft.author
+    if (empty) localStorage.removeItem(DRAFT_KEY)
+    else localStorage.setItem(DRAFT_KEY, JSON.stringify(draft))
+  }
+
+  const onInput = () => {
     saveBtn.disabled = textarea.value.trim() === ''
-  })
+    saveDraft()
+  }
+  textarea.addEventListener('input', onInput)
+  ;[miniTextarea, sourceUrl, sourceTitle, sourceAuthor].forEach(el => el.addEventListener('input', saveDraft))
 
   textarea.focus()
-
-  document.getElementById('goto-inbox')?.addEventListener('click', () => navigateTo('/inbox'))
-  document.getElementById('goto-process')?.addEventListener('click', () => navigateTo('/process'))
-  document.getElementById('goto-graph')?.addEventListener('click', () => navigateTo('/graph'))
-  document.getElementById('goto-book')?.addEventListener('click', () => navigateTo('/book'))
-  document.getElementById('goto-themes')?.addEventListener('click', () => navigateTo('/themes'))
-  document.getElementById('goto-settings')?.addEventListener('click', () => navigateTo('/settings'))
-  document.getElementById('logout-btn')?.addEventListener('click', async () => {
-    await signOut()
-    navigateTo('/login')
-  })
 
   textarea.addEventListener('keydown', (e) => {
     if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
@@ -110,10 +124,12 @@ export async function renderCapture(app: HTMLElement): Promise<void> {
       sourceUrl.value = ''
       sourceTitle.value = ''
       sourceAuthor.value = ''
+      localStorage.removeItem(DRAFT_KEY)
       ;(document.getElementById('extra-details') as HTMLDetailsElement).open = false
       ;(document.getElementById('bron-details') as HTMLDetailsElement).open = false
       showToast(navigator.onLine ? 'Opgeslagen' : 'Opgeslagen (offline wachtrij)')
       await refreshOnlineIndicator()
+      await refreshRecent()
     } catch (err) {
       showToast('Opslaan mislukt. Probeer opnieuw.')
       console.error(err)
@@ -125,15 +141,60 @@ export async function renderCapture(app: HTMLElement): Promise<void> {
 
   // Online/offline indicator + auto-flush on reconnect
   await refreshOnlineIndicator()
+  await refreshRecent()
 
   const onOnline = async () => {
     const flushed = await flushOfflineQueue()
     if (flushed > 0) showToast(`${flushed} offline-nota('s) gesynchroniseerd`)
     await refreshOnlineIndicator()
+    await refreshRecent()
   }
   const onOffline = () => refreshOnlineIndicator()
   window.addEventListener('online', onOnline)
   window.addEventListener('offline', onOffline)
+}
+
+function restoreDraft(els: {
+  textarea: HTMLTextAreaElement
+  miniTextarea: HTMLTextAreaElement
+  sourceUrl: HTMLInputElement
+  sourceTitle: HTMLInputElement
+  sourceAuthor: HTMLInputElement
+}): void {
+  const raw = localStorage.getItem(DRAFT_KEY)
+  if (!raw) return
+  try {
+    const d = JSON.parse(raw) as Draft
+    els.textarea.value = d.content ?? ''
+    els.miniTextarea.value = d.mini ?? ''
+    els.sourceUrl.value = d.url ?? ''
+    els.sourceTitle.value = d.title ?? ''
+    els.sourceAuthor.value = d.author ?? ''
+  } catch {
+    localStorage.removeItem(DRAFT_KEY)
+  }
+}
+
+async function refreshRecent(): Promise<void> {
+  const el = document.getElementById('capture-recent')
+  if (!el) return
+  if (!navigator.onLine) { el.innerHTML = ''; return }
+  try {
+    const recent = await fetchNotes(0, 3)
+    if (recent.length === 0) { el.innerHTML = ''; return }
+    el.innerHTML = `
+      <div class="recent-head">
+        <span>Recent opgeslagen</span>
+        <button class="recent-all" id="recent-all">alles in inbox →</button>
+      </div>
+      <ul class="recent-list">
+        ${recent.map(n => `<li class="recent-item">${escHtml((n.ai_title ?? n.content).slice(0, 90))}</li>`).join('')}
+      </ul>
+    `
+    document.getElementById('recent-all')?.addEventListener('click', () => navigateTo('/inbox'))
+  } catch {
+    el.innerHTML = ''
+  }
 }
 
 async function refreshOnlineIndicator(): Promise<void> {
@@ -153,6 +214,10 @@ async function refreshOnlineIndicator(): Promise<void> {
     el.className = 'online-indicator online'
     el.title = 'Online'
   }
+}
+
+function escHtml(str: string): string {
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 }
 
 function showToast(msg: string): void {
@@ -218,6 +283,42 @@ function injectCaptureStyles(): void {
       bottom: 0;
       background: var(--bg);
       padding: var(--s-3) 0;
+    }
+    .capture-footer .btn {
+      min-height: 52px;
+      font-size: var(--fs-base);
+    }
+    .capture-recent {
+      display: flex;
+      flex-direction: column;
+      gap: var(--s-2);
+    }
+    .capture-recent:empty { display: none; }
+    .recent-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: var(--fs-sm);
+      color: var(--text-muted);
+    }
+    .recent-all {
+      background: none;
+      border: none;
+      color: var(--accent);
+      cursor: pointer;
+      font-size: var(--fs-sm);
+    }
+    .recent-list { list-style: none; display: flex; flex-direction: column; gap: var(--s-1); }
+    .recent-item {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--r-sm);
+      padding: var(--s-2) var(--s-3);
+      font-size: var(--fs-sm);
+      color: var(--text-muted);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
     .online-indicator {
       font-size: 12px;
