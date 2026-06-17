@@ -1,7 +1,7 @@
 import { detectClusters, type Cluster } from '../lib/ai'
 import { getCostStatus, formatUsd, type CostStatus } from '../lib/cost'
 import { renderTopbar, attachTopbar } from '../lib/nav'
-import { insertNote } from '../lib/notes'
+import { insertNote, fetchNotesByIds } from '../lib/notes'
 
 export async function renderClusters(app: HTMLElement): Promise<void> {
   app.innerHTML = `
@@ -59,6 +59,19 @@ export async function renderClusters(app: HTMLElement): Promise<void> {
       result.clusters.forEach((c, i) => {
         document.getElementById(`cluster-create-${i}`)?.addEventListener('click', () => onCreateMissingNote(c, i))
       })
+
+      // Populate cluster note pills with real titles
+      const allIds = result.clusters.flatMap(c => c.note_ids)
+      if (allIds.length > 0) {
+        fetchNotesByIds(allIds).then(notes => {
+          const titleMap = new Map(notes.map(n => [n.id, n.ai_title ?? n.content.slice(0, 60)]))
+          document.querySelectorAll<HTMLSpanElement>('.cluster-pill[data-id]').forEach(pill => {
+            const title = titleMap.get(pill.dataset['id']!)
+            if (title) pill.textContent = title + (title.length === 60 ? '…' : '')
+            else pill.remove()
+          })
+        }).catch(() => { /* non-critical */ })
+      }
 
       const freshCost = await getCostStatus()
       renderCostNote(freshCost)

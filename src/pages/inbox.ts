@@ -176,9 +176,25 @@ export async function renderInbox(app: HTMLElement): Promise<void> {
     if (ids.length === 0) return
     try {
       if (action === 'delete') {
-        if (!confirm(`${ids.length} nota('s) definitief verwijderen?`)) return
-        await bulkDelete(ids)
+        const removed = allNotes.filter(n => selected.has(n.id))
         allNotes = allNotes.filter(n => !selected.has(n.id))
+        selected.clear()
+        renderList()
+        updateBulkBar()
+
+        let undone = false
+        showToastWithUndo(`${ids.length} nota${ids.length === 1 ? '' : "'s"} verwijderd`, () => {
+          undone = true
+          allNotes = [...removed, ...allNotes].sort(
+            (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+          )
+          renderList()
+          updateBulkBar()
+        })
+        setTimeout(async () => {
+          if (undone) return
+          try { await bulkDelete(ids) } catch { showToast('Verwijderen mislukt.') }
+        }, 5000)
       } else {
         const newStatus: NoteStatus = action === 'archive' ? 'archief' : 'inbox'
         await bulkUpdateStatus(ids, newStatus)
@@ -186,11 +202,11 @@ export async function renderInbox(app: HTMLElement): Promise<void> {
         if (statusFilter && statusFilter !== newStatus) {
           allNotes = allNotes.filter(n => !selected.has(n.id))
         }
+        selected.clear()
+        renderList()
+        updateBulkBar()
+        showToast(`${ids.length} bijgewerkt`)
       }
-      selected.clear()
-      renderList()
-      updateBulkBar()
-      showToast(`${ids.length} bijgewerkt`)
     } catch (err) {
       showToast(`Mislukt: ${errMsg(err)}`)
     }
@@ -220,16 +236,24 @@ export async function renderInbox(app: HTMLElement): Promise<void> {
 
       row.querySelector('.row-delete-btn')?.addEventListener('click', async (e) => {
         e.stopPropagation()
-        if (!confirm('Notitie verwijderen?')) return
-        try {
-          await deleteNote(id)
-          allNotes = allNotes.filter(n => n.id !== id)
-          selected.delete(id)
+        const note = allNotes.find(n => n.id === id)
+        if (!note) return
+        const noteIdx = allNotes.findIndex(n => n.id === id)
+        allNotes = allNotes.filter(n => n.id !== id)
+        selected.delete(id)
+        renderList()
+        updateBulkBar()
+
+        let undone = false
+        showToastWithUndo('Nota verwijderd', () => {
+          undone = true
+          allNotes.splice(noteIdx, 0, note)
           renderList()
-          updateBulkBar()
-        } catch {
-          showToast('Verwijderen mislukt.')
-        }
+        })
+        setTimeout(async () => {
+          if (undone) return
+          try { await deleteNote(id) } catch { showToast('Verwijderen mislukt.') }
+        }, 5000)
       })
     })
   }
@@ -268,16 +292,24 @@ export async function renderInbox(app: HTMLElement): Promise<void> {
       })
       row.querySelector('.row-delete-btn')?.addEventListener('click', async (e) => {
         e.stopPropagation()
-        if (!confirm('Notitie verwijderen?')) return
-        try {
-          await deleteNote(id)
-          allNotes = allNotes.filter(n => n.id !== id)
-          selected.delete(id)
+        const noteToDelete = allNotes.find(n => n.id === id)
+        if (!noteToDelete) return
+        const noteIdx = allNotes.findIndex(n => n.id === id)
+        allNotes = allNotes.filter(n => n.id !== id)
+        selected.delete(id)
+        renderList()
+        updateBulkBar()
+
+        let undone = false
+        showToastWithUndo('Nota verwijderd', () => {
+          undone = true
+          allNotes.splice(noteIdx, 0, noteToDelete)
           renderList()
-          updateBulkBar()
-        } catch {
-          showToast('Verwijderen mislukt.')
-        }
+        })
+        setTimeout(async () => {
+          if (undone) return
+          try { await deleteNote(id) } catch { showToast('Verwijderen mislukt.') }
+        }, 5000)
       })
     }
   }
@@ -346,6 +378,18 @@ function showToast(msg: string): void {
   toast.textContent = msg
   toast.classList.add('show')
   setTimeout(() => toast.classList.remove('show'), 2500)
+}
+
+function showToastWithUndo(msg: string, onUndo: () => void): void {
+  const toast = document.getElementById('toast') as HTMLDivElement | null
+  if (!toast) return
+  toast.innerHTML = `${escHtml(msg)} <button class="toast-undo">Ongedaan maken</button>`
+  toast.classList.add('show')
+  toast.querySelector<HTMLButtonElement>('.toast-undo')?.addEventListener('click', () => {
+    onUndo()
+    toast.classList.remove('show')
+  })
+  setTimeout(() => toast.classList.remove('show'), 5000)
 }
 
 function injectInboxStyles(): void {

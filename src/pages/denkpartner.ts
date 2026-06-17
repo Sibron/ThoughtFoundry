@@ -140,6 +140,7 @@ export async function renderDenkpartner(app: HTMLElement): Promise<void> {
         await insertNote({
           content: answer,
           mini_notes: `Vraag: ${q.question}`,
+          tags: ['denkpartner'],
         })
         saved++
       } catch (err) {
