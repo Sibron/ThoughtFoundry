@@ -24,6 +24,7 @@ export interface Note {
 export interface NoteInsert {
   content: string
   mini_notes?: string
+  tags?: string[]
   source_url?: string
   source_title?: string
   source_author?: string
@@ -112,6 +113,13 @@ export async function bulkUpdateStatus(ids: string[], status: NoteStatus): Promi
   if (ids.length === 0) return
   const { error } = await supabase.from('notes').update({ status }).in('id', ids)
   if (error) throw error
+}
+
+export async function fetchNotesByIds(ids: string[]): Promise<Note[]> {
+  if (ids.length === 0) return []
+  const { data, error } = await supabase.from('notes').select('*').in('id', ids)
+  if (error) throw error
+  return (data ?? []) as Note[]
 }
 
 export async function fetchNotesSections(): Promise<{ id: string; section: string | null }[]> {

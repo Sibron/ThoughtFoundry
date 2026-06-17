@@ -103,8 +103,7 @@ export async function renderSpark(app: HTMLElement): Promise<void> {
         `Synthese op basis van <strong>${result.matchCount}</strong> passende nota${result.matchCount === 1 ? '' : "'s"}` +
         (result.usage ? ` · ${formatUsd(result.usage.costUsd)}` : '')
 
-      document.getElementById('result-body')!.innerHTML =
-        result.synthesis.split('\n').filter(Boolean).map(line => `<p>${escHtml(line)}</p>`).join('')
+      document.getElementById('result-body')!.innerHTML = renderMarkdown(result.synthesis)
 
       document.getElementById('result-body')!.scrollIntoView({ behavior: 'smooth', block: 'start' })
 
@@ -141,6 +140,37 @@ function showToast(msg: string): void {
 
 function escHtml(str: string): string {
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+}
+
+function inlineMd(text: string): string {
+  return escHtml(text)
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*([^*]+?)\*/g, '<em>$1</em>')
+    .replace(/_([^_]+?)_/g, '<em>$1</em>')
+}
+
+function renderMarkdown(text: string): string {
+  const lines = text.split('\n')
+  const html: string[] = []
+  let inList = false
+
+  for (const rawLine of lines) {
+    if (/^#{1,2}\s/.test(rawLine)) {
+      if (inList) { html.push('</ul>'); inList = false }
+      html.push(`<h3 class="spark-heading">${inlineMd(rawLine.replace(/^#{1,2}\s+/, ''))}</h3>`)
+    } else if (/^[-*]\s/.test(rawLine)) {
+      if (!inList) { html.push('<ul class="spark-list">'); inList = true }
+      html.push(`<li>${inlineMd(rawLine.slice(2))}</li>`)
+    } else if (rawLine.trim() === '') {
+      if (inList) { html.push('</ul>'); inList = false }
+    } else {
+      if (inList) { html.push('</ul>'); inList = false }
+      html.push(`<p>${inlineMd(rawLine)}</p>`)
+    }
+  }
+
+  if (inList) html.push('</ul>')
+  return html.join('')
 }
 
 function errMsg(err: unknown): string {
@@ -231,6 +261,20 @@ function injectSparkStyles(): void {
       margin-bottom: var(--s-2);
     }
     .result-body p:last-child { margin-bottom: 0; }
+    .spark-heading {
+      font-size: var(--fs-lg);
+      font-weight: 600;
+      margin-top: var(--s-3);
+      margin-bottom: var(--s-1);
+    }
+    .spark-list {
+      padding-left: var(--s-5);
+      display: flex;
+      flex-direction: column;
+      gap: var(--s-1);
+      margin-bottom: var(--s-2);
+    }
+    .spark-list li { line-height: 1.6; }
     .result-actions {
       display: flex;
       gap: var(--s-2);
