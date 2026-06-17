@@ -6,6 +6,7 @@ export interface Theme {
   name: string
   description: string | null
   color: string
+  parent_id: string | null
   created_at: string
 }
 
