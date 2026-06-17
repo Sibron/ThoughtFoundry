@@ -11,6 +11,10 @@ import { renderGraph } from './pages/graph'
 import { renderBook } from './pages/book'
 import { renderThemes } from './pages/themes'
 import { renderSettings } from './pages/settings'
+import { renderSpark } from './pages/spark'
+import { renderDenkpartner } from './pages/denkpartner'
+import { renderClusters } from './pages/clusters'
+import { renderSources } from './pages/sources'
 
 const app = document.getElementById('app') as HTMLElement
 
@@ -46,8 +50,12 @@ if (!isConfigured) {
     '/process':  aiGuard(renderProcess, 'Verwerken'),
     '/graph':    aiGuard(renderGraph, 'Graaf'),
     '/book':     aiGuard(renderBook, 'Boek'),
-    '/themes':   () => guard(renderThemes),
-    '/settings': () => guard(renderSettings)
+    '/themes':      () => guard(renderThemes),
+    '/settings':    () => guard(renderSettings),
+    '/spark':       aiGuard(renderSpark, 'Spark'),
+    '/denkpartner': aiGuard(renderDenkpartner, 'Denkpartner'),
+    '/clusters':    aiGuard(renderClusters, 'Clusters'),
+    '/sources':     () => guard(renderSources)
   })
 }
 
