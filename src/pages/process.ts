@@ -8,23 +8,12 @@ import {
 import { createLink } from '../lib/links'
 import { processNote, type NoteSuggestion } from '../lib/ai'
 import { getCostStatus, getMonthlyCap, setMonthlyCap, formatUsd, type CostStatus } from '../lib/cost'
-import { signOut } from '../lib/auth'
+import { renderTopbar, attachTopbar } from '../lib/nav'
 import { navigateTo } from '../router'
 
 export async function renderProcess(app: HTMLElement): Promise<void> {
   app.innerHTML = `
-    <div class="topbar">
-      <span class="topbar-title">Verwerken</span>
-      <div class="topbar-actions">
-        <button class="topbar-btn" id="goto-capture">+ Nieuw</button>
-        <button class="topbar-btn" id="goto-inbox">Inbox</button>
-        <button class="topbar-btn" id="goto-graph">Graaf</button>
-        <button class="topbar-btn" id="goto-book">Boek</button>
-        <button class="topbar-btn" id="goto-themes">Thema's</button>
-        <button class="topbar-btn" id="goto-settings">⚙</button>
-        <button class="topbar-btn" id="logout-btn" title="Afmelden">&#x238B;</button>
-      </div>
-    </div>
+    ${renderTopbar('Verwerken', 'process')}
     <div class="process-body">
       <div id="process-cost" class="process-cost"></div>
       <div id="process-shell" class="process-shell">
@@ -336,19 +325,6 @@ export async function renderProcess(app: HTMLElement): Promise<void> {
   function showError(msg: string): void {
     document.getElementById('process-shell')!.innerHTML = `<div class="process-error">${escHtml(msg)}</div>`
   }
-}
-
-function attachTopbar(): void {
-  document.getElementById('goto-capture')?.addEventListener('click', () => navigateTo('/capture'))
-  document.getElementById('goto-inbox')?.addEventListener('click', () => navigateTo('/inbox'))
-  document.getElementById('goto-graph')?.addEventListener('click', () => navigateTo('/graph'))
-  document.getElementById('goto-book')?.addEventListener('click', () => navigateTo('/book'))
-  document.getElementById('goto-themes')?.addEventListener('click', () => navigateTo('/themes'))
-  document.getElementById('goto-settings')?.addEventListener('click', () => navigateTo('/settings'))
-  document.getElementById('logout-btn')?.addEventListener('click', async () => {
-    await signOut()
-    navigateTo('/login')
-  })
 }
 
 function showToast(msg: string): void {

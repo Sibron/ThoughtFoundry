@@ -6,8 +6,7 @@ import {
   fetchAllNoteThemes,
   type Theme
 } from '../lib/themes'
-import { signOut } from '../lib/auth'
-import { navigateTo } from '../router'
+import { renderTopbar, attachTopbar } from '../lib/nav'
 
 const COLOR_PALETTE = [
   '#3AC48D', '#2E76A8', '#C45A3A', '#A83AC4',
@@ -16,18 +15,7 @@ const COLOR_PALETTE = [
 
 export async function renderThemes(app: HTMLElement): Promise<void> {
   app.innerHTML = `
-    <div class="topbar">
-      <span class="topbar-title">Thema's</span>
-      <div class="topbar-actions">
-        <button class="topbar-btn" id="goto-capture">+ Nieuw</button>
-        <button class="topbar-btn" id="goto-inbox">Inbox</button>
-        <button class="topbar-btn" id="goto-process">Verwerken</button>
-        <button class="topbar-btn" id="goto-graph">Graaf</button>
-        <button class="topbar-btn" id="goto-book">Boek</button>
-        <button class="topbar-btn" id="goto-settings">⚙</button>
-        <button class="topbar-btn" id="logout-btn" title="Afmelden">&#x238B;</button>
-      </div>
-    </div>
+    ${renderTopbar("Thema's", 'themes')}
     <div class="themes-body" id="themes-body">
       <div class="themes-loading">Laden…</div>
     </div>
@@ -205,19 +193,6 @@ export async function renderThemes(app: HTMLElement): Promise<void> {
       showToast(`Mislukt: ${errMsg(err)}`)
     }
   }
-}
-
-function attachTopbar(): void {
-  document.getElementById('goto-capture')?.addEventListener('click', () => navigateTo('/capture'))
-  document.getElementById('goto-inbox')?.addEventListener('click', () => navigateTo('/inbox'))
-  document.getElementById('goto-process')?.addEventListener('click', () => navigateTo('/process'))
-  document.getElementById('goto-graph')?.addEventListener('click', () => navigateTo('/graph'))
-  document.getElementById('goto-book')?.addEventListener('click', () => navigateTo('/book'))
-  document.getElementById('goto-settings')?.addEventListener('click', () => navigateTo('/settings'))
-  document.getElementById('logout-btn')?.addEventListener('click', async () => {
-    await signOut()
-    navigateTo('/login')
-  })
 }
 
 function showToast(msg: string): void {
