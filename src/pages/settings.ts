@@ -1,5 +1,6 @@
 import { signOut } from '../lib/auth'
 import { supabase } from '../lib/supabase'
+import { renderTopbar, attachTopbar, isAiEnabled, setAiEnabled } from '../lib/nav'
 import { navigateTo } from '../router'
 import { getMonthlyCap, setMonthlyCap, getCostStatus, formatUsd } from '../lib/cost'
 import { fetchRecentUsage, summarize, type UsageRow } from '../lib/usage'
@@ -8,18 +9,7 @@ import { countByStatus } from '../lib/notes'
 
 export async function renderSettings(app: HTMLElement): Promise<void> {
   app.innerHTML = `
-    <div class="topbar">
-      <span class="topbar-title">Instellingen</span>
-      <div class="topbar-actions">
-        <button class="topbar-btn" id="goto-capture">+ Nieuw</button>
-        <button class="topbar-btn" id="goto-inbox">Inbox</button>
-        <button class="topbar-btn" id="goto-process">Verwerken</button>
-        <button class="topbar-btn" id="goto-graph">Graaf</button>
-        <button class="topbar-btn" id="goto-book">Boek</button>
-        <button class="topbar-btn" id="goto-themes">Thema's</button>
-        <button class="topbar-btn" id="logout-btn" title="Afmelden">&#x238B;</button>
-      </div>
-    </div>
+    ${renderTopbar('Instellingen', 'settings')}
     <div class="settings-body" id="settings-body">
       <div class="settings-loading">Laden…</div>
     </div>
@@ -64,6 +54,18 @@ export async function renderSettings(app: HTMLElement): Promise<void> {
       <h2>Account</h2>
       <p>${escHtml(userEmail ?? 'onbekend')}</p>
       <button class="btn btn-ghost" id="settings-logout">Afmelden</button>
+    </section>
+
+    <section class="settings-section">
+      <h2>AI-functies</h2>
+      <p class="muted">Verwerken, graaf en boekgeneratie gebruiken Claude (AI). Standaard uit — de kern (capture, inbox, thema's) werkt volledig zonder AI.</p>
+      <label class="ai-toggle">
+        <input type="checkbox" id="ai-toggle" ${isAiEnabled() ? 'checked' : ''} />
+        <span>AI inschakelen</span>
+      </label>
+      ${isAiEnabled()
+        ? ''
+        : '<p class="muted">Zet dit pas aan als de edge functions en <code>ANTHROPIC_API_KEY</code> in Supabase geconfigureerd zijn.</p>'}
     </section>
 
     <section class="settings-section">
@@ -136,6 +138,13 @@ export async function renderSettings(app: HTMLElement): Promise<void> {
     navigateTo('/login')
   })
 
+  document.getElementById('ai-toggle')?.addEventListener('change', (e) => {
+    const on = (e.target as HTMLInputElement).checked
+    setAiEnabled(on)
+    showToast(on ? 'AI ingeschakeld' : 'AI uitgeschakeld')
+    renderSettings(app) // re-render so nav + hints reflect the new state
+  })
+
   document.getElementById('cap-save')?.addEventListener('click', () => {
     const v = Number((document.getElementById('cap-input') as HTMLInputElement).value)
     if (!Number.isFinite(v) || v <= 0) { showToast('Geef een positief getal'); return }
@@ -158,19 +167,6 @@ export async function renderSettings(app: HTMLElement): Promise<void> {
       btn.disabled = false
       btn.textContent = 'Exporteer JSON'
     }
-  })
-}
-
-function attachTopbar(): void {
-  document.getElementById('goto-capture')?.addEventListener('click', () => navigateTo('/capture'))
-  document.getElementById('goto-inbox')?.addEventListener('click', () => navigateTo('/inbox'))
-  document.getElementById('goto-process')?.addEventListener('click', () => navigateTo('/process'))
-  document.getElementById('goto-graph')?.addEventListener('click', () => navigateTo('/graph'))
-  document.getElementById('goto-book')?.addEventListener('click', () => navigateTo('/book'))
-  document.getElementById('goto-themes')?.addEventListener('click', () => navigateTo('/themes'))
-  document.getElementById('logout-btn')?.addEventListener('click', async () => {
-    await signOut()
-    navigateTo('/login')
   })
 }
 
@@ -261,6 +257,14 @@ function injectSettingsStyles(): void {
       font-size: var(--fs-sm);
       color: var(--text-muted);
     }
+    .ai-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: var(--s-2);
+      cursor: pointer;
+      font-weight: 500;
+    }
+    .ai-toggle input { width: 18px; height: 18px; }
     .field { display: flex; flex-direction: column; gap: var(--s-1); }
     .field-label { font-size: var(--fs-sm); color: var(--text-muted); font-weight: 500; }
     .usage-summary {

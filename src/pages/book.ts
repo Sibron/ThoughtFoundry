@@ -4,23 +4,11 @@ import { fetchChapters, saveChapter, deleteChapter, type Chapter } from '../lib/
 import { fetchBooks, createBook, updateBook, deleteBook, type Book } from '../lib/books'
 import { generateChapter, type ChapterPlan } from '../lib/ai'
 import { getCostStatus, formatUsd } from '../lib/cost'
-import { signOut } from '../lib/auth'
-import { navigateTo } from '../router'
+import { renderTopbar, attachTopbar } from '../lib/nav'
 
 export async function renderBook(app: HTMLElement): Promise<void> {
   app.innerHTML = `
-    <div class="topbar">
-      <span class="topbar-title">Boek</span>
-      <div class="topbar-actions">
-        <button class="topbar-btn" id="goto-capture">+ Nieuw</button>
-        <button class="topbar-btn" id="goto-inbox">Inbox</button>
-        <button class="topbar-btn" id="goto-process">Verwerken</button>
-        <button class="topbar-btn" id="goto-graph">Graaf</button>
-        <button class="topbar-btn" id="goto-themes">Thema's</button>
-        <button class="topbar-btn" id="goto-settings">⚙</button>
-        <button class="topbar-btn" id="logout-btn" title="Afmelden">&#x238B;</button>
-      </div>
-    </div>
+    ${renderTopbar('Boek', 'book')}
     <div class="book-body" id="book-body">
       <div class="book-loading">Laden…</div>
     </div>
@@ -644,19 +632,6 @@ function downloadMarkdown(filename: string, content: string): void {
 function slugify(s: string): string {
   return s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
     .replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60)
-}
-
-function attachTopbar(): void {
-  document.getElementById('goto-capture')?.addEventListener('click', () => navigateTo('/capture'))
-  document.getElementById('goto-inbox')?.addEventListener('click', () => navigateTo('/inbox'))
-  document.getElementById('goto-process')?.addEventListener('click', () => navigateTo('/process'))
-  document.getElementById('goto-graph')?.addEventListener('click', () => navigateTo('/graph'))
-  document.getElementById('goto-themes')?.addEventListener('click', () => navigateTo('/themes'))
-  document.getElementById('goto-settings')?.addEventListener('click', () => navigateTo('/settings'))
-  document.getElementById('logout-btn')?.addEventListener('click', async () => {
-    await signOut()
-    navigateTo('/login')
-  })
 }
 
 function showToast(msg: string): void {
