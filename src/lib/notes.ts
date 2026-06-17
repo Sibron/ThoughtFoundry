@@ -16,6 +16,7 @@ export interface Note {
   ai_summary: string | null
   ai_title: string | null
   processed_at: string | null
+  section: string | null
   created_at: string
   updated_at: string
 }
@@ -40,6 +41,7 @@ export interface NoteUpdate {
   ai_summary?: string | null
   ai_title?: string | null
   processed_at?: string | null
+  section?: string | null
 }
 
 const OFFLINE_QUEUE_KEY = 'offline_queue'
