@@ -1,16 +1,15 @@
 import {
   fetchNotes,
-  updateNote,
   deleteNote,
   bulkUpdateStatus,
   bulkDelete,
   type Note,
   type NoteStatus,
-  type NoteType,
-  type NoteUpdate
+  type NoteType
 } from '../lib/notes'
 import { NOTE_TYPES, NOTE_TYPE_ORDER } from '../lib/noteTypes'
 import { renderTopbar, attachTopbar } from '../lib/nav'
+import { navigateTo } from '../router'
 
 export async function renderInbox(app: HTMLElement): Promise<void> {
   app.innerHTML = `
@@ -256,7 +255,7 @@ export async function renderInbox(app: HTMLElement): Promise<void> {
 
       row.querySelector('.row-edit-btn')?.addEventListener('click', (e) => {
         e.stopPropagation()
-        toggleEdit(row, id)
+        navigateTo('/note?id=' + id)
       })
 
       row.querySelector('.row-delete-btn')?.addEventListener('click', async (e) => {
@@ -283,61 +282,6 @@ export async function renderInbox(app: HTMLElement): Promise<void> {
     })
   }
 
-  function toggleEdit(row: HTMLElement, id: string): void {
-    const note = allNotes.find(n => n.id === id)
-    if (!note) return
-
-    const isEditing = row.classList.contains('editing')
-    if (isEditing) {
-      const contentEl = row.querySelector<HTMLTextAreaElement>('.edit-content')!
-      const miniEl = row.querySelector<HTMLTextAreaElement>('.edit-mini')
-      const updates: NoteUpdate = { content: contentEl.value.trim() }
-      if (miniEl) updates.mini_notes = miniEl.value.trim() || null
-      updateNote(id, updates)
-        .then(updated => {
-          const idx = allNotes.findIndex(n => n.id === id)
-          if (idx !== -1) allNotes[idx] = updated
-          renderList()
-        })
-        .catch(() => showToast('Opslaan mislukt.'))
-    } else {
-      row.classList.add('editing', 'expanded')
-      const detailEl = row.querySelector('.row-detail')!
-      detailEl.innerHTML = `
-        <textarea class="edit-content">${escHtml(note.content)}</textarea>
-        <textarea class="edit-mini" placeholder="Extra notitie…">${escHtml(note.mini_notes ?? '')}</textarea>
-        <div class="row-actions">
-          <button class="btn btn-primary row-edit-btn" style="width:auto">Opslaan</button>
-          <button class="btn btn-danger row-delete-btn" style="width:auto">Verwijderen</button>
-        </div>
-      `
-      row.querySelector('.row-edit-btn')?.addEventListener('click', (e) => {
-        e.stopPropagation()
-        toggleEdit(row, id)
-      })
-      row.querySelector('.row-delete-btn')?.addEventListener('click', async (e) => {
-        e.stopPropagation()
-        const noteToDelete = allNotes.find(n => n.id === id)
-        if (!noteToDelete) return
-        const noteIdx = allNotes.findIndex(n => n.id === id)
-        allNotes = allNotes.filter(n => n.id !== id)
-        selected.delete(id)
-        renderList()
-        updateBulkBar()
-
-        let undone = false
-        showToastWithUndo('Nota verwijderd', () => {
-          undone = true
-          allNotes.splice(noteIdx, 0, noteToDelete)
-          renderList()
-        })
-        setTimeout(async () => {
-          if (undone) return
-          try { await deleteNote(id) } catch { showToast('Verwijderen mislukt.') }
-        }, 5000)
-      })
-    }
-  }
 }
 
 function renderNoteRow(note: Note, isSelected: boolean): string {

@@ -1,6 +1,6 @@
 import { fetchNotes, type Note } from '../lib/notes'
 import { fetchThemes, fetchAllNoteThemes, type Theme } from '../lib/themes'
-import { fetchLinks, createLink, deleteLink, type NoteLink } from '../lib/links'
+import { fetchLinks, createLink, deleteLink, LINK_TYPE_LABELS, type NoteLink } from '../lib/links'
 import { renderTopbar, attachTopbar } from '../lib/nav'
 
 interface GraphNode {
@@ -268,7 +268,15 @@ export async function renderGraph(app: HTMLElement): Promise<void> {
           const otherId = e.source === n.id ? e.target : e.source
           const other = nodes.find(x => x.id === otherId)?.note
           if (!other) return ''
-          return `<li><span>${escHtml(other.ai_title ?? other.content.slice(0, 60))}</span> <button class="link-del" data-link="${e.linkId}">×</button></li>`
+          const link = links.find(l => l.id === e.linkId)
+          const dir = e.source === n.id ? '→' : '←'
+          const typeLabel = link ? LINK_TYPE_LABELS[link.type] : ''
+          const meta = [typeLabel, link?.reason].filter(Boolean).join(' · ')
+          return `<li>
+            <span class="sidebar-link-main">${dir} ${escHtml(other.ai_title ?? other.content.slice(0, 60))}</span>
+            ${meta ? `<span class="sidebar-link-meta">${escHtml(meta)}</span>` : ''}
+            <button class="link-del" data-link="${e.linkId}">×</button>
+          </li>`
         }).join('')}
       </ul>
 

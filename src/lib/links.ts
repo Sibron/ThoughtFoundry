@@ -63,6 +63,20 @@ export async function createLink(input: {
   return data as NoteLink
 }
 
+export async function updateLink(
+  id: string,
+  input: { type?: LinkType; reason?: string | null }
+): Promise<NoteLink> {
+  const { data, error } = await supabase
+    .from('note_links')
+    .update(input)
+    .eq('id', id)
+    .select()
+    .single()
+  if (error) throw error
+  return data as NoteLink
+}
+
 export async function deleteLink(id: string): Promise<void> {
   const { error } = await supabase.from('note_links').delete().eq('id', id)
   if (error) throw error
