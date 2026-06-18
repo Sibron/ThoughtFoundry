@@ -132,6 +132,8 @@ export async function renderDenkpartner(app: HTMLElement): Promise<void> {
     btn.textContent = 'Opslaan…'
 
     let saved = 0
+    let failed = 0
+    let lastErr = ''
     for (let i = 0; i < questions.length; i++) {
       const q = questions[i]
       const answer = (document.getElementById(`dp-answer-${i}`) as HTMLTextAreaElement)?.value.trim()
@@ -144,16 +146,21 @@ export async function renderDenkpartner(app: HTMLElement): Promise<void> {
         })
         saved++
       } catch (err) {
-        showToast(`Opslaan ${i + 1} mislukt: ${errMsg(err)}`)
+        failed++
+        lastErr = errMsg(err)
       }
     }
 
-    if (saved > 0) {
+    if (saved > 0 && failed === 0) {
       showToast(`${saved} antwoord${saved === 1 ? '' : 'en'} opgeslagen als nota${saved === 1 ? '' : "'s"}`)
-      // Reset
       document.getElementById('dp-questions')!.hidden = true
       document.getElementById('dp-save-all')!.hidden = true
       questions = []
+    } else if (saved > 0 && failed > 0) {
+      // Keep the form open so the unsaved answers aren't lost.
+      showToast(`${saved} opgeslagen, ${failed} mislukt (${lastErr}). Probeer de rest opnieuw.`)
+    } else if (failed > 0) {
+      showToast(`Opslaan mislukt: ${lastErr}`)
     } else {
       showToast('Geen antwoorden om op te slaan')
     }

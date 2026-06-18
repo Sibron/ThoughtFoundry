@@ -1,5 +1,5 @@
 // Phase 2: process a single note.
-// Returns AI-suggested title, summary, types, tags, theme matches, and similar notes.
+// Returns AI-suggested title, summary, tags, theme matches, and similar notes.
 // The user accepts/edits each field client-side; the function does NOT mutate the note.
 
 import { corsHeaders, jsonResponse } from '../_shared/cors.ts'
@@ -27,7 +27,6 @@ interface ThemeRow {
 interface Suggestion {
   title: string
   summary: string
-  types: string[]
   tags: string[]
   matched_theme_ids: string[]
   new_themes: { name: string; description: string }[]
@@ -54,7 +53,6 @@ Antwoord ALLEEN met geldige JSON, in dit exacte formaat:
 {
   "title": "korte kop, max 80 chars",
   "summary": "1-2 zinnen kerngedachte",
-  "types": ["theorie" | "voorbeeld" | "methodiek" | "vraag" | "observatie" | "citaat" | ...],
   "tags": ["max 5 tags, lowercase, single-word of-met-streepje"],
   "matched_theme_ids": ["uuid", ...],   // alleen ids uit de gegeven thema-lijst
   "new_themes": [{"name": "...", "description": "..."}],  // alleen indien echt geen match
@@ -136,7 +134,6 @@ Deno.serve(async (req: Request) => {
   suggestion.matched_theme_ids = (suggestion.matched_theme_ids ?? []).filter(id => validThemeIds.has(id))
   suggestion.related_note_ids = (suggestion.related_note_ids ?? []).filter(id => validNoteIds.has(id)).slice(0, 3)
   suggestion.new_themes = (suggestion.new_themes ?? []).slice(0, 1)
-  suggestion.types = (suggestion.types ?? []).slice(0, 5)
   suggestion.tags = (suggestion.tags ?? []).slice(0, 5)
   // Validate section: must be one of the five slugs or empty string
   if (!VALID_SECTIONS.has(suggestion.section ?? '')) suggestion.section = ''

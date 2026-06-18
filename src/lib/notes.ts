@@ -13,7 +13,6 @@ export interface Note {
   core_idea: string | null
   use_for: string | null
   source_id: string | null
-  types: string[]
   tags: string[]
   source_url: string | null
   source_title: string | null
@@ -50,7 +49,6 @@ export interface NoteUpdate {
   source_title?: string | null
   source_author?: string | null
   status?: NoteStatus
-  types?: string[]
   tags?: string[]
   ai_summary?: string | null
   ai_title?: string | null
