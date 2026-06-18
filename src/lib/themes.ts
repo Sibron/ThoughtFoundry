@@ -8,6 +8,7 @@ export interface Theme {
   color: string
   parent_id: string | null
   created_at: string
+  is_sensitive: boolean
 }
 
 export async function fetchThemes(): Promise<Theme[]> {
@@ -38,7 +39,18 @@ export async function createTheme(input: { name: string; description?: string; c
   return data as Theme
 }
 
-export async function updateTheme(id: string, input: Partial<Pick<Theme, 'name' | 'description' | 'color'>>): Promise<Theme> {
+export async function fetchNoteIdsByThemes(themeIds: string[], excludeNoteId: string): Promise<string[]> {
+  const { data, error } = await supabase
+    .from('note_themes')
+    .select('note_id')
+    .in('theme_id', themeIds)
+    .neq('note_id', excludeNoteId)
+    .limit(10)
+  if (error) throw error
+  return (data ?? []).map((r: { note_id: string }) => r.note_id)
+}
+
+export async function updateTheme(id: string, input: Partial<Pick<Theme, 'name' | 'description' | 'color' | 'is_sensitive'>>): Promise<Theme> {
   const { data, error } = await supabase
     .from('themes')
     .update(input)

@@ -25,7 +25,7 @@ Jouw taak: genereer 4-5 scherpe, uitdagende vragen die de gebruiker aanmoedigen 
 Richtlijnen:
 - Stel vragen die aannames uitdagen, niet vragen waarop de nota's al een antwoord geven.
 - Zoek naar tegenstrijdigheden, blinde vlekken, of wat de gebruiker nog NIET heeft opgeschreven.
-- Gebruik "Wat als...", "Waarom eigenlijk...", "Wat ontbreekt er in...", "Hoe verhoudt ... zich tot...".
+- Stel vragen die richting een keuze of conclusie werken. Denk aan: "Wat is de meest logische volgende stap?", "Welke aanname moet je eerst toetsen?", "Wat maakt dit onderscheid doorslaggevend?".
 - Schrijf in het Nederlands.
 
 Antwoord ALLEEN met geldige JSON:

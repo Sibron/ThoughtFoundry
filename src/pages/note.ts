@@ -13,6 +13,7 @@ import { NOTE_TYPES, NOTE_TYPE_ORDER } from '../lib/noteTypes'
 import {
   fetchThemes,
   fetchThemesForNote,
+  fetchNoteIdsByThemes,
   setThemesForNote,
   type Theme
 } from '../lib/themes'
@@ -221,6 +222,11 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
           <button class="btn btn-ghost" id="back-btn">Terug</button>
           <button class="btn btn-danger" id="delete-btn">Verwijderen</button>
         </div>
+
+        <section class="field" id="related-notes-section">
+          <span class="field-label">Verwante notities</span>
+          <div class="related-notes-list" id="related-notes-list">Laden…</div>
+        </section>
       </article>
     `
 
@@ -229,6 +235,35 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
     wireTagInput()
     wireLinkSearch()
     wireActions()
+    void loadRelatedNotes()
+  }
+
+  async function loadRelatedNotes(): Promise<void> {
+    const el = document.getElementById('related-notes-list')
+    if (!el) return
+    try {
+      const relatedIds = new Set<string>()
+      links.forEach(l => relatedIds.add(l.source_id === id ? l.target_id : l.source_id))
+      if (noteThemeIds.length > 0) {
+        const themeNoteIds = await fetchNoteIdsByThemes(noteThemeIds, id)
+        themeNoteIds.forEach(nid => relatedIds.add(nid))
+      }
+      relatedIds.delete(id)
+      const relatedList = [...relatedIds].slice(0, 6)
+      if (relatedList.length === 0) {
+        el.innerHTML = '<span class="muted">Nog geen verwante notities gevonden.</span>'
+        return
+      }
+      const relNotes = await fetchNotesByIds(relatedList)
+      el.innerHTML = relNotes.map(n =>
+        `<button class="related-note-card" data-id="${n.id}">${escHtml(n.ai_title ?? n.content.slice(0, 80))}</button>`
+      ).join('')
+      el.querySelectorAll<HTMLButtonElement>('.related-note-card').forEach(btn => {
+        btn.addEventListener('click', () => navigateTo(`/note?id=${btn.dataset['id']}`))
+      })
+    } catch {
+      el.innerHTML = '<span class="muted">Kon verwante notities niet laden.</span>'
+    }
   }
 
   // ── Tags ──────────────────────────────────────────────────────────────────
@@ -550,6 +585,12 @@ function injectNoteStyles(): void {
     .btn-sm { min-height: unset; font-size: var(--fs-sm); padding: var(--s-1) var(--s-3); }
     .muted { color: var(--text-muted); font-size: var(--fs-sm); }
     .btn-inline { background: none; border: 1px solid currentColor; border-radius: var(--r-sm); padding: 2px var(--s-2); cursor: pointer; color: var(--accent); }
+    .related-notes-list { display: flex; flex-direction: column; gap: var(--s-1); }
+    .related-note-card {
+      background: var(--bg); border: 1px solid var(--border); border-radius: var(--r-sm);
+      padding: var(--s-2) var(--s-3); font-size: var(--fs-sm); cursor: pointer; text-align: left; color: var(--text);
+    }
+    .related-note-card:hover { background: var(--surface); border-color: var(--accent); }
     @media (max-width: 600px) { .note-row-2 { grid-template-columns: 1fr; } }
   `
   document.head.appendChild(style)

@@ -22,6 +22,7 @@ interface ThemeRow {
   id: string
   name: string
   description: string | null
+  is_sensitive: boolean
 }
 
 interface Suggestion {
@@ -92,7 +93,7 @@ Deno.serve(async (req: Request) => {
   // Load the note + the user's themes + recent context notes (for similarity).
   const [{ data: noteData, error: noteErr }, { data: themesData }, { data: contextData }] = await Promise.all([
     supabase.from('notes').select('id, content, mini_notes').eq('id', body.noteId).single(),
-    supabase.from('themes').select('id, name, description'),
+    supabase.from('themes').select('id, name, description, is_sensitive'),
     supabase.from('notes').select('id, content, ai_title')
       .neq('id', body.noteId)
       .order('created_at', { ascending: false })
@@ -163,9 +164,11 @@ function buildUserPrompt(
   themes: ThemeRow[],
   contextNotes: { id: string; content: string; ai_title: string | null }[]
 ): string {
+  const hasSensitiveThemes = themes.some(t => t.is_sensitive)
+
   const themeList = themes.length === 0
     ? '(geen bestaande thema\'s)'
-    : themes.map(t => `- [${t.id}] ${t.name}${t.description ? ' — ' + t.description : ''}`).join('\n')
+    : themes.map(t => `- [${t.id}] ${t.name}${t.description ? ' — ' + t.description : ''}${t.is_sensitive ? ' [GEVOELIG]' : ''}`).join('\n')
 
   const contextList = contextNotes.length === 0
     ? '(geen andere nota\'s)'
@@ -173,6 +176,10 @@ function buildUserPrompt(
         const snippet = (n.ai_title ?? n.content).slice(0, 140).replace(/\s+/g, ' ')
         return `- [${n.id}] ${snippet}`
       }).join('\n')
+
+  const sensitivityNote = hasSensitiveThemes
+    ? '\n\nGevoelig thema aanwezig: als je een [GEVOELIG] thema koppelt, structureer dan je samenvatting en sluit af. Stel geen open vragen.'
+    : ''
 
   return `## Te verwerken nota
 
@@ -184,7 +191,7 @@ ${themeList}
 
 ## Andere recente nota's (voor related_note_ids)
 
-${contextList}
+${contextList}${sensitivityNote}
 
 Geef je analyse als JSON.`
 }

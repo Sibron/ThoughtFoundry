@@ -34,6 +34,30 @@
   }
 }
 
+/* ── Density (user-controlled in Settings) ── */
+/* Compact tightens the 4px spacing scale and trims type a touch. */
+:root[data-density="compact"] {
+  --s-3: 8px;  --s-4: 12px; --s-5: 18px; --s-6: 24px; --s-7: 32px;
+  --fs-base: 15px; --fs-lg: 17px;
+}
+
+/* ── Reduce motion ── */
+/* Honoured both from the OS setting and a manual toggle (.reduce-motion on <html>). */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+.reduce-motion *, .reduce-motion *::before, .reduce-motion *::after {
+  animation-duration: 0.001ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.001ms !important;
+  scroll-behavior: auto !important;
+}
+
 *, *::before, *::after {
   box-sizing: border-box;
   margin: 0;
@@ -182,6 +206,22 @@ textarea:focus {
 .topbar-btn:hover {
   background: var(--border);
   color: var(--text);
+}
+
+.topbar-sep {
+  color: var(--border);
+  font-size: var(--fs-sm);
+  user-select: none;
+  flex-shrink: 0;
+}
+
+.topbar-btn.topbar-secondary {
+  opacity: 0.65;
+  font-size: 13px;
+}
+
+.topbar-btn.topbar-secondary:hover {
+  opacity: 1;
 }
 
 /* ── Toast ── */
