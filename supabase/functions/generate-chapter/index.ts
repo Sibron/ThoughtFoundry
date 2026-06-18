@@ -8,7 +8,8 @@ import { getUserClient, requireUserId, logUsage } from '../_shared/supabase.ts'
 interface ChapterRequest {
   themeId?: string
   noteIds: string[]
-  angle?: string // optional steering text from the user
+  angle?: string
+  persona?: string
   model?: 'claude-sonnet-4-6' | 'claude-haiku-4-5' | 'claude-opus-4-7'
 }
 
@@ -86,11 +87,13 @@ Deno.serve(async (req: Request) => {
 
   const userPrompt = buildPrompt(notes, themeName, body.angle)
 
+  const system = [body.persona?.trim(), SYSTEM_PROMPT].filter(Boolean).join('\n\n')
+
   let result
   try {
     result = await callAnthropic({
       apiKey, model,
-      system: SYSTEM_PROMPT,
+      system,
       messages: [{ role: 'user', content: userPrompt }],
       maxTokens: 2048
     })

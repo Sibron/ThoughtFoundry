@@ -20,7 +20,7 @@ export function setAiEnabled(on: boolean): void {
 // Single source of truth for navigation so every page stays consistent and
 // the AI-only items (Verwerken / Graaf / Boek) can be hidden in one place.
 
-export type NavKey = 'capture' | 'inbox' | 'process' | 'graph' | 'book' | 'themes' | 'settings' | 'spark' | 'denkpartner' | 'clusters' | 'sources'
+export type NavKey = 'capture' | 'inbox' | 'process' | 'graph' | 'book' | 'themes' | 'settings' | 'spark' | 'denkpartner' | 'clusters' | 'sources' | 'projects'
 
 /**
  * Render the topbar HTML. `extra` is injected at the start of the actions row
@@ -50,6 +50,7 @@ export function renderTopbar(title: string, active?: NavKey, extra = ''): string
         ${aiButtons}
         ${btn('themes', "Thema's")}
         ${btn('sources', 'Bronnen')}
+        ${btn('projects', 'Projecten')}
         ${btn('settings', '⚙')}
         <button class="topbar-btn" data-nav="logout" title="Afmelden">&#x238B;</button>
       </div>

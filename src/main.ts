@@ -16,6 +16,7 @@ import { renderSpark } from './pages/spark'
 import { renderDenkpartner } from './pages/denkpartner'
 import { renderClusters } from './pages/clusters'
 import { renderSources } from './pages/sources'
+import { renderProjects } from './pages/projects'
 
 const app = document.getElementById('app') as HTMLElement
 
@@ -58,7 +59,8 @@ if (!isConfigured) {
     '/spark':       aiGuard(renderSpark, 'Spark'),
     '/denkpartner': aiGuard(renderDenkpartner, 'Denkpartner'),
     '/clusters':    aiGuard(renderClusters, 'Clusters'),
-    '/sources':     () => guard(renderSources)
+    '/sources':     () => guard(renderSources),
+    '/projects':    () => guard(renderProjects)
   })
 }
 

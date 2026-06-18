@@ -1,300 +1,399 @@
+import { fetchSources, createSource, updateSource, deleteSource, SOURCE_TYPES, SOURCE_TYPE_ORDER, type Source, type SourceInsert, type SourceType } from '../lib/sources'
 import { fetchNotes, type Note } from '../lib/notes'
 import { renderTopbar, attachTopbar } from '../lib/nav'
-import { navigateTo } from '../router'
-
-interface Source {
-  url: string | null
-  title: string | null
-  author: string | null
-  notes: Note[]
-}
 
 export async function renderSources(app: HTMLElement): Promise<void> {
   app.innerHTML = `
     ${renderTopbar('Bronnen', 'sources')}
-    <div class="sources-body">
-      <div class="sources-loading">Laden…</div>
+    <div class="src-body" id="src-body">
+      <div class="src-loading">Laden…</div>
     </div>
     <div class="toast" id="toast"></div>
   `
-
-  injectSourcesStyles()
+  injectStyles()
   attachTopbar()
+  await reload()
+}
 
-  const body = document.querySelector('.sources-body') as HTMLDivElement
-
+async function reload(): Promise<void> {
+  const body = document.getElementById('src-body') as HTMLDivElement
+  body.innerHTML = '<div class="src-loading">Laden…</div>'
   try {
-    // Fetch all notes to group by source
-    const notes = await fetchNotes(0, 500)
-    const { sourced, unsourced } = groupBySources(notes)
+    const [sources, allNotes] = await Promise.all([fetchSources(), fetchNotes(0, 500)])
+    mount(body, sources, allNotes)
+  } catch (err) {
+    body.innerHTML = `<div class="src-loading">Laden mislukt: ${esc(msg(err))}</div>`
+  }
+}
 
-    if (sourced.length === 0 && unsourced.length === 0) {
-      body.innerHTML = '<div class="sources-empty"><p class="muted">Nog geen nota\'s met bronnen. Voeg bronvelden toe via de inbox.</p></div>'
-      return
+function mount(body: HTMLDivElement, sources: Source[], allNotes: Note[]): void {
+  let editing: Source | null = null
+  let detailSourceId: string | null = null
+  let typeFilter: SourceType | 'all' = 'all'
+  let searchText = ''
+  let formData: SourceInsert & { type: SourceType } = emptyForm()
+
+  const notesBySource = new Map<string, Note[]>()
+  for (const note of allNotes) {
+    if (note.source_id) {
+      const arr = notesBySource.get(note.source_id) ?? []
+      arr.push(note)
+      notesBySource.set(note.source_id, arr)
     }
+  }
+
+  const render = () => {
+    if (detailSourceId) {
+      renderDetail()
+    } else {
+      renderList()
+    }
+  }
+
+  const renderList = () => {
+    const filtered = sources.filter(s => {
+      if (typeFilter !== 'all' && s.type !== typeFilter) return false
+      if (searchText) {
+        const hay = [s.title, s.author, s.summary, ...(s.tags ?? [])].filter(Boolean).join(' ').toLowerCase()
+        if (!hay.includes(searchText.toLowerCase())) return false
+      }
+      return true
+    })
 
     body.innerHTML = `
-      ${sourced.length > 0 ? `
-        <section class="sources-section">
-          <header class="sources-section-header">
-            <h2>Bronnen (${sourced.length})</h2>
-            <span class="muted">${sourced.reduce((n, s) => n + s.notes.length, 0)} nota's met bron</span>
-          </header>
-          <div class="sources-list">
-            ${sourced.map(source => renderSourceCard(source)).join('')}
+      <div class="src-layout">
+        <aside class="src-sidebar">
+          <div class="src-form-wrap">
+            <h2>${editing ? 'Bron bewerken' : 'Nieuwe bron'}</h2>
+            ${renderForm(formData, editing)}
           </div>
-        </section>
-      ` : ''}
-
-      ${unsourced.length > 0 ? `
-        <section class="sources-section">
-          <details class="unsourced-details">
-            <summary class="sources-section-header">
-              <h2>Zonder bron (${unsourced.length})</h2>
-              <span class="muted">klik om te tonen</span>
-            </summary>
-            <div class="unsourced-list">
-              ${unsourced.map(n => renderUnsourcedRow(n)).join('')}
+        </aside>
+        <main class="src-main">
+          <div class="src-toolbar">
+            <input type="text" id="src-search" class="src-search" placeholder="Zoeken…" value="${esc(searchText)}" />
+            <div class="src-type-pills">
+              <button class="src-pill${typeFilter === 'all' ? ' active' : ''}" data-type="all">Alle</button>
+              ${SOURCE_TYPE_ORDER.map(t =>
+                `<button class="src-pill${typeFilter === t ? ' active' : ''}" data-type="${t}">${SOURCE_TYPES[t].label}</button>`
+              ).join('')}
             </div>
-          </details>
-        </section>
-      ` : ''}
+          </div>
+          ${filtered.length === 0
+            ? `<p class="src-empty">${sources.length === 0 ? 'Nog geen bronnen. Voeg er een toe via het formulier.' : 'Geen bronnen gevonden.'}</p>`
+            : `<div class="src-list">${filtered.map(s => renderCard(s, notesBySource.get(s.id)?.length ?? 0)).join('')}</div>`
+          }
+        </main>
+      </div>
     `
+    wireListEvents()
+  }
 
-    // Wire up click-through to inbox with filter
-    body.querySelectorAll<HTMLElement>('[data-note-content]').forEach(el => {
-      el.addEventListener('click', () => {
-        // Navigate to inbox; for now just show the inbox
-        navigateTo('/inbox')
+  const renderDetail = () => {
+    const source = sources.find(s => s.id === detailSourceId)
+    if (!source) { detailSourceId = null; renderList(); return }
+    const notes = notesBySource.get(source.id) ?? []
+    const meta = SOURCE_TYPES[source.type]
+    body.innerHTML = `
+      <div class="src-detail-wrap">
+        <button class="btn btn-ghost src-back" id="src-back">← Terug</button>
+        <div class="src-detail">
+          <div class="src-detail-header">
+            <span class="src-type-badge">${esc(meta.label)}</span>
+            <h2 class="src-detail-title">${esc(source.title)}</h2>
+            ${source.author ? `<p class="src-detail-author">${esc(source.author)}${source.year ? ` · ${esc(source.year)}` : ''}</p>` : ''}
+            ${source.url ? `<a class="src-detail-url" href="${esc(source.url)}" target="_blank" rel="noopener">${esc(source.url.slice(0, 70))}${source.url.length > 70 ? '…' : ''}</a>` : ''}
+            ${source.summary ? `<p class="src-detail-summary">${esc(source.summary)}</p>` : ''}
+            ${(source.tags ?? []).length ? `<div class="src-detail-tags">${source.tags.map(t => `<span class="badge">${esc(t)}</span>`).join('')}</div>` : ''}
+          </div>
+          <div class="src-detail-actions">
+            <button class="btn btn-ghost" id="src-edit-btn">Bewerken</button>
+            <button class="btn btn-danger" id="src-delete-btn">Verwijderen</button>
+          </div>
+          <section class="src-detail-notes">
+            <h3>${notes.length} nota${notes.length === 1 ? '' : "'s"}</h3>
+            ${notes.length === 0
+              ? '<p class="muted">Nog geen nota\'s gekoppeld aan deze bron.</p>'
+              : notes.map(n => `
+                <div class="src-note-row">
+                  <span class="src-note-title">${esc(n.ai_title ?? n.core_idea ?? n.content.slice(0, 80))}</span>
+                  <span class="badge badge-${n.status}">${esc(n.status)}</span>
+                </div>
+              `).join('')
+            }
+          </section>
+        </div>
+      </div>
+    `
+    document.getElementById('src-back')?.addEventListener('click', () => { detailSourceId = null; render() })
+    document.getElementById('src-edit-btn')?.addEventListener('click', () => {
+      editing = source
+      formData = {
+        title: source.title, author: source.author ?? '', type: source.type,
+        year: source.year ?? '', url: source.url ?? '',
+        summary: source.summary ?? '', tags: source.tags ?? []
+      }
+      detailSourceId = null
+      render()
+    })
+    document.getElementById('src-delete-btn')?.addEventListener('click', async () => {
+      if (!confirm(`Bron "${source.title}" verwijderen? Nota's die eraan gekoppeld zijn verliezen de koppeling, maar blijven bestaan.`)) return
+      try {
+        await deleteSource(source.id)
+        const idx = sources.findIndex(s => s.id === source.id)
+        if (idx !== -1) sources.splice(idx, 1)
+        detailSourceId = null
+        showToast('Bron verwijderd')
+        render()
+      } catch { showToast('Verwijderen mislukt') }
+    })
+  }
+
+  const wireListEvents = () => {
+    document.getElementById('src-search')?.addEventListener('input', (e) => {
+      searchText = (e.target as HTMLInputElement).value
+      render()
+    })
+
+    document.querySelectorAll<HTMLButtonElement>('[data-type]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        typeFilter = btn.dataset['type'] as SourceType | 'all'
+        render()
       })
     })
 
-  } catch (err) {
-    body.innerHTML = `<div class="sources-error">Laden mislukt: ${escHtml(errMsg(err))}</div>`
-  }
-}
-
-function groupBySources(notes: Note[]): { sourced: Source[]; unsourced: Note[] } {
-  const map = new Map<string, Source>()
-  const unsourced: Note[] = []
-
-  for (const note of notes) {
-    if (!note.source_url && !note.source_title && !note.source_author) {
-      unsourced.push(note)
-      continue
-    }
-    // Key by url if present, otherwise by title
-    const key = note.source_url ?? note.source_title ?? note.source_author ?? '__unknown__'
-    if (!map.has(key)) {
-      map.set(key, {
-        url: note.source_url,
-        title: note.source_title,
-        author: note.source_author,
-        notes: []
+    document.querySelectorAll<HTMLElement>('[data-source-id]').forEach(el => {
+      el.addEventListener('click', () => {
+        detailSourceId = el.dataset['sourceId']!
+        render()
       })
-    }
-    map.get(key)!.notes.push(note)
+    })
+
+    document.getElementById('src-form')?.addEventListener('submit', async (e) => {
+      e.preventDefault()
+      const form = e.target as HTMLFormElement
+      const get = (id: string) => (form.querySelector(`#${id}`) as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement)?.value.trim() ?? ''
+      const input: SourceInsert & { type: SourceType } = {
+        title: get('sf-title'),
+        author: get('sf-author') || undefined,
+        type: (get('sf-type') as SourceType) || 'book',
+        year: get('sf-year') || undefined,
+        url: get('sf-url') || undefined,
+        summary: get('sf-summary') || undefined,
+        tags: get('sf-tags').split(',').map(t => t.trim()).filter(Boolean)
+      }
+      if (!input.title) { showToast('Titel is verplicht'); return }
+      const submitBtn = form.querySelector<HTMLButtonElement>('button[type="submit"]')!
+      submitBtn.disabled = true
+      try {
+        if (editing) {
+          const updated = await updateSource(editing.id, input)
+          const idx = sources.findIndex(s => s.id === editing!.id)
+          if (idx !== -1) sources[idx] = updated
+          editing = null
+          showToast('Bron bijgewerkt')
+        } else {
+          const created = await createSource(input)
+          sources.unshift(created)
+          showToast('Bron aangemaakt')
+        }
+        formData = emptyForm()
+        render()
+      } catch (err) {
+        showToast(`Mislukt: ${msg(err)}`)
+      } finally {
+        submitBtn.disabled = false
+      }
+    })
+
+    document.getElementById('sf-cancel')?.addEventListener('click', () => {
+      editing = null
+      formData = emptyForm()
+      render()
+    })
   }
 
-  const sourced = Array.from(map.values()).sort((a, b) => b.notes.length - a.notes.length)
-  return { sourced, unsourced }
+  render()
 }
 
-function renderSourceCard(source: Source): string {
-  const displayTitle = source.title ?? source.url ?? 'Onbekende bron'
-  const authorLine = source.author ? `<span class="source-author">${escHtml(source.author)}</span>` : ''
-  const urlLine = source.url
-    ? `<a class="source-url" href="${escHtml(source.url)}" target="_blank" rel="noopener">${escHtml(source.url.slice(0, 60))}${source.url.length > 60 ? '…' : ''}</a>`
-    : ''
-
+function renderCard(source: Source, noteCount: number): string {
+  const meta = SOURCE_TYPES[source.type]
   return `
-    <details class="source-card">
-      <summary class="source-summary">
-        <span class="source-title">${escHtml(displayTitle)}</span>
-        ${authorLine}
-        <span class="source-count">${source.notes.length} nota${source.notes.length === 1 ? '' : "'s"}</span>
-      </summary>
-      <div class="source-body">
-        ${urlLine ? `<div class="source-meta">${urlLine}</div>` : ''}
-        <div class="source-notes-list">
-          ${source.notes.map(n => `
-            <div class="source-note-row">
-              <span class="source-note-title">${escHtml(n.ai_title ?? n.content.slice(0, 80))}</span>
-              <span class="source-note-status source-status-${n.status}">${statusLabel(n.status)}</span>
-            </div>
-          `).join('')}
-        </div>
-      </div>
-    </details>
-  `
-}
-
-function renderUnsourcedRow(note: Note): string {
-  return `
-    <div class="unsourced-row">
-      <span class="unsourced-content">${escHtml(note.ai_title ?? note.content.slice(0, 80))}</span>
-      <span class="source-note-status source-status-${note.status}">${statusLabel(note.status)}</span>
+    <div class="src-card" data-source-id="${source.id}" role="button" tabindex="0">
+      <div class="src-card-type">${esc(meta.label)}</div>
+      <div class="src-card-title">${esc(source.title)}</div>
+      ${source.author ? `<div class="src-card-author">${esc(source.author)}${source.year ? ` · ${esc(source.year)}` : ''}</div>` : ''}
+      <div class="src-card-count">${noteCount} nota${noteCount === 1 ? '' : "'s"}</div>
     </div>
   `
 }
 
-function statusLabel(status: string): string {
-  if (status === 'inbox')    return 'inbox'
-  if (status === 'verwerkt') return 'verwerkt'
-  if (status === 'archief')  return 'archief'
-  return status
+function renderForm(data: SourceInsert & { type: SourceType }, editing: Source | null): string {
+  const tagsVal = (data.tags ?? []).join(', ')
+  return `
+    <form id="src-form" class="src-form" novalidate>
+      <div class="sf-field">
+        <label class="sf-label" for="sf-title">Titel *</label>
+        <input id="sf-title" type="text" value="${esc(data.title ?? '')}" required />
+      </div>
+      <div class="sf-row">
+        <div class="sf-field">
+          <label class="sf-label" for="sf-author">Auteur</label>
+          <input id="sf-author" type="text" value="${esc(data.author ?? '')}" />
+        </div>
+        <div class="sf-field">
+          <label class="sf-label" for="sf-year">Jaar</label>
+          <input id="sf-year" type="text" value="${esc(data.year ?? '')}" style="width:80px" />
+        </div>
+      </div>
+      <div class="sf-field">
+        <label class="sf-label" for="sf-type">Type</label>
+        <select id="sf-type">
+          ${SOURCE_TYPE_ORDER.map(t =>
+            `<option value="${t}" ${data.type === t ? 'selected' : ''}>${SOURCE_TYPES[t].label}</option>`
+          ).join('')}
+        </select>
+      </div>
+      <div class="sf-field">
+        <label class="sf-label" for="sf-url">URL</label>
+        <input id="sf-url" type="url" value="${esc(data.url ?? '')}" />
+      </div>
+      <div class="sf-field">
+        <label class="sf-label" for="sf-summary">Samenvatting</label>
+        <textarea id="sf-summary" rows="3">${esc(data.summary ?? '')}</textarea>
+      </div>
+      <div class="sf-field">
+        <label class="sf-label" for="sf-tags">Tags (kommagescheiden)</label>
+        <input id="sf-tags" type="text" value="${esc(tagsVal)}" />
+      </div>
+      <div class="sf-actions">
+        <button type="submit" class="btn btn-primary">${editing ? 'Opslaan' : 'Aanmaken'}</button>
+        ${editing ? `<button type="button" class="btn btn-ghost" id="sf-cancel">Annuleren</button>` : ''}
+      </div>
+    </form>
+  `
 }
 
-function escHtml(str: string): string {
+function emptyForm(): SourceInsert & { type: SourceType } {
+  return { title: '', author: '', type: 'book', year: '', url: '', summary: '', tags: [] }
+}
+
+function showToast(msg: string): void {
+  const t = document.getElementById('toast') as HTMLDivElement | null
+  if (!t) return
+  t.textContent = msg
+  t.classList.add('show')
+  setTimeout(() => t.classList.remove('show'), 2500)
+}
+
+function esc(str: string): string {
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 }
 
-function errMsg(err: unknown): string {
+function msg(err: unknown): string {
   return err instanceof Error ? err.message : 'onbekende fout'
 }
 
-function injectSourcesStyles(): void {
-  if (document.getElementById('sources-styles')) return
+function injectStyles(): void {
+  if (document.getElementById('src-styles')) return
   const style = document.createElement('style')
-  style.id = 'sources-styles'
+  style.id = 'src-styles'
   style.textContent = `
-    .sources-body {
+    .src-body {
       flex: 1;
-      display: flex;
-      flex-direction: column;
-      gap: var(--s-4);
       padding: var(--s-4);
-      max-width: 760px;
+      max-width: 1100px;
       width: 100%;
       margin: 0 auto;
     }
-    .sources-section {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: var(--r-md);
-      padding: var(--s-4);
-    }
-    .sources-section-header {
-      display: flex;
-      align-items: baseline;
-      gap: var(--s-3);
-      margin-bottom: var(--s-3);
-      flex-wrap: wrap;
-      list-style: none;
-      cursor: pointer;
-    }
-    .sources-section-header h2 {
-      font-size: var(--fs-lg);
-      font-weight: 600;
-    }
-    .sources-section-header::-webkit-details-marker { display: none; }
-    .sources-list {
-      display: flex;
-      flex-direction: column;
-      gap: var(--s-2);
-    }
-    .source-card {
-      border: 1px solid var(--border);
-      border-radius: var(--r-sm);
-      overflow: hidden;
-      background: var(--bg);
-    }
-    .source-summary {
-      list-style: none;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      gap: var(--s-3);
-      padding: var(--s-3);
-      flex-wrap: wrap;
-    }
-    .source-summary::-webkit-details-marker { display: none; }
-    .source-title {
-      flex: 1;
-      font-weight: 500;
-      min-width: 0;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-    .source-author {
-      font-size: var(--fs-sm);
-      color: var(--text-muted);
-    }
-    .source-count {
-      font-size: var(--fs-sm);
-      color: var(--text-muted);
-      white-space: nowrap;
-    }
-    .source-body {
-      padding: var(--s-3);
-      border-top: 1px solid var(--border);
-      display: flex;
-      flex-direction: column;
-      gap: var(--s-2);
-    }
-    .source-meta {}
-    .source-url {
-      font-size: var(--fs-sm);
-      color: var(--accent);
-      word-break: break-all;
-    }
-    .source-notes-list {
-      display: flex;
-      flex-direction: column;
-      gap: var(--s-1);
-    }
-    .source-note-row {
-      display: flex;
-      align-items: center;
-      gap: var(--s-2);
-      padding: var(--s-1) 0;
-    }
-    .source-note-title {
-      flex: 1;
-      font-size: var(--fs-sm);
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-    .source-note-status {
-      font-size: 11px;
-      padding: 2px var(--s-2);
-      border-radius: var(--r-sm);
-      font-weight: 500;
-      white-space: nowrap;
-    }
-    .source-status-inbox    { background: #E8F0FF; color: #1A3A8B; }
-    .source-status-verwerkt { background: #E8F5EE; color: #1A6B40; }
-    .source-status-archief  { background: var(--bg); color: var(--text-muted); border: 1px solid var(--border); }
-    .unsourced-details { }
-    .unsourced-list {
-      display: flex;
-      flex-direction: column;
-      gap: var(--s-1);
-      margin-top: var(--s-3);
-    }
-    .unsourced-row {
-      display: flex;
-      align-items: center;
-      gap: var(--s-2);
-      padding: var(--s-1) 0;
-      font-size: var(--fs-sm);
-      color: var(--text-muted);
-    }
-    .unsourced-content {
-      flex: 1;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-    .sources-loading,
-    .sources-error,
-    .sources-empty {
+    .src-loading {
       text-align: center;
       padding: var(--s-7);
       color: var(--text-muted);
     }
+    .src-layout {
+      display: grid;
+      grid-template-columns: 320px 1fr;
+      gap: var(--s-5);
+      align-items: start;
+    }
+    @media (max-width: 720px) {
+      .src-layout { grid-template-columns: 1fr; }
+    }
+    .src-sidebar {
+      position: sticky;
+      top: var(--s-4);
+    }
+    .src-form-wrap {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--r-md);
+      padding: var(--s-4);
+      display: flex;
+      flex-direction: column;
+      gap: var(--s-3);
+    }
+    .src-form-wrap h2 { font-size: var(--fs-lg); font-weight: 600; }
+    .src-form { display: flex; flex-direction: column; gap: var(--s-3); }
+    .sf-field { display: flex; flex-direction: column; gap: var(--s-1); }
+    .sf-label { font-size: var(--fs-sm); color: var(--text-muted); font-weight: 500; }
+    .sf-row { display: grid; grid-template-columns: 1fr auto; gap: var(--s-2); }
+    .sf-actions { display: flex; gap: var(--s-2); flex-wrap: wrap; }
+    .sf-actions .btn { width: auto; }
+    .src-main { display: flex; flex-direction: column; gap: var(--s-3); }
+    .src-toolbar { display: flex; flex-direction: column; gap: var(--s-2); }
+    .src-search { width: 100%; }
+    .src-type-pills { display: flex; gap: var(--s-1); flex-wrap: wrap; }
+    .src-pill {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--r-sm);
+      padding: 4px var(--s-3);
+      font-size: var(--fs-sm);
+      cursor: pointer;
+      color: var(--text-muted);
+    }
+    .src-pill.active {
+      background: var(--accent);
+      color: #fff;
+      border-color: var(--accent);
+    }
+    .src-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: var(--s-3); }
+    .src-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--r-md);
+      padding: var(--s-3);
+      cursor: pointer;
+      display: flex;
+      flex-direction: column;
+      gap: var(--s-1);
+      transition: border-color 0.15s;
+    }
+    .src-card:hover { border-color: var(--accent); }
+    .src-card-type { font-size: 11px; color: var(--accent); text-transform: uppercase; letter-spacing: 0.08em; font-weight: 600; }
+    .src-card-title { font-size: var(--fs-base); font-weight: 500; color: var(--text); }
+    .src-card-author { font-size: var(--fs-sm); color: var(--text-muted); }
+    .src-card-count { font-size: var(--fs-sm); color: var(--text-muted); margin-top: var(--s-1); }
+    .src-empty { color: var(--text-muted); font-size: var(--fs-sm); text-align: center; padding: var(--s-7) 0; }
+    .src-detail-wrap { max-width: 720px; margin: 0 auto; display: flex; flex-direction: column; gap: var(--s-4); }
+    .src-back { width: auto; }
+    .src-detail { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-md); padding: var(--s-5); }
+    .src-detail-header { display: flex; flex-direction: column; gap: var(--s-2); margin-bottom: var(--s-4); }
+    .src-type-badge { font-size: 11px; color: var(--accent); text-transform: uppercase; letter-spacing: 0.08em; font-weight: 600; }
+    .src-detail-title { font-size: var(--fs-xl); font-weight: 600; color: var(--text); }
+    .src-detail-author { font-size: var(--fs-sm); color: var(--text-muted); }
+    .src-detail-url { font-size: var(--fs-sm); color: var(--accent); word-break: break-all; }
+    .src-detail-summary { font-size: var(--fs-base); color: var(--text); line-height: 1.6; white-space: pre-wrap; }
+    .src-detail-tags { display: flex; gap: var(--s-1); flex-wrap: wrap; }
+    .src-detail-actions { display: flex; gap: var(--s-2); margin-bottom: var(--s-4); }
+    .src-detail-actions .btn { width: auto; }
+    .src-detail-notes h3 { font-size: var(--fs-base); font-weight: 600; margin-bottom: var(--s-3); }
+    .src-note-row {
+      display: flex; align-items: center; gap: var(--s-2);
+      padding: var(--s-2) 0; border-bottom: 1px solid var(--border);
+    }
+    .src-note-row:last-child { border-bottom: none; }
+    .src-note-title { flex: 1; font-size: var(--fs-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .muted { color: var(--text-muted); font-size: var(--fs-sm); }
   `
   document.head.appendChild(style)

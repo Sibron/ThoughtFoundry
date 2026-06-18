@@ -10,6 +10,7 @@ import { getUserClient, requireUserId, logUsage } from '../_shared/supabase.ts'
 interface SparkRequest {
   query: string
   outputType: 'reflectie' | 'coaching' | 'beslissing' | 'blogdraft' | 'gesprekskader'
+  persona?: string
   model?: 'claude-haiku-4-5' | 'claude-sonnet-4-6'
 }
 
@@ -87,11 +88,13 @@ Deno.serve(async (req: Request) => {
 
   const userPrompt = `## Query / thema\n${body.query}\n\n## Geselecteerde nota's (${scored.length})\n\n${noteBlock}\n\n## Jouw taak\n${instruction}`
 
+  const system = [body.persona?.trim(), SYSTEM_PROMPT].filter(Boolean).join('\n\n')
+
   let result
   try {
     result = await callAnthropic({
       apiKey, model,
-      system: SYSTEM_PROMPT,
+      system,
       messages: [{ role: 'user', content: userPrompt }],
       maxTokens: 1500
     })
