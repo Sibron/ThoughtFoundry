@@ -184,6 +184,22 @@ textarea:focus {
   color: var(--text);
 }
 
+.topbar-sep {
+  color: var(--border);
+  font-size: var(--fs-sm);
+  user-select: none;
+  flex-shrink: 0;
+}
+
+.topbar-btn.topbar-secondary {
+  opacity: 0.65;
+  font-size: 13px;
+}
+
+.topbar-btn.topbar-secondary:hover {
+  opacity: 1;
+}
+
 /* ── Toast ── */
 .toast {
   position: fixed;

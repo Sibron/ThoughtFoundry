@@ -183,6 +183,9 @@ export async function renderThemes(app: HTMLElement): Promise<void> {
     const colorEl = document.querySelector<HTMLInputElement>('input[name="new-color"]:checked')
     const name = nameEl.value.trim()
     if (!name) { showToast('Naam is verplicht'); return }
+    if (themes.length >= 9) {
+      showToast(`Je hebt al ${themes.length} thema's — past dit onder een bestaand thema?`)
+    }
     const btn = document.getElementById('create-btn') as HTMLButtonElement
     btn.disabled = true
     try {

@@ -98,6 +98,7 @@ export async function renderGraph(app: HTMLElement): Promise<void> {
   let nodes: GraphNode[] = []
   let edges: GraphEdge[] = []
   let svg: SVGSVGElement | null = null
+  let usingTemporalFallback = false
 
   rebuild()
 
@@ -147,6 +148,24 @@ export async function renderGraph(app: HTMLElement): Promise<void> {
       }
     })
 
+    // Temporal clustering fallback when no edges exist
+    usingTemporalFallback = false
+    if (edges.length === 0) {
+      const WEEK_MS = 7 * 24 * 60 * 60 * 1000
+      const byWeek = new Map<number, GraphNode[]>()
+      for (const n of nodes) {
+        const week = Math.floor(new Date(n.note.created_at).getTime() / WEEK_MS)
+        if (!byWeek.has(week)) byWeek.set(week, [])
+        byWeek.get(week)!.push(n)
+      }
+      for (const group of byWeek.values()) {
+        for (let i = 0; i < group.length - 1; i++) {
+          edges.push({ source: group[i].id, target: group[i + 1].id, kind: 'theme', reason: 'zelfde week' })
+        }
+      }
+      usingTemporalFallback = edges.length > 0
+    }
+
     runLayout(nodes, edges, 250)
     renderSvg()
     updateStats()
@@ -154,7 +173,11 @@ export async function renderGraph(app: HTMLElement): Promise<void> {
 
   function updateStats(): void {
     const stats = document.getElementById('graph-stats')!
-    stats.textContent = `${nodes.length} nota's · ${edges.filter(e => e.kind === 'explicit').length} expliciete links · ${themes.length} thema's`
+    if (usingTemporalFallback) {
+      stats.textContent = `${nodes.length} nota's · Tijdclusters (thema's nog niet gekoppeld)`
+    } else {
+      stats.textContent = `${nodes.length} nota's · ${edges.filter(e => e.kind === 'explicit').length} expliciete links · ${themes.length} thema's`
+    }
   }
 
   function renderSvg(): void {
