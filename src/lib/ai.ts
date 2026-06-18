@@ -4,7 +4,6 @@ import { getPersona } from './persona'
 export interface NoteSuggestion {
   title: string
   summary: string
-  types: string[]
   tags: string[]
   matched_theme_ids: string[]
   new_themes: { name: string; description: string }[]

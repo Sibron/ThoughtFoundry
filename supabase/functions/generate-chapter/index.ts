@@ -20,7 +20,6 @@ interface NoteRow {
   ai_title: string | null
   ai_summary: string | null
   tags: string[] | null
-  types: string[] | null
 }
 
 interface ChapterPlan {
@@ -72,7 +71,7 @@ Deno.serve(async (req: Request) => {
 
   const { data: notesData, error: notesErr } = await supabase
     .from('notes')
-    .select('id, content, mini_notes, ai_title, ai_summary, tags, types')
+    .select('id, content, mini_notes, ai_title, ai_summary, tags')
     .in('id', body.noteIds)
 
   if (notesErr) return jsonResponse({ error: notesErr.message }, 500)

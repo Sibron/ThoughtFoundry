@@ -7,6 +7,7 @@ import { createRouter, navigateTo } from './router'
 import { renderLogin } from './pages/login'
 import { renderCapture } from './pages/capture'
 import { renderInbox } from './pages/inbox'
+import { renderNoteDetail } from './pages/note'
 import { renderProcess } from './pages/process'
 import { renderGraph } from './pages/graph'
 import { renderBook } from './pages/book'
@@ -51,6 +52,7 @@ if (!isConfigured) {
     },
     '/capture':  () => guard(renderCapture),
     '/inbox':    () => guard(renderInbox),
+    '/note':     () => guard(renderNoteDetail),
     '/process':  aiGuard(renderProcess, 'Verwerken'),
     '/graph':    aiGuard(renderGraph, 'Graaf'),
     '/book':     aiGuard(renderBook, 'Boek'),

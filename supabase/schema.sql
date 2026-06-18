@@ -22,7 +22,6 @@ create table if not exists public.notes (
   core_idea    text,
   use_for      text,
   source_id    uuid,
-  types        text[] not null default '{}',
   tags         text[] not null default '{}',
   source_url   text,
   source_title text,
@@ -60,6 +59,7 @@ create table if not exists public.themes (
   name        text not null,
   description text,
   color       text not null default '#3AC48D',
+  parent_id   uuid references public.themes(id) on delete set null,
   created_at  timestamptz not null default now(),
   unique (user_id, name)
 );
@@ -77,6 +77,7 @@ create table if not exists public.note_links (
   user_id     uuid not null references auth.users(id) on delete cascade,
   source_id   uuid not null references public.notes(id) on delete cascade,
   target_id   uuid not null references public.notes(id) on delete cascade,
+  type        text not null default 'related' check (type in ('builds_on','contradicts','example_of','contrasts','applies_to','related')),
   reason      text,
   created_at  timestamptz not null default now(),
   check (source_id <> target_id),
