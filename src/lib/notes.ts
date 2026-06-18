@@ -1,6 +1,7 @@
 import { supabase } from './supabase'
 
 export type NoteStatus = 'inbox' | 'verwerkt' | 'archief'
+export type NoteType = 'fleeting' | 'question' | 'literature' | 'permanent' | 'reflection' | 'framework'
 
 export interface Note {
   id: string
@@ -8,6 +9,10 @@ export interface Note {
   content: string
   mini_notes: string | null
   status: NoteStatus
+  note_type: NoteType
+  core_idea: string | null
+  use_for: string | null
+  source_id: string | null
   types: string[]
   tags: string[]
   source_url: string | null
@@ -24,6 +29,10 @@ export interface Note {
 export interface NoteInsert {
   content: string
   mini_notes?: string
+  note_type?: NoteType
+  core_idea?: string
+  use_for?: string
+  source_id?: string
   tags?: string[]
   source_url?: string
   source_title?: string
@@ -33,6 +42,10 @@ export interface NoteInsert {
 export interface NoteUpdate {
   content?: string
   mini_notes?: string | null
+  note_type?: NoteType
+  core_idea?: string | null
+  use_for?: string | null
+  source_id?: string | null
   source_url?: string | null
   source_title?: string | null
   source_author?: string | null

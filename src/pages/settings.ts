@@ -7,6 +7,7 @@ import { fetchRecentUsage, summarize, type UsageRow } from '../lib/usage'
 import { buildExport, downloadJson, importFromJson, type ExportPayload } from '../lib/exporter'
 import { getInstallPrompt, clearInstallPrompt } from '../lib/pwa'
 import { countByStatus } from '../lib/notes'
+import { getPersona, setPersona, getDefaultPersona } from '../lib/persona'
 
 export async function renderSettings(app: HTMLElement): Promise<void> {
   app.innerHTML = `
@@ -73,6 +74,16 @@ export async function renderSettings(app: HTMLElement): Promise<void> {
       ${isAiEnabled()
         ? ''
         : '<p class="muted">Zet dit pas aan als de edge functions en <code>ANTHROPIC_API_KEY</code> in Supabase geconfigureerd zijn.</p>'}
+    </section>
+
+    <section class="settings-section">
+      <h2>Persoonlijke context voor AI</h2>
+      <p class="muted">Deze tekst wordt aan elk AI-verzoek toegevoegd zodat de AI jouw rol, werkstijl en voorkeuren kent. Leeg laten = standaard uitgeschakeld.</p>
+      <textarea id="persona-textarea" rows="6" style="font-size:var(--fs-sm);line-height:1.5">${escHtml(getPersona())}</textarea>
+      <div style="display:flex;gap:var(--s-2);flex-wrap:wrap">
+        <button class="btn btn-primary" id="persona-save">Opslaan</button>
+        <button class="btn btn-ghost" id="persona-reset">Herstel standaard</button>
+      </div>
     </section>
 
     <section class="settings-section">
@@ -161,6 +172,19 @@ export async function renderSettings(app: HTMLElement): Promise<void> {
     setAiEnabled(on)
     showToast(on ? 'AI ingeschakeld' : 'AI uitgeschakeld')
     renderSettings(app) // re-render so nav + hints reflect the new state
+  })
+
+  document.getElementById('persona-save')?.addEventListener('click', () => {
+    const val = (document.getElementById('persona-textarea') as HTMLTextAreaElement).value.trim()
+    setPersona(val)
+    showToast('Persoonlijke context opgeslagen')
+  })
+
+  document.getElementById('persona-reset')?.addEventListener('click', () => {
+    const ta = document.getElementById('persona-textarea') as HTMLTextAreaElement
+    ta.value = getDefaultPersona()
+    setPersona(getDefaultPersona())
+    showToast('Standaard hersteld')
   })
 
   document.getElementById('cap-save')?.addEventListener('click', () => {

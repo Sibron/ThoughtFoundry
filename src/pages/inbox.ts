@@ -6,8 +6,10 @@ import {
   bulkDelete,
   type Note,
   type NoteStatus,
+  type NoteType,
   type NoteUpdate
 } from '../lib/notes'
+import { NOTE_TYPES, NOTE_TYPE_ORDER } from '../lib/noteTypes'
 import { renderTopbar, attachTopbar } from '../lib/nav'
 
 export async function renderInbox(app: HTMLElement): Promise<void> {
@@ -20,6 +22,13 @@ export async function renderInbox(app: HTMLElement): Promise<void> {
         <button class="inbox-tab" data-status="inbox">Inbox</button>
         <button class="inbox-tab" data-status="verwerkt">Verwerkt</button>
         <button class="inbox-tab" data-status="archief">Archief</button>
+      </div>
+      <div class="inbox-type-pills" id="inbox-type-pills">
+        <button class="type-pill active" data-note-type="">Alle types</button>
+        ${NOTE_TYPE_ORDER.map(t => {
+          const m = NOTE_TYPES[t]
+          return `<button class="type-pill" data-note-type="${t}" style="--pill-color:${m.color}">${escHtml(m.label)}</button>`
+        }).join('')}
       </div>
       <div class="inbox-toolbar">
         <input type="text" id="inbox-filter" placeholder="Zoeken in content, titel, samenvatting…" class="inbox-filter" />
@@ -47,6 +56,7 @@ export async function renderInbox(app: HTMLElement): Promise<void> {
   let allNotes: Note[] = []
   let searchText = ''
   let statusFilter: NoteStatus | undefined = undefined
+  let noteTypeFilter: NoteType | undefined = undefined
   const selected = new Set<string>()
   let searchDebounce: ReturnType<typeof setTimeout> | null = null
 
@@ -63,6 +73,20 @@ export async function renderInbox(app: HTMLElement): Promise<void> {
       tab.setAttribute('aria-current', 'true')
       const v = tab.dataset['status']
       statusFilter = v ? (v as NoteStatus) : undefined
+      page = 0
+      allNotes = []
+      selected.clear()
+      updateBulkBar()
+      await loadNotes()
+    })
+  })
+
+  document.querySelectorAll<HTMLButtonElement>('.type-pill').forEach(pill => {
+    pill.addEventListener('click', async () => {
+      document.querySelectorAll('.type-pill').forEach(p => p.classList.remove('active'))
+      pill.classList.add('active')
+      const v = pill.dataset['noteType']
+      noteTypeFilter = v ? (v as NoteType) : undefined
       page = 0
       allNotes = []
       selected.clear()
@@ -142,7 +166,8 @@ export async function renderInbox(app: HTMLElement): Promise<void> {
   async function loadNotes(): Promise<void> {
     try {
       const notes = await fetchNotes(page, 50, statusFilter, searchText || undefined)
-      allNotes = page === 0 ? notes : [...allNotes, ...notes]
+      const filtered = noteTypeFilter ? notes.filter(n => n.note_type === noteTypeFilter) : notes
+      allNotes = page === 0 ? filtered : [...allNotes, ...filtered]
       loadMoreBtn.style.display = notes.length === 50 ? 'flex' : 'none'
       renderList()
     } catch (err) {
@@ -319,6 +344,8 @@ function renderNoteRow(note: Note, isSelected: boolean): string {
   const preview = note.ai_title ?? note.content.slice(0, 200)
   const date = relativeDate(note.created_at)
   const badgeClass = `badge badge-${note.status}`
+  const typeMeta = NOTE_TYPES[note.note_type ?? 'fleeting']
+  const typeBadge = `<span class="note-type-badge" style="background:${typeMeta?.color ?? '#888'}">${escHtml(typeMeta?.label ?? note.note_type ?? '')}</span>`
   return `
     <div class="inbox-row" data-id="${note.id}">
       <div class="row-select">
@@ -328,6 +355,7 @@ function renderNoteRow(note: Note, isSelected: boolean): string {
         <div class="row-header" role="button" tabindex="0" aria-expanded="false">
           <div class="row-preview">${escHtml(preview)}${!note.ai_title && note.content.length > 200 ? '…' : ''}</div>
           <div class="row-meta">
+            ${typeBadge}
             <span class="${badgeClass}">${escHtml(note.status)}</span>
             <span class="row-date">${date}</span>
           </div>
@@ -576,6 +604,34 @@ function injectInboxStyles(): void {
       background: var(--accent);
       color: #fff;
       border-color: var(--accent);
+    }
+    .inbox-type-pills {
+      display: flex;
+      gap: var(--s-1);
+      flex-wrap: wrap;
+    }
+    .type-pill {
+      background: var(--surface);
+      border: 1.5px solid var(--pill-color, var(--border));
+      border-radius: var(--r-sm);
+      padding: 2px var(--s-2);
+      cursor: pointer;
+      font-size: var(--fs-sm);
+      color: var(--pill-color, var(--text-muted));
+    }
+    .type-pill.active {
+      background: var(--pill-color, var(--accent));
+      color: #fff;
+      font-weight: 600;
+    }
+    .note-type-badge {
+      display: inline-block;
+      padding: 1px 6px;
+      border-radius: var(--r-sm);
+      font-size: 11px;
+      font-weight: 600;
+      color: #fff;
+      letter-spacing: 0.02em;
     }
     .muted { color: var(--text-muted); font-size: var(--fs-sm); }
   `
