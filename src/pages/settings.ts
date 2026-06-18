@@ -5,6 +5,7 @@ import { navigateTo } from '../router'
 import { getMonthlyCap, setMonthlyCap, getCostStatus, formatUsd } from '../lib/cost'
 import { fetchRecentUsage, summarize, type UsageRow } from '../lib/usage'
 import { buildExport, downloadJson, importFromJson, type ExportPayload } from '../lib/exporter'
+import { getInstallPrompt, clearInstallPrompt } from '../lib/pwa'
 import { countByStatus } from '../lib/notes'
 
 export async function renderSettings(app: HTMLElement): Promise<void> {
@@ -50,6 +51,12 @@ export async function renderSettings(app: HTMLElement): Promise<void> {
   const summary = summarize(usage)
 
   document.getElementById('settings-body')!.innerHTML = `
+    <section class="settings-section" id="pwa-install-section" ${getInstallPrompt() ? '' : 'hidden'}>
+      <h2>App installeren</h2>
+      <p class="muted">Installeer ThoughtFoundry op je apparaat voor snelle toegang zonder browser — werkt ook offline.</p>
+      <button class="btn btn-primary" id="pwa-install-btn">Installeer app</button>
+    </section>
+
     <section class="settings-section">
       <h2>Account</h2>
       <p>${escHtml(userEmail ?? 'onbekend')}</p>
@@ -202,6 +209,18 @@ export async function renderSettings(app: HTMLElement): Promise<void> {
       }
     }
     reader.readAsText(file)
+  })
+
+  document.getElementById('pwa-install-btn')?.addEventListener('click', async () => {
+    const prompt = getInstallPrompt()
+    if (!prompt) return
+    await prompt.prompt()
+    const { outcome } = await prompt.userChoice
+    if (outcome === 'accepted') {
+      clearInstallPrompt()
+      document.getElementById('pwa-install-section')?.setAttribute('hidden', '')
+      showToast('App geïnstalleerd!')
+    }
   })
 
   document.getElementById('import-btn')?.addEventListener('click', async () => {
