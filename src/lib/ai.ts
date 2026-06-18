@@ -1,4 +1,5 @@
 import { supabase } from './supabase'
+import { getPersona } from './persona'
 
 export interface NoteSuggestion {
   title: string
@@ -24,7 +25,9 @@ export interface AIUsage {
 }
 
 async function invoke<T>(name: string, body: Record<string, unknown>): Promise<T> {
-  const { data, error } = await supabase.functions.invoke(name, { body })
+  const persona = getPersona()
+  const fullBody = persona ? { ...body, persona } : body
+  const { data, error } = await supabase.functions.invoke(name, { body: fullBody })
   if (error) throw new Error(error.message ?? 'Edge function error')
   if (data && typeof data === 'object' && 'error' in data) {
     throw new Error(String((data as { error: string }).error))

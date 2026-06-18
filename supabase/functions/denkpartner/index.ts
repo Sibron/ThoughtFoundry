@@ -10,6 +10,7 @@ interface DenkpartnerRequest {
   scope: 'all' | 'tag' | 'theme'
   tag?: string
   themeId?: string
+  persona?: string
   model?: 'claude-haiku-4-5' | 'claude-sonnet-4-6'
 }
 
@@ -89,11 +90,13 @@ Deno.serve(async (req: Request) => {
 
   const userPrompt = `## Nota's (${notes.length} totaal)\n\n${noteBlock}\n\nGenereer 4-5 scherpe vragen die de kern van dit denken uitdagen.`
 
+  const system = [body.persona?.trim(), SYSTEM_PROMPT].filter(Boolean).join('\n\n')
+
   let result
   try {
     result = await callAnthropic({
       apiKey, model,
-      system: SYSTEM_PROMPT,
+      system,
       messages: [{ role: 'user', content: userPrompt }],
       maxTokens: 800
     })

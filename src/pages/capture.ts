@@ -1,12 +1,20 @@
-import { insertNote, queueOfflineNote, flushOfflineQueue, offlineQueueSize, fetchNotes, fetchRandomNote, type NoteInsert, type Note } from '../lib/notes'
+import { insertNote, queueOfflineNote, flushOfflineQueue, offlineQueueSize, fetchNotes, fetchRandomNote, type NoteInsert, type Note, type NoteType } from '../lib/notes'
+import { NOTE_TYPES, NOTE_TYPE_ORDER } from '../lib/noteTypes'
+import { fetchSources, type Source } from '../lib/sources'
+import { createLink, LINK_TYPE_LABELS, type LinkType } from '../lib/links'
 import { renderTopbar, attachTopbar } from '../lib/nav'
 import { navigateTo } from '../router'
 
 const DRAFT_KEY = 'capture_draft'
+const CORE_IDEA_MAX = 280
 
 interface Draft {
   content?: string
   mini?: string
+  noteType?: NoteType
+  coreIdea?: string
+  useFor?: string
+  sourceId?: string
   url?: string
   title?: string
   author?: string
@@ -16,15 +24,41 @@ export async function renderCapture(app: HTMLElement): Promise<void> {
   // Best-effort flush on render — the helper itself returns silently if offline.
   flushOfflineQueue().catch(() => { /* silent */ })
 
+  // Load sources for the picker (non-blocking)
+  let sources: Source[] = []
+  if (navigator.onLine) {
+    fetchSources().then(s => { sources = s }).catch(() => {})
+  }
+
   app.innerHTML = `
     ${renderTopbar('ThoughtFoundry', 'capture', '<span class="online-indicator" id="online-indicator" title=""></span>')}
     <div class="capture-body">
+
+      <div class="capture-type-picker" id="capture-type-picker">
+        ${NOTE_TYPE_ORDER.map(t => {
+          const m = NOTE_TYPES[t]
+          return `<button class="type-btn" data-type="${t}" title="${escHtml(m.desc)}" style="--type-color:${m.color};--type-accent:${m.accent}">${escHtml(m.label)}</button>`
+        }).join('')}
+      </div>
+
+      <div class="capture-core-wrap">
+        <textarea
+          id="capture-core-idea"
+          class="capture-textarea capture-core-idea"
+          placeholder="Kernidee (max 280 tekens) — de essentie in één zin…"
+          rows="2"
+          maxlength="${CORE_IDEA_MAX}"
+        ></textarea>
+        <span class="core-idea-counter" id="core-idea-counter">0/${CORE_IDEA_MAX}</span>
+      </div>
+
+      <input type="text" id="capture-use-for" class="capture-use-for" placeholder="Gebruik voor…" />
+
       <textarea
         id="capture-content"
         class="capture-textarea"
-        placeholder="Typ hier je idee…"
-        autofocus
-        rows="6"
+        placeholder="Uitwerking (optioneel)…"
+        rows="5"
       ></textarea>
       <p class="duplicate-hint" id="duplicate-hint"></p>
 
@@ -41,11 +75,30 @@ export async function renderCapture(app: HTMLElement): Promise<void> {
       <details class="capture-extra" id="bron-details">
         <summary class="capture-extra-toggle">+ Bron</summary>
         <div class="capture-bron-fields">
-          <input type="text" id="capture-source-url" placeholder="URL" />
+          <select id="capture-source-id" class="capture-source-select">
+            <option value="">— Geen gekoppelde bron —</option>
+          </select>
+          <input type="text" id="capture-source-url" placeholder="URL (losse bronverwijzing)" />
           <input type="text" id="capture-source-title" placeholder="Titel" />
           <input type="text" id="capture-source-author" placeholder="Auteur" />
         </div>
       </details>
+
+      <div id="permanent-link-section" class="permanent-link-section" hidden>
+        <div class="permanent-link-header">Koppel aan een bestaande nota (verplicht voor permanente noten)</div>
+        <div class="permanent-link-row">
+          <select id="perm-link-type">
+            ${Object.entries(LINK_TYPE_LABELS).map(([k, v]) => `<option value="${k}">${escHtml(v)}</option>`).join('')}
+          </select>
+          <input type="text" id="perm-link-search" placeholder="Zoek nota…" autocomplete="off" />
+        </div>
+        <div id="perm-link-suggestions" class="perm-link-suggestions"></div>
+        <div id="perm-link-selected" class="perm-link-selected"></div>
+        <label class="perm-standalone-check">
+          <input type="checkbox" id="perm-standalone" />
+          Ik bevestig dat dit idee echt op zichzelf staat en geen koppeling nodig heeft.
+        </label>
+      </div>
 
       <div class="capture-footer">
         <button class="btn btn-primary" id="save-btn" disabled>Opslaan</button>
@@ -72,20 +125,119 @@ export async function renderCapture(app: HTMLElement): Promise<void> {
   attachTopbar()
 
   const textarea = document.getElementById('capture-content') as HTMLTextAreaElement
+  const coreIdeaEl = document.getElementById('capture-core-idea') as HTMLTextAreaElement
+  const useForEl = document.getElementById('capture-use-for') as HTMLInputElement
+  const coreCounter = document.getElementById('core-idea-counter') as HTMLSpanElement
   const miniTextarea = document.getElementById('capture-mini') as HTMLTextAreaElement
+  const sourceIdEl = document.getElementById('capture-source-id') as HTMLSelectElement
   const sourceUrl = document.getElementById('capture-source-url') as HTMLInputElement
   const sourceTitle = document.getElementById('capture-source-title') as HTMLInputElement
   const sourceAuthor = document.getElementById('capture-source-author') as HTMLInputElement
   const saveBtn = document.getElementById('save-btn') as HTMLButtonElement
   const duplicateHint = document.getElementById('duplicate-hint') as HTMLParagraphElement
 
+  let selectedNoteType: NoteType = 'fleeting'
+  let permLinkTargetId: string | null = null
+  let permLinkType: LinkType = 'related'
+
+  // Wire type picker
+  const typePicker = document.getElementById('capture-type-picker') as HTMLDivElement
+  typePicker.querySelectorAll<HTMLButtonElement>('.type-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      selectedNoteType = btn.dataset['type'] as NoteType
+      typePicker.querySelectorAll('.type-btn').forEach(b => b.classList.remove('active'))
+      btn.classList.add('active')
+      updatePermSection()
+    })
+  })
+  // Set initial active
+  typePicker.querySelector<HTMLButtonElement>('[data-type="fleeting"]')?.classList.add('active')
+
+  // Core idea counter
+  coreIdeaEl.addEventListener('input', () => {
+    const len = coreIdeaEl.value.length
+    coreCounter.textContent = `${len}/${CORE_IDEA_MAX}`
+    coreCounter.classList.toggle('at-limit', len >= CORE_IDEA_MAX)
+    saveDraft()
+  })
+
+  // Permanent link section
+  const permSection = document.getElementById('permanent-link-section') as HTMLDivElement
+  const permLinkSearch = document.getElementById('perm-link-search') as HTMLInputElement
+  const permLinkTypeEl = document.getElementById('perm-link-type') as HTMLSelectElement
+  const permSuggestions = document.getElementById('perm-link-suggestions') as HTMLDivElement
+  const permSelected = document.getElementById('perm-link-selected') as HTMLDivElement
+  const permStandalone = document.getElementById('perm-standalone') as HTMLInputElement
+
+  permLinkTypeEl.addEventListener('change', () => { permLinkType = permLinkTypeEl.value as LinkType })
+
+  let allNotes: Note[] = []
+  if (navigator.onLine) {
+    fetchNotes(0, 200).then(n => { allNotes = n }).catch(() => {})
+  }
+
+  let searchDebounce: ReturnType<typeof setTimeout> | null = null
+  permLinkSearch.addEventListener('input', () => {
+    if (searchDebounce) clearTimeout(searchDebounce)
+    searchDebounce = setTimeout(() => renderPermSuggestions(), 200)
+  })
+
+  function renderPermSuggestions(): void {
+    const q = permLinkSearch.value.trim().toLowerCase()
+    if (!q) { permSuggestions.innerHTML = ''; return }
+    const matches = allNotes
+      .filter(n => {
+        const text = ((n.ai_title ?? '') + ' ' + n.content).toLowerCase()
+        return text.includes(q) && n.id !== permLinkTargetId
+      })
+      .slice(0, 6)
+    if (matches.length === 0) { permSuggestions.innerHTML = '<span class="perm-no-match">Geen resultaten</span>'; return }
+    permSuggestions.innerHTML = matches.map(n =>
+      `<button class="perm-suggestion" data-id="${n.id}">${escHtml((n.ai_title ?? n.content).slice(0, 80))}</button>`
+    ).join('')
+    permSuggestions.querySelectorAll<HTMLButtonElement>('.perm-suggestion').forEach(b => {
+      b.addEventListener('click', () => {
+        const note = allNotes.find(n => n.id === b.dataset['id'])
+        if (!note) return
+        permLinkTargetId = note.id
+        permSelected.innerHTML = `<span class="perm-tag">${escHtml((note.ai_title ?? note.content).slice(0, 60))} <button class="perm-remove" title="Verwijder">✕</button></span>`
+        permSelected.querySelector('.perm-remove')?.addEventListener('click', () => {
+          permLinkTargetId = null
+          permSelected.innerHTML = ''
+        })
+        permLinkSearch.value = ''
+        permSuggestions.innerHTML = ''
+      })
+    })
+  }
+
+  function updatePermSection(): void {
+    permSection.hidden = selectedNoteType !== 'permanent'
+  }
+
   // Restore an in-progress draft so a reload or accidental close never loses a thought.
-  restoreDraft({ textarea, miniTextarea, sourceUrl, sourceTitle, sourceAuthor })
-  saveBtn.disabled = textarea.value.trim() === ''
+  restoreDraft({ textarea, coreIdeaEl, useForEl, miniTextarea, sourceUrl, sourceTitle, sourceAuthor })
+  coreCounter.textContent = `${coreIdeaEl.value.length}/${CORE_IDEA_MAX}`
+
+  saveBtn.disabled = coreIdeaEl.value.trim() === '' && textarea.value.trim() === ''
   if (miniTextarea.value.trim()) (document.getElementById('extra-details') as HTMLDetailsElement).open = true
   if (sourceUrl.value || sourceTitle.value || sourceAuthor.value) {
     (document.getElementById('bron-details') as HTMLDetailsElement).open = true
   }
+
+  // Populate source picker after it loads
+  const populateSources = () => {
+    if (sources.length === 0) return
+    const existing = Array.from(sourceIdEl.options).map(o => o.value)
+    sources.forEach(s => {
+      if (existing.includes(s.id)) return
+      const opt = document.createElement('option')
+      opt.value = s.id
+      opt.textContent = `${s.title}${s.author ? ` — ${s.author}` : ''}`
+      sourceIdEl.appendChild(opt)
+    })
+  }
+  setTimeout(populateSources, 800)
 
   // Load recent notes once for similarity checking (zero-cost, client-side only)
   let recentNotes: Note[] = []
@@ -96,12 +248,16 @@ export async function renderCapture(app: HTMLElement): Promise<void> {
   const saveDraft = () => {
     const draft: Draft = {
       content: textarea.value,
+      coreIdea: coreIdeaEl.value,
+      useFor: useForEl.value,
+      noteType: selectedNoteType,
       mini: miniTextarea.value,
+      sourceId: sourceIdEl.value || undefined,
       url: sourceUrl.value,
       title: sourceTitle.value,
       author: sourceAuthor.value
     }
-    const empty = !draft.content?.trim() && !draft.mini?.trim() && !draft.url && !draft.title && !draft.author
+    const empty = !draft.content?.trim() && !draft.coreIdea?.trim() && !draft.mini?.trim() && !draft.url && !draft.title && !draft.author
     if (empty) localStorage.removeItem(DRAFT_KEY)
     else localStorage.setItem(DRAFT_KEY, JSON.stringify(draft))
   }
@@ -111,7 +267,7 @@ export async function renderCapture(app: HTMLElement): Promise<void> {
   const checkDuplicates = () => {
     if (hintTimer) clearTimeout(hintTimer)
     hintTimer = setTimeout(() => {
-      const text = textarea.value.trim()
+      const text = (coreIdeaEl.value + ' ' + textarea.value).trim()
       if (text.length < 20 || recentNotes.length === 0) {
         duplicateHint.textContent = ''
         return
@@ -127,15 +283,20 @@ export async function renderCapture(app: HTMLElement): Promise<void> {
   }
 
   const onInput = () => {
-    saveBtn.disabled = textarea.value.trim() === ''
+    saveBtn.disabled = coreIdeaEl.value.trim() === '' && textarea.value.trim() === ''
     saveDraft()
     checkDuplicates()
   }
   textarea.addEventListener('input', onInput)
-  ;[miniTextarea, sourceUrl, sourceTitle, sourceAuthor].forEach(el => el.addEventListener('input', saveDraft))
+  ;[miniTextarea, sourceUrl, sourceTitle, sourceAuthor, useForEl].forEach(el => el.addEventListener('input', saveDraft))
 
-  textarea.focus()
+  coreIdeaEl.focus()
 
+  coreIdeaEl.addEventListener('keydown', (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+      if (!saveBtn.disabled) saveBtn.click()
+    }
+  })
   textarea.addEventListener('keydown', (e) => {
     if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
       if (!saveBtn.disabled) saveBtn.click()
@@ -143,29 +304,58 @@ export async function renderCapture(app: HTMLElement): Promise<void> {
   })
 
   saveBtn.addEventListener('click', async () => {
+    const coreIdea = coreIdeaEl.value.trim()
     const content = textarea.value.trim()
-    if (!content) return
+    if (!coreIdea && !content) return
+
+    // Permanent-link discipline
+    if (selectedNoteType === 'permanent' && navigator.onLine) {
+      const hasLink = permLinkTargetId !== null
+      const standalone = permStandalone.checked
+      if (!hasLink && !standalone) {
+        showToast('Permanente noten vereisen een koppeling of bevestig dat het idee op zichzelf staat.')
+        permSection.hidden = false
+        permLinkSearch.focus()
+        return
+      }
+    }
 
     saveBtn.disabled = true
 
-    const note: NoteInsert = { content }
-    if (miniTextarea.value.trim())  note.mini_notes = miniTextarea.value.trim()
-    if (sourceUrl.value.trim())     note.source_url = sourceUrl.value.trim()
-    if (sourceTitle.value.trim())   note.source_title = sourceTitle.value.trim()
-    if (sourceAuthor.value.trim())  note.source_author = sourceAuthor.value.trim()
+    const note: NoteInsert = { content: content || coreIdea }
+    note.note_type = selectedNoteType
+    if (coreIdea)                    note.core_idea = coreIdea
+    if (useForEl.value.trim())       note.use_for = useForEl.value.trim()
+    if (miniTextarea.value.trim())   note.mini_notes = miniTextarea.value.trim()
+    if (sourceIdEl.value)            note.source_id = sourceIdEl.value
+    if (sourceUrl.value.trim())      note.source_url = sourceUrl.value.trim()
+    if (sourceTitle.value.trim())    note.source_title = sourceTitle.value.trim()
+    if (sourceAuthor.value.trim())   note.source_author = sourceAuthor.value.trim()
 
     try {
       if (navigator.onLine) {
         const saved = await insertNote(note)
         recentNotes = [saved, ...recentNotes].slice(0, 50)
+        // Create the permanent link after the note is saved
+        if (selectedNoteType === 'permanent' && permLinkTargetId) {
+          await createLink({ sourceId: saved.id, targetId: permLinkTargetId, type: permLinkType }).catch(() => {})
+        }
       } else {
         await queueOfflineNote(note)
       }
+      // Reset form
+      coreIdeaEl.value = ''
+      useForEl.value = ''
       textarea.value = ''
       miniTextarea.value = ''
+      sourceIdEl.value = ''
       sourceUrl.value = ''
       sourceTitle.value = ''
       sourceAuthor.value = ''
+      permLinkTargetId = null
+      permSelected.innerHTML = ''
+      permStandalone.checked = false
+      coreCounter.textContent = `0/${CORE_IDEA_MAX}`
       duplicateHint.textContent = ''
       localStorage.removeItem(DRAFT_KEY)
       ;(document.getElementById('extra-details') as HTMLDetailsElement).open = false
@@ -177,8 +367,8 @@ export async function renderCapture(app: HTMLElement): Promise<void> {
       showToast('Opslaan mislukt. Probeer opnieuw.')
       console.error(err)
     } finally {
-      saveBtn.disabled = true
-      textarea.focus()
+      saveBtn.disabled = coreIdeaEl.value.trim() === '' && textarea.value.trim() === ''
+      coreIdeaEl.focus()
     }
   })
 
@@ -253,6 +443,8 @@ function countIntersection(a: Set<string>, b: Set<string>): number {
 
 function restoreDraft(els: {
   textarea: HTMLTextAreaElement
+  coreIdeaEl: HTMLTextAreaElement
+  useForEl: HTMLInputElement
   miniTextarea: HTMLTextAreaElement
   sourceUrl: HTMLInputElement
   sourceTitle: HTMLInputElement
@@ -262,6 +454,8 @@ function restoreDraft(els: {
   if (!raw) return
   try {
     const d = JSON.parse(raw) as Draft
+    els.coreIdeaEl.value = d.coreIdea ?? ''
+    els.useForEl.value = d.useFor ?? ''
     els.textarea.value = d.content ?? ''
     els.miniTextarea.value = d.mini ?? ''
     els.sourceUrl.value = d.url ?? ''
@@ -441,6 +635,100 @@ function injectCaptureStyles(): void {
     .online-indicator.offline { color: var(--danger); }
     .online-indicator.sync    { color: #B57C00; }
     .online-indicator.online  { color: var(--accent-hover); }
+
+    /* Note type picker */
+    .capture-type-picker {
+      display: flex;
+      gap: var(--s-1);
+      flex-wrap: wrap;
+    }
+    .type-btn {
+      padding: var(--s-1) var(--s-3);
+      border: 1.5px solid var(--type-color, var(--border));
+      border-radius: var(--r-sm);
+      background: var(--bg);
+      color: var(--type-color, var(--text-muted));
+      font-size: var(--fs-sm);
+      cursor: pointer;
+      transition: background 0.1s;
+    }
+    .type-btn:hover { background: var(--type-accent, var(--surface)); }
+    .type-btn.active {
+      background: var(--type-color, var(--accent));
+      color: #fff;
+      font-weight: 600;
+    }
+
+    /* Core idea */
+    .capture-core-wrap { position: relative; }
+    .capture-core-idea { min-height: 3.5rem; }
+    .core-idea-counter {
+      position: absolute;
+      bottom: var(--s-2);
+      right: var(--s-3);
+      font-size: 11px;
+      color: var(--text-muted);
+      pointer-events: none;
+    }
+    .core-idea-counter.at-limit { color: var(--danger); }
+    .capture-use-for { font-size: var(--fs-sm); }
+
+    /* Source select */
+    .capture-source-select { font-size: var(--fs-sm); }
+
+    /* Permanent link section */
+    .permanent-link-section {
+      border: 1px solid #5C7FA6;
+      border-radius: var(--r-md);
+      padding: var(--s-3) var(--s-4);
+      display: flex;
+      flex-direction: column;
+      gap: var(--s-2);
+      background: #EAF1F8;
+    }
+    .permanent-link-header { font-size: var(--fs-sm); font-weight: 600; color: #5C7FA6; }
+    .permanent-link-row { display: flex; gap: var(--s-2); flex-wrap: wrap; }
+    .permanent-link-row select { width: auto; }
+    .permanent-link-row input { flex: 1; min-width: 160px; }
+    .perm-link-suggestions {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .perm-suggestion {
+      background: #fff;
+      border: 1px solid #5C7FA6;
+      border-radius: var(--r-sm);
+      padding: var(--s-1) var(--s-2);
+      font-size: var(--fs-sm);
+      cursor: pointer;
+      text-align: left;
+    }
+    .perm-suggestion:hover { background: #d6e8f7; }
+    .perm-no-match { font-size: var(--fs-sm); color: var(--text-muted); }
+    .perm-link-selected { display: flex; gap: var(--s-1); flex-wrap: wrap; }
+    .perm-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      background: #5C7FA6;
+      color: #fff;
+      border-radius: var(--r-sm);
+      padding: 2px var(--s-2);
+      font-size: var(--fs-sm);
+    }
+    .perm-remove {
+      background: none; border: none; color: inherit; cursor: pointer; padding: 0; font-size: 12px;
+    }
+    .perm-standalone-check {
+      display: flex;
+      align-items: flex-start;
+      gap: var(--s-2);
+      font-size: var(--fs-sm);
+      color: var(--text-muted);
+      cursor: pointer;
+    }
+    .perm-standalone-check input { margin-top: 2px; }
 
     /* Random note panel — fixed bottom strip, not a modal */
     .random-note-panel {
