@@ -1,4 +1,4 @@
-import { fetchNotes, updateNote, countByStatus, type Note } from '../lib/notes'
+import { fetchNotes, fetchNotesByIds, updateNote, countByStatus, type Note } from '../lib/notes'
 import {
   fetchThemes,
   createTheme,
@@ -6,6 +6,7 @@ import {
   type Theme
 } from '../lib/themes'
 import { createLink, LINK_TYPE_LABELS, type LinkType } from '../lib/links'
+import { SECTIONS } from '../lib/sections'
 import { processNote, type NoteSuggestion } from '../lib/ai'
 import { getCostStatus, getMonthlyCap, setMonthlyCap, formatUsd, type CostStatus } from '../lib/cost'
 import { renderTopbar, attachTopbar } from '../lib/nav'
@@ -31,6 +32,10 @@ export async function renderProcess(app: HTMLElement): Promise<void> {
   let cursor = 0
   let currentSuggestion: NoteSuggestion | null = null
   let cost: CostStatus
+  // Labels for related notes — keyed by id. Seeded from the inbox queue and
+  // topped up with any related ids that live outside the queue (process.ts only
+  // loads the inbox, but related_note_ids can point at already-processed notes).
+  const noteLabels = new Map<string, string>()
 
   try {
     [themes, queue, cost] = await Promise.all([
@@ -77,7 +82,7 @@ export async function renderProcess(app: HTMLElement): Promise<void> {
           </div>
         </section>
         <section class="process-suggest-pane" id="suggest-pane">
-          <p class="pane-hint">Klik "AI-suggesties ophalen" om titel, samenvatting, tags, types en thema-matches te krijgen. Niets wordt opgeslagen tot je "Accepteer" klikt.</p>
+          <p class="pane-hint">Klik "AI-suggesties ophalen" om titel, samenvatting, tags en thema-matches te krijgen. Niets wordt opgeslagen tot je "Accepteer" klikt.</p>
         </section>
       </div>
     `
@@ -118,6 +123,20 @@ export async function renderProcess(app: HTMLElement): Promise<void> {
     applyCostState()
   }
 
+  async function resolveRelatedLabels(ids: string[]): Promise<void> {
+    for (const n of queue) {
+      if (!noteLabels.has(n.id)) noteLabels.set(n.id, n.ai_title ?? n.content.slice(0, 80))
+    }
+    const missing = ids.filter(id => !noteLabels.has(id))
+    if (missing.length === 0) return
+    try {
+      const notes = await fetchNotesByIds(missing)
+      for (const n of notes) noteLabels.set(n.id, n.ai_title ?? n.content.slice(0, 80))
+    } catch {
+      // labels are best-effort; fall back to the raw id
+    }
+  }
+
   async function runAi(): Promise<void> {
     const note = queue[cursor]
     if (!note) return
@@ -137,6 +156,7 @@ export async function renderProcess(app: HTMLElement): Promise<void> {
     try {
       const { suggestion, usage } = await processNote(note.id, 'claude-haiku-4-5')
       currentSuggestion = suggestion
+      await resolveRelatedLabels(suggestion.related_note_ids)
       renderSuggestion(note, suggestion)
       cost = await getCostStatus()
       renderCost(cost)
@@ -195,11 +215,6 @@ export async function renderProcess(app: HTMLElement): Promise<void> {
       </label>
 
       <label class="field">
-        <span class="field-label">Types (komma-gescheiden)</span>
-        <input type="text" id="s-types" value="${escHtml((s.types ?? []).join(', '))}" />
-      </label>
-
-      <label class="field">
         <span class="field-label">Tags (komma-gescheiden)</span>
         <input type="text" id="s-tags" value="${escHtml((s.tags ?? []).join(', '))}" />
       </label>
@@ -223,8 +238,7 @@ export async function renderProcess(app: HTMLElement): Promise<void> {
           <legend class="field-label">Gelinkte nota's (Zettelkasten)</legend>
           <div class="related-list">
             ${s.related_note_ids.map(id => {
-              const t = queue.find(n => n.id === id)
-              const label = t ? (t.ai_title ?? t.content.slice(0, 80)) : id
+              const label = noteLabels.get(id) ?? id
               const typeOpts = Object.entries(LINK_TYPE_LABELS).map(([v, l]) =>
                 `<option value="${v}"${v === 'related' ? ' selected' : ''}>${escHtml(l)}</option>`
               ).join('')
@@ -259,7 +273,6 @@ export async function renderProcess(app: HTMLElement): Promise<void> {
 
     const title = (document.getElementById('s-title') as HTMLInputElement).value.trim()
     const summary = (document.getElementById('s-summary') as HTMLTextAreaElement).value.trim()
-    const typesArr = parseCsv((document.getElementById('s-types') as HTMLInputElement).value)
     const tagsArr = parseCsv((document.getElementById('s-tags') as HTMLInputElement).value)
     const sectionVal = (document.getElementById('s-section') as HTMLSelectElement).value
 
@@ -295,7 +308,6 @@ export async function renderProcess(app: HTMLElement): Promise<void> {
       await updateNote(note.id, {
         ai_title: title || null,
         ai_summary: summary || null,
-        types: typesArr,
         tags: tagsArr,
         status: 'verwerkt',
         processed_at: new Date().toISOString(),
@@ -441,14 +453,6 @@ function errMsg(err: unknown): string {
 function formatDate(iso: string): string {
   return new Date(iso).toLocaleDateString('nl-NL', { day: 'numeric', month: 'short', year: 'numeric' })
 }
-
-const SECTIONS = [
-  { slug: 'probleemstelling',          label: 'Probleemstelling' },
-  { slug: 'theoretische_onderbouwing', label: 'Theoretische onderbouwing' },
-  { slug: 'ondersteunende_concepten',  label: 'Ondersteunende concepten' },
-  { slug: 'methodieken',               label: 'Methodieken / handvaten' },
-  { slug: 'reflectievragen',           label: 'Reflectie- of verdiepingsvragen' },
-]
 
 function injectProcessStyles(): void {
   if (document.getElementById('process-styles')) return

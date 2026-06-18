@@ -108,7 +108,7 @@ Success criteria:
 
 ### Phase 2 - AI Processing
 - `/process` page
-- AI suggestions (title, summary, types, tags, themes, related)
+- AI suggestions (title, summary, tags, themes, related)
 - Human approval before persist
 - Cost tracking and cap warnings
 
@@ -347,7 +347,6 @@ Phase 2 adds AI processing to captured notes while keeping capture fast and user
 |---|---|---|---|
 | `ai_title` | Claude | yes | 80 chars |
 | `ai_summary` | Claude | yes | 2 sentences |
-| `types[]` | Claude | yes | max 5 |
 | `tags[]` | Claude | yes | max 5 |
 | `matched_theme_ids` | Claude | yes | validated |
 | `new_themes[]` | Claude | yes | max 1 |
