@@ -3,10 +3,13 @@ import { registerPwa } from './lib/pwa'
 import { getSession } from './lib/auth'
 import { isConfigured } from './lib/supabase'
 import { isAiEnabled, renderAiDisabled } from './lib/nav'
+import { applyDisplayPrefs } from './lib/display'
+import { consumeSharedContent } from './lib/share'
 import { createRouter, navigateTo } from './router'
 import { renderLogin } from './pages/login'
 import { renderCapture } from './pages/capture'
 import { renderInbox } from './pages/inbox'
+import { renderSearch } from './pages/search'
 import { renderNoteDetail } from './pages/note'
 import { renderProcess } from './pages/process'
 import { renderGraph } from './pages/graph'
@@ -22,6 +25,10 @@ import { renderProjects } from './pages/projects'
 const app = document.getElementById('app') as HTMLElement
 
 registerPwa()
+applyDisplayPrefs()
+// Handle an incoming Web Share (PWA share-target) before routing: stash the
+// shared text into the capture draft and redirect to /capture.
+consumeSharedContent()
 
 async function guard(handler: (app: HTMLElement) => void | Promise<void>): Promise<void> {
   const session = await getSession()
@@ -52,9 +59,10 @@ if (!isConfigured) {
     },
     '/capture':  () => guard(renderCapture),
     '/inbox':    () => guard(renderInbox),
+    '/search':   () => guard(renderSearch),
     '/note':     () => guard(renderNoteDetail),
     '/process':  aiGuard(renderProcess, 'Verwerken'),
-    '/graph':    aiGuard(renderGraph, 'Graaf'),
+    '/graph':    () => guard(renderGraph),
     '/book':     aiGuard(renderBook, 'Boek'),
     '/themes':      () => guard(renderThemes),
     '/settings':    () => guard(renderSettings),

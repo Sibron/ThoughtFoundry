@@ -20,39 +20,50 @@ export function setAiEnabled(on: boolean): void {
 // Single source of truth for navigation so every page stays consistent and
 // the AI-only items (Verwerken / Graaf / Boek) can be hidden in one place.
 
-export type NavKey = 'capture' | 'inbox' | 'process' | 'graph' | 'book' | 'themes' | 'settings' | 'spark' | 'denkpartner' | 'clusters' | 'sources' | 'projects'
+export type NavKey = 'capture' | 'inbox' | 'search' | 'process' | 'graph' | 'book' | 'themes' | 'settings' | 'spark' | 'denkpartner' | 'clusters' | 'sources' | 'projects'
 
 /**
  * Render the topbar HTML. `extra` is injected at the start of the actions row
  * (used by the capture page for its online/offline indicator).
+ *
+ * Two-layer structure:
+ * Layer 1 (always visible, primary): + Nieuw, Vangbak, Graaf
+ * Layer 2 (secondary, muted): AI tools + management pages
  */
 export function renderTopbar(title: string, active?: NavKey, extra = ''): string {
   const ai = isAiEnabled()
-  const btn = (key: NavKey, label: string) =>
-    `<button class="topbar-btn${active === key ? ' active' : ''}" data-nav="${key}">${label}</button>`
+  const btn = (key: NavKey, label: string, secondary = false) =>
+    `<button class="topbar-btn${active === key ? ' active' : ''}${secondary ? ' topbar-secondary' : ''}" data-nav="${key}">${label}</button>`
 
-  const aiButtons = ai
-    ? btn('process', 'Verwerken') +
-      btn('spark', 'Spark') +
-      btn('denkpartner', 'Denkpartner') +
-      btn('clusters', 'Clusters') +
-      btn('graph', 'Graaf') +
-      btn('book', 'Boek')
+  const layer1 =
+    (active === 'capture' ? '' : btn('capture', '+ Nieuw')) +
+    (active === 'inbox' ? '' : btn('inbox', 'Vangbak')) +
+    (active === 'search' ? '' : btn('search', 'Zoek')) +
+    (active === 'graph' ? '' : btn('graph', 'Graaf'))
+
+  const aiLayer2 = ai
+    ? btn('process', 'Verwerken', true) +
+      btn('spark', 'Spark', true) +
+      btn('denkpartner', 'Denkpartner', true) +
+      btn('clusters', 'Clusters', true) +
+      btn('book', 'Boek', true)
     : ''
+
+  const layer2 = aiLayer2 +
+    btn('themes', "Thema's", true) +
+    btn('sources', 'Bronnen', true) +
+    btn('projects', 'Projecten', true) +
+    btn('settings', '⚙', true) +
+    `<button class="topbar-btn topbar-secondary" data-nav="logout" title="Afmelden">&#x238B;</button>`
 
   return `
     <div class="topbar">
       <span class="topbar-title">${title}</span>
       <div class="topbar-actions">
         ${extra}
-        ${active === 'capture' ? '' : btn('capture', '+ Nieuw')}
-        ${active === 'inbox' ? '' : btn('inbox', 'Inbox')}
-        ${aiButtons}
-        ${btn('themes', "Thema's")}
-        ${btn('sources', 'Bronnen')}
-        ${btn('projects', 'Projecten')}
-        ${btn('settings', '⚙')}
-        <button class="topbar-btn" data-nav="logout" title="Afmelden">&#x238B;</button>
+        ${layer1}
+        <span class="topbar-sep" aria-hidden="true">|</span>
+        ${layer2}
       </div>
     </div>`
 }
