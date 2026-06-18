@@ -4,7 +4,7 @@ import { renderTopbar, attachTopbar, isAiEnabled, setAiEnabled } from '../lib/na
 import { navigateTo } from '../router'
 import { getMonthlyCap, setMonthlyCap, getCostStatus, formatUsd } from '../lib/cost'
 import { fetchRecentUsage, summarize, type UsageRow } from '../lib/usage'
-import { buildExport, downloadJson } from '../lib/exporter'
+import { buildExport, downloadJson, importFromJson, type ExportPayload } from '../lib/exporter'
 import { countByStatus } from '../lib/notes'
 
 export async function renderSettings(app: HTMLElement): Promise<void> {
@@ -131,6 +131,17 @@ export async function renderSettings(app: HTMLElement): Promise<void> {
       <p class="muted">Download al je nota's, thema's, koppelingen, hoofdstukken en boeken als JSON. Volledig portable; geen vendor lock-in.</p>
       <button class="btn btn-primary" id="export-btn">Exporteer JSON</button>
     </section>
+
+    <section class="settings-section">
+      <h2>Data-import</h2>
+      <p class="muted">Importeer nota's vanuit een eerder geëxporteerd ThoughtFoundry JSON-bestand. Bestaande nota's (zelfde ID) worden overgeslagen.</p>
+      <label class="field">
+        <span class="field-label">JSON-bestand kiezen</span>
+        <input type="file" id="import-file" accept=".json,application/json" />
+      </label>
+      <div id="import-preview" hidden class="import-preview"></div>
+      <button class="btn btn-primary" id="import-btn" hidden>Importeer</button>
+    </section>
   `
 
   document.getElementById('settings-logout')?.addEventListener('click', async () => {
@@ -166,6 +177,54 @@ export async function renderSettings(app: HTMLElement): Promise<void> {
     } finally {
       btn.disabled = false
       btn.textContent = 'Exporteer JSON'
+    }
+  })
+
+  let pendingImport: ExportPayload | null = null
+
+  document.getElementById('import-file')?.addEventListener('change', (e) => {
+    const file = (e.target as HTMLInputElement).files?.[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = () => {
+      try {
+        const parsed = JSON.parse(reader.result as string) as ExportPayload
+        const noteCount = (parsed.notes ?? []).length
+        const previewEl = document.getElementById('import-preview') as HTMLDivElement
+        const importBtn = document.getElementById('import-btn') as HTMLButtonElement
+        previewEl.hidden = false
+        previewEl.textContent = `Gevonden: ${noteCount} nota${noteCount === 1 ? '' : "'s"} in dit bestand. Bestaande nota's (zelfde ID) worden overgeslagen.`
+        importBtn.hidden = false
+        pendingImport = parsed
+      } catch {
+        showToast('Ongeldig JSON-bestand')
+        pendingImport = null
+      }
+    }
+    reader.readAsText(file)
+  })
+
+  document.getElementById('import-btn')?.addEventListener('click', async () => {
+    if (!pendingImport) return
+    const btn = document.getElementById('import-btn') as HTMLButtonElement
+    btn.disabled = true
+    btn.textContent = 'Importeren…'
+    try {
+      const result = await importFromJson(pendingImport)
+      showToast(`Geïmporteerd: ${result.imported} nota${result.imported === 1 ? '' : "'s"}${result.skipped > 0 ? `, ${result.skipped} overgeslagen` : ''}`)
+      if (result.errors.length > 0) {
+        console.warn('Import errors:', result.errors)
+      }
+      pendingImport = null
+      const previewEl = document.getElementById('import-preview') as HTMLDivElement
+      previewEl.hidden = true
+      btn.hidden = true
+      ;(document.getElementById('import-file') as HTMLInputElement).value = ''
+    } catch (err) {
+      showToast(`Import mislukt: ${errMsg(err)}`)
+    } finally {
+      btn.disabled = false
+      btn.textContent = 'Importeer'
     }
   })
 }
@@ -227,6 +286,14 @@ function injectSettingsStyles(): void {
       font-weight: 600;
     }
     .settings-section .btn { width: auto; }
+    .import-preview {
+      padding: var(--s-2) var(--s-3);
+      background: #E8F5EE;
+      border: 1px solid var(--accent);
+      border-radius: var(--r-sm);
+      font-size: var(--fs-sm);
+      color: var(--text);
+    }
     .stats-grid {
       list-style: none;
       display: grid;

@@ -31,7 +31,16 @@ interface Suggestion {
   matched_theme_ids: string[]
   new_themes: { name: string; description: string }[]
   related_note_ids: string[]
+  section: string
 }
+
+const VALID_SECTIONS = new Set([
+  'probleemstelling',
+  'theoretische_onderbouwing',
+  'ondersteunende_concepten',
+  'methodieken',
+  'reflectievragen',
+])
 
 const SYSTEM_PROMPT = `Je bent een kennis-assistent voor een persoonlijk denksysteem (ThoughtFoundry).
 De gebruiker capteert atomische ideeën over o.a. autisme/neurodiversiteit, relaties, coaching, management en persoonlijke ontwikkeling.
@@ -48,8 +57,18 @@ Antwoord ALLEEN met geldige JSON, in dit exacte formaat:
   "tags": ["max 5 tags, lowercase, single-word of-met-streepje"],
   "matched_theme_ids": ["uuid", ...],   // alleen ids uit de gegeven thema-lijst
   "new_themes": [{"name": "...", "description": "..."}],  // alleen indien echt geen match
-  "related_note_ids": ["uuid", ...]     // max 3, alleen als sterk verwant
+  "related_note_ids": ["uuid", ...],    // max 3, alleen als sterk verwant
+  "section": "probleemstelling"         // één van de vijf slugs, of leeg string als onduidelijk
 }
+
+De vijf geldige waarden voor "section":
+- "probleemstelling"          — het centrale probleem of de onderzoeksvraag
+- "theoretische_onderbouwing" — theorie, concepten, wetenschappelijke basis
+- "ondersteunende_concepten"  — aanvullende ideeën die de theorie steunen
+- "methodieken"               — praktische methoden, tools, handvaten
+- "reflectievragen"           — vragen voor verdieping of zelfreflectie
+
+Kies de best passende section-slug. Als de nota duidelijk bij geen enkele past, geef dan een lege string terug.
 
 Wees terughoudend met new_themes (max 1). Wees terughoudend met related_note_ids (alleen sterk overeenkomend).`
 
@@ -116,6 +135,8 @@ Deno.serve(async (req: Request) => {
   suggestion.new_themes = (suggestion.new_themes ?? []).slice(0, 1)
   suggestion.types = (suggestion.types ?? []).slice(0, 5)
   suggestion.tags = (suggestion.tags ?? []).slice(0, 5)
+  // Validate section: must be one of the five slugs or empty string
+  if (!VALID_SECTIONS.has(suggestion.section ?? '')) suggestion.section = ''
 
   const cost = estimateCost(model, result.inputTokens, result.outputTokens)
   await logUsage(supabase, {

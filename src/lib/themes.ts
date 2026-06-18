@@ -6,6 +6,7 @@ export interface Theme {
   name: string
   description: string | null
   color: string
+  parent_id: string | null
   created_at: string
 }
 
@@ -61,7 +62,7 @@ export async function fetchThemesForNote(noteId: string): Promise<string[]> {
     .select('theme_id')
     .eq('note_id', noteId)
   if (error) throw error
-  return (data ?? []).map(r => r.theme_id as string)
+  return (data ?? []).map((r: { theme_id: string }) => r.theme_id)
 }
 
 export async function fetchAllNoteThemes(): Promise<{ note_id: string; theme_id: string }[]> {

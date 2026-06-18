@@ -8,6 +8,7 @@ export interface NoteSuggestion {
   matched_theme_ids: string[]
   new_themes: { name: string; description: string }[]
   related_note_ids: string[]
+  section: string
 }
 
 export interface ChapterPlan {
@@ -55,4 +56,58 @@ export async function generateChapter(input: {
   if (input.angle)   body['angle']   = input.angle
   if (input.model)   body['model']   = input.model
   return invoke('generate-chapter', body)
+}
+
+export interface SparkResult {
+  synthesis: string | null
+  matchCount: number
+  message?: string
+  usage?: AIUsage
+}
+
+export async function runSpark(input: {
+  query: string
+  outputType: 'reflectie' | 'coaching' | 'beslissing' | 'blogdraft' | 'gesprekskader'
+  model?: 'claude-haiku-4-5' | 'claude-sonnet-4-6'
+}): Promise<SparkResult> {
+  return invoke('spark', input as Record<string, unknown>)
+}
+
+export interface DenkpartnerQuestion {
+  question: string
+  context: string
+}
+
+export interface DenkpartnerResult {
+  questions: DenkpartnerQuestion[]
+  noteCount?: number
+  message?: string
+  usage?: AIUsage
+}
+
+export async function runDenkpartner(input: {
+  scope: 'all' | 'tag' | 'theme'
+  tag?: string
+  themeId?: string
+  model?: 'claude-haiku-4-5' | 'claude-sonnet-4-6'
+}): Promise<DenkpartnerResult> {
+  return invoke('denkpartner', input as Record<string, unknown>)
+}
+
+export interface Cluster {
+  name: string
+  implicit_theme: string
+  missing_note: string
+  note_ids: string[]
+}
+
+export interface ClustersResult {
+  clusters: Cluster[]
+  noteCount?: number
+  message?: string
+  usage?: AIUsage
+}
+
+export async function detectClusters(): Promise<ClustersResult> {
+  return invoke('detect-clusters', {})
 }

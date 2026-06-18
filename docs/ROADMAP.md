@@ -64,7 +64,13 @@ Use this block as the session dashboard. Every Claude session starts here first.
 
 ### Session handoff log (append newest on top)
 - `YYYY-MM-DD | Session # | Fase | Done this session | Next step | Owner`
-- `2026-05-11 | S001 | A | Initialized unified playbook and live checklist | Start A.1 Supabase setup | Human+Claude`
+- `2026-06-17 | S008 | Phase B | Zettelkasten features: typed note links, periodic review banner, Spark page+edge, Denkpartner page+edge, Clusters page+edge, Sources library, JSON import | Deploy edge functions via Supabase MCP | Claude`
+- `2026-06-17 | S007 | Phase B | Task 6: "Toon een oude nota" random note button in capture footer (non-modal panel) | Deploy edge function update + review PDF artifact for feature inspiration | Claude`
+- `2026-06-17 | S006 | Phase B | Task 5: debounced client-side duplicate hint in capture, zero API cost | Task 6 random note button | Claude`
+- `2026-06-17 | S005 | Phase B | Task 4: section field in process-note edge function + renderSuggestion select + acceptSuggestion persistence | Task 5 duplicate hint | Claude`
+- `2026-06-17 | S004 | Phase B | Task 3: per-theme note count + 5-segment section progress bar on themes overview | Task 4 section suggestion | Claude`
+- `2026-06-17 | S003 | Phase B | Task 2: replaced all confirm() in process.ts with archive undo toast + inline cost cap disable | Task 3 theme progress | Claude`
+- `2026-06-17 | S002 | Phase B | Task 1: schema migration (notes.section, themes.parent_id), applied to live DB, TS interfaces updated | Task 2 remove modals | Claude`
 
 ---
 
