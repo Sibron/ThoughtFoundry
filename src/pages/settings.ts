@@ -8,6 +8,7 @@ import { buildExport, downloadJson, importFromJson, type ExportPayload } from '.
 import { getInstallPrompt, clearInstallPrompt } from '../lib/pwa'
 import { countByStatus } from '../lib/notes'
 import { getPersona, setPersona, getDefaultPersona } from '../lib/persona'
+import { fetchThemes, updateTheme, type Theme } from '../lib/themes'
 
 export async function renderSettings(app: HTMLElement): Promise<void> {
   app.innerHTML = `
@@ -27,15 +28,17 @@ export async function renderSettings(app: HTMLElement): Promise<void> {
   let verwerktCount = 0
   let archiefCount = 0
   let userEmail: string | null = null
+  let themes: Theme[] = []
 
   try {
-    const [u, c, ib, vw, ar, userResp] = await Promise.all([
+    const [u, c, ib, vw, ar, userResp, th] = await Promise.all([
       fetchRecentUsage(50),
       getCostStatus(),
       countByStatus('inbox').catch(() => 0),
       countByStatus('verwerkt').catch(() => 0),
       countByStatus('archief').catch(() => 0),
-      supabase.auth.getUser()
+      supabase.auth.getUser(),
+      fetchThemes().catch(() => [] as Theme[])
     ])
     usage = u
     cost = c
@@ -43,6 +46,7 @@ export async function renderSettings(app: HTMLElement): Promise<void> {
     verwerktCount = vw
     archiefCount = ar
     userEmail = userResp.data.user?.email ?? null
+    themes = th
   } catch (err) {
     document.getElementById('settings-body')!.innerHTML =
       `<div class="settings-error">Laden mislukt: ${escHtml(errMsg(err))}</div>`
@@ -77,6 +81,16 @@ export async function renderSettings(app: HTMLElement): Promise<void> {
     </section>
 
     <section class="settings-section">
+      <h2>Terugkeermomenten</h2>
+      <p class="muted">Plan een vast verwerkmoment in je agenda — 25 minuten per week is genoeg.</p>
+      <a class="btn btn-ghost"
+         href="https://www.google.com/calendar/render?action=TEMPLATE&text=TF+verwerken&details=ThoughtFoundry+verwerkingssessie+(max+25+min)&recur=RRULE:FREQ%3DWEEKLY&sf=true&output=xml"
+         target="_blank" rel="noopener noreferrer">
+        Voeg wekelijks TF-moment toe aan Google Agenda
+      </a>
+    </section>
+
+    <section class="settings-section">
       <h2>Persoonlijke context voor AI</h2>
       <p class="muted">Deze tekst wordt aan elk AI-verzoek toegevoegd zodat de AI jouw rol, werkstijl en voorkeuren kent. Leeg laten = standaard uitgeschakeld.</p>
       <textarea id="persona-textarea" rows="6" style="font-size:var(--fs-sm);line-height:1.5">${escHtml(getPersona())}</textarea>
@@ -93,6 +107,20 @@ export async function renderSettings(app: HTMLElement): Promise<void> {
         <li><span class="stat-label">Verwerkt</span><span class="stat-value">${verwerktCount}</span></li>
         <li><span class="stat-label">Archief</span><span class="stat-value">${archiefCount}</span></li>
       </ul>
+    </section>
+
+    <section class="settings-section">
+      <h2>Gevoelige thema's</h2>
+      <p class="muted">Noten met een gevoelig thema krijgen gerichte, afsluitende AI-suggesties (geen open vragen).</p>
+      ${themes.length === 0
+        ? '<p class="muted">Nog geen thema\'s aangemaakt.</p>'
+        : themes.map(t => `
+        <label class="sensitive-theme-label">
+          <input type="checkbox" class="sensitive-theme-check" data-theme-id="${t.id}" ${t.is_sensitive ? 'checked' : ''} />
+          <span class="theme-dot-mini" style="background:${escHtml(t.color)}"></span>
+          ${escHtml(t.name)}
+        </label>`).join('')
+      }
     </section>
 
     <section class="settings-section">
@@ -245,6 +273,19 @@ export async function renderSettings(app: HTMLElement): Promise<void> {
       document.getElementById('pwa-install-section')?.setAttribute('hidden', '')
       showToast('App geïnstalleerd!')
     }
+  })
+
+  document.querySelectorAll<HTMLInputElement>('.sensitive-theme-check').forEach(cb => {
+    cb.addEventListener('change', async () => {
+      const themeId = cb.dataset['themeId']!
+      try {
+        await updateTheme(themeId, { is_sensitive: cb.checked })
+        showToast(cb.checked ? 'Thema gemarkeerd als gevoelig' : 'Markering verwijderd')
+      } catch (err) {
+        showToast(`Mislukt: ${errMsg(err)}`)
+        cb.checked = !cb.checked
+      }
+    })
   })
 
   document.getElementById('import-btn')?.addEventListener('click', async () => {
@@ -412,6 +453,20 @@ function injectSettingsStyles(): void {
       color: var(--text-muted);
     }
     .muted { color: var(--text-muted); font-size: var(--fs-sm); }
+    .sensitive-theme-label {
+      display: flex;
+      align-items: center;
+      gap: var(--s-2);
+      cursor: pointer;
+      font-size: var(--fs-sm);
+    }
+    .sensitive-theme-label input { width: 16px; height: 16px; }
+    .theme-dot-mini {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
   `
   document.head.appendChild(style)
 }

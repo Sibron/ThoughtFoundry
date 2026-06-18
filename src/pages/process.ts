@@ -1,4 +1,4 @@
-import { fetchNotes, fetchNotesByIds, updateNote, countByStatus, type Note } from '../lib/notes'
+import { fetchNotes, fetchNotesByIds, updateNote, type Note } from '../lib/notes'
 import {
   fetchThemes,
   createTheme,
@@ -32,6 +32,11 @@ export async function renderProcess(app: HTMLElement): Promise<void> {
   let cursor = 0
   let currentSuggestion: NoteSuggestion | null = null
   let cost: CostStatus
+
+  const SESSION_MAX_NOTES = 5
+  const SESSION_MAX_MS = 25 * 60 * 1000
+  const sessionStart = Date.now()
+  let sessionNotesProcessed = 0
   // Labels for related notes — keyed by id. Seeded from the inbox queue and
   // topped up with any related ids that live outside the queue (process.ts only
   // loads the inbox, but related_note_ids can point at already-processed notes).
@@ -67,7 +72,7 @@ export async function renderProcess(app: HTMLElement): Promise<void> {
       <div class="process-grid">
         <section class="process-note-pane">
           <header class="pane-header">
-            <span class="pane-step">${cursor + 1} / ${queue.length}</span>
+            <span class="pane-step">Notitie ${cursor + 1}</span>
             <span class="pane-date">${formatDate(note.created_at)}</span>
           </header>
           <article class="pane-note">
@@ -204,6 +209,31 @@ export async function renderProcess(app: HTMLElement): Promise<void> {
     pane.innerHTML = `
       <h2 class="suggest-title">AI-suggesties</h2>
 
+      ${s.related_note_ids.length > 0 ? `
+        <fieldset class="field">
+          <legend class="field-label">Verbindingen (Zettelkasten)</legend>
+          <div class="related-list">
+            ${s.related_note_ids.map(id => {
+              const label = noteLabels.get(id) ?? id
+              const typeOpts = Object.entries(LINK_TYPE_LABELS).map(([v, l]) =>
+                `<option value="${v}"${v === 'related' ? ' selected' : ''}>${escHtml(l)}</option>`
+              ).join('')
+              return `
+                <div class="related-row">
+                  <label class="chip-check"><input type="checkbox" class="related-check" value="${id}" checked/> ${escHtml(label)}</label>
+                  <select class="related-type" data-for="${id}">${typeOpts}</select>
+                </div>`
+            }).join('')}
+          </div>
+        </fieldset>
+      ` : ''}
+
+      <fieldset class="field">
+        <legend class="field-label">Thema's</legend>
+        <div class="chip-group">${themeOptions || '<span class="muted">Nog geen thema\'s</span>'}</div>
+        ${newThemeBlock ? `<div class="chip-group chip-group-new">${newThemeBlock}</div>` : ''}
+      </fieldset>
+
       <label class="field">
         <span class="field-label">Titel</span>
         <input type="text" id="s-title" value="${escHtml(s.title ?? '')}" />
@@ -227,38 +257,15 @@ export async function renderProcess(app: HTMLElement): Promise<void> {
         </select>
       </label>
 
-      <fieldset class="field">
-        <legend class="field-label">Thema's</legend>
-        <div class="chip-group">${themeOptions || '<span class="muted">Nog geen thema\'s</span>'}</div>
-        ${newThemeBlock ? `<div class="chip-group chip-group-new">${newThemeBlock}</div>` : ''}
-      </fieldset>
-
-      ${s.related_note_ids.length > 0 ? `
-        <fieldset class="field">
-          <legend class="field-label">Gelinkte nota's (Zettelkasten)</legend>
-          <div class="related-list">
-            ${s.related_note_ids.map(id => {
-              const label = noteLabels.get(id) ?? id
-              const typeOpts = Object.entries(LINK_TYPE_LABELS).map(([v, l]) =>
-                `<option value="${v}"${v === 'related' ? ' selected' : ''}>${escHtml(l)}</option>`
-              ).join('')
-              return `
-                <div class="related-row">
-                  <label class="chip-check"><input type="checkbox" class="related-check" value="${id}" checked/> ${escHtml(label)}</label>
-                  <select class="related-type" data-for="${id}">${typeOpts}</select>
-                </div>`
-            }).join('')}
-          </div>
-        </fieldset>
-      ` : ''}
-
       <div class="suggest-actions">
         <button class="btn btn-primary" id="accept-btn">Accepteer & volgende</button>
+        <button class="btn btn-ghost" id="accept-minimal">Goed genoeg — sla op</button>
         <button class="btn btn-ghost" id="cancel-suggest">Annuleer</button>
       </div>
     `
 
     document.getElementById('accept-btn')?.addEventListener('click', () => acceptSuggestion(note))
+    document.getElementById('accept-minimal')?.addEventListener('click', () => acceptSuggestion(note))
     document.getElementById('cancel-suggest')?.addEventListener('click', () => {
       currentSuggestion = null
       renderCurrent()
@@ -327,9 +334,14 @@ export async function renderProcess(app: HTMLElement): Promise<void> {
       }
 
       showToast('Verwerkt')
+      sessionNotesProcessed++
       cursor++
       currentSuggestion = null
-      renderCurrent()
+      if (sessionNotesProcessed >= SESSION_MAX_NOTES || Date.now() - sessionStart >= SESSION_MAX_MS) {
+        renderSessionComplete()
+      } else {
+        renderCurrent()
+      }
     } catch (err) {
       acceptBtn.disabled = false
       acceptBtn.textContent = 'Accepteer & volgende'
@@ -337,15 +349,32 @@ export async function renderProcess(app: HTMLElement): Promise<void> {
     }
   }
 
+  function renderSessionComplete(): void {
+    const shell = document.getElementById('process-shell')!
+    shell.innerHTML = `
+      <div class="process-empty">
+        <h2>Sessie voltooid.</h2>
+        <p class="muted">Goed gedaan. Stop hier.</p>
+        <div class="empty-actions">
+          <button class="btn btn-primary" id="empty-capture">+ Nieuwe gedachte</button>
+          <button class="btn btn-ghost" id="empty-inbox">Naar Vangbak</button>
+        </div>
+      </div>
+    `
+    document.getElementById('empty-capture')?.addEventListener('click', () => navigateTo('/capture'))
+    document.getElementById('empty-inbox')?.addEventListener('click', () => navigateTo('/inbox'))
+    attachTopbar()
+  }
+
   function renderEmptyState(): void {
     const shell = document.getElementById('process-shell')!
     shell.innerHTML = `
       <div class="process-empty">
-        <h2>Inbox is leeg</h2>
-        <p>Geen onverwerkte nota's. Capture er een nieuwe, of bekijk je verwerkte nota's in de inbox.</p>
+        <h2>Vangbak is leeg</h2>
+        <p>Geen onverwerkte nota's. Leg een nieuwe gedachte vast, of bekijk verwerkte nota's in de Vangbak.</p>
         <div class="empty-actions">
           <button class="btn btn-primary" id="empty-capture">Nieuwe nota</button>
-          <button class="btn btn-ghost" id="empty-inbox">Naar inbox</button>
+          <button class="btn btn-ghost" id="empty-inbox">Naar Vangbak</button>
         </div>
       </div>
     `
@@ -357,11 +386,11 @@ export async function renderProcess(app: HTMLElement): Promise<void> {
     const shell = document.getElementById('process-shell')!
     shell.innerHTML = `
       <div class="process-empty">
-        <h2>Sessie afgerond</h2>
-        <p>${queue.length} nota('s) doorlopen. Frisse pauze.</p>
+        <h2>Alles verwerkt.</h2>
+        <p>Niets meer te doen — frisse pauze.</p>
         <div class="empty-actions">
           <button class="btn btn-primary" id="empty-capture">Nieuwe nota</button>
-          <button class="btn btn-ghost" id="empty-inbox">Naar inbox</button>
+          <button class="btn btn-ghost" id="empty-inbox">Naar Vangbak</button>
         </div>
       </div>
     `
@@ -370,7 +399,6 @@ export async function renderProcess(app: HTMLElement): Promise<void> {
   }
 
   async function renderCost(status: CostStatus): Promise<void> {
-    const inboxLeft = await countByStatus('inbox').catch(() => 0)
     const el = document.getElementById('process-cost')!
     const pct = (status.ratio * 100).toFixed(0)
     const cls = status.block ? 'cost-block' : status.warn ? 'cost-warn' : 'cost-ok'
@@ -382,7 +410,6 @@ export async function renderProcess(app: HTMLElement): Promise<void> {
         AI deze maand: <strong>${formatUsd(status.spendUsd)}</strong> / ${formatUsd(status.capUsd)} (${pct}%)
       </span>
       ${warnMsg}
-      <span class="cost-pill cost-info">Inbox: <strong>${inboxLeft}</strong></span>
       <button class="topbar-btn" id="cap-edit">cap bijwerken</button>
     `
     document.getElementById('cap-edit')?.addEventListener('click', () => {

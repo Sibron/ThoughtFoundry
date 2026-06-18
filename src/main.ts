@@ -54,7 +54,7 @@ if (!isConfigured) {
     '/inbox':    () => guard(renderInbox),
     '/note':     () => guard(renderNoteDetail),
     '/process':  aiGuard(renderProcess, 'Verwerken'),
-    '/graph':    aiGuard(renderGraph, 'Graaf'),
+    '/graph':    () => guard(renderGraph),
     '/book':     aiGuard(renderBook, 'Boek'),
     '/themes':      () => guard(renderThemes),
     '/settings':    () => guard(renderSettings),
