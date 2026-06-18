@@ -51,6 +51,9 @@ Deno.serve(async (req: Request) => {
   const apiKey = Deno.env.get('ANTHROPIC_API_KEY')
   if (!apiKey) return jsonResponse({ error: 'ANTHROPIC_API_KEY not configured' }, 500)
 
+  let body: { persona?: string } = {}
+  try { body = await req.json() } catch { /* body is optional */ }
+
   const model = 'claude-sonnet-4-6'
   const supabase = getUserClient(req)
 
@@ -87,11 +90,13 @@ Deno.serve(async (req: Request) => {
 
   const userPrompt = `## Verwerkte nota's (${notes.length})\n\n${noteBlock}\n\nIdentificeer 2-4 impliciete clusters.`
 
+  const system = [body.persona?.trim(), SYSTEM_PROMPT].filter(Boolean).join('\n\n')
+
   let result
   try {
     result = await callAnthropic({
       apiKey, model,
-      system: SYSTEM_PROMPT,
+      system,
       messages: [{ role: 'user', content: userPrompt }],
       maxTokens: 1200
     })
