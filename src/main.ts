@@ -1,4 +1,5 @@
 import './style.css'
+import { registerPwa } from './lib/pwa'
 import { getSession } from './lib/auth'
 import { isConfigured } from './lib/supabase'
 import { isAiEnabled, renderAiDisabled } from './lib/nav'
@@ -17,6 +18,8 @@ import { renderClusters } from './pages/clusters'
 import { renderSources } from './pages/sources'
 
 const app = document.getElementById('app') as HTMLElement
+
+registerPwa()
 
 async function guard(handler: (app: HTMLElement) => void | Promise<void>): Promise<void> {
   const session = await getSession()
