@@ -24,6 +24,17 @@ export default defineConfig({
           { src: 'icons/icon-192.png', sizes: '192x192', type: 'image/png' },
           { src: 'icons/icon-512.png', sizes: '512x512', type: 'image/png' },
           { src: 'icons/icon-maskable.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' }
+        ],
+        // Accept text/links shared from other apps → lands in capture.
+        share_target: {
+          action: base,
+          method: 'GET',
+          params: { title: 'title', text: 'text', url: 'url' }
+        },
+        // Long-press / right-click app-icon shortcuts.
+        shortcuts: [
+          { name: 'Nieuwe notitie', short_name: 'Nieuw', url: base + '#/capture' },
+          { name: 'Zoeken', short_name: 'Zoek', url: base + '#/search' }
         ]
       },
       workbox: {

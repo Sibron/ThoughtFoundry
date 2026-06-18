@@ -20,7 +20,7 @@ export function setAiEnabled(on: boolean): void {
 // Single source of truth for navigation so every page stays consistent and
 // the AI-only items (Verwerken / Graaf / Boek) can be hidden in one place.
 
-export type NavKey = 'capture' | 'inbox' | 'process' | 'graph' | 'book' | 'themes' | 'settings' | 'spark' | 'denkpartner' | 'clusters' | 'sources' | 'projects'
+export type NavKey = 'capture' | 'inbox' | 'search' | 'process' | 'graph' | 'book' | 'themes' | 'settings' | 'spark' | 'denkpartner' | 'clusters' | 'sources' | 'projects'
 
 /**
  * Render the topbar HTML. `extra` is injected at the start of the actions row
@@ -38,6 +38,7 @@ export function renderTopbar(title: string, active?: NavKey, extra = ''): string
   const layer1 =
     (active === 'capture' ? '' : btn('capture', '+ Nieuw')) +
     (active === 'inbox' ? '' : btn('inbox', 'Vangbak')) +
+    (active === 'search' ? '' : btn('search', 'Zoek')) +
     (active === 'graph' ? '' : btn('graph', 'Graaf'))
 
   const aiLayer2 = ai
