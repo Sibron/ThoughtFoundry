@@ -55,17 +55,31 @@ export async function renderProcess(app: HTMLElement): Promise<void> {
 
   renderCost(cost)
   if (queue.length === 0) {
+    clearResume()
     renderEmptyState()
     return
   }
+
+  // Resume where the last session left off, if that note is still in the queue.
+  const resume = loadResume()
+  if (resume && Date.now() - resume.ts < RESUME_MAX_AGE_MS) {
+    const idx = queue.findIndex(n => n.id === resume.noteId)
+    if (idx > 0) {
+      cursor = idx
+      showToast('Verder waar je was gebleven')
+    }
+  }
+
   renderCurrent()
 
   function renderCurrent(): void {
     const note = queue[cursor]
     if (!note) {
+      clearResume()
       renderDoneState()
       return
     }
+    saveResume(note.id)
 
     const shell = document.getElementById('process-shell')!
     shell.innerHTML = `
@@ -350,6 +364,7 @@ export async function renderProcess(app: HTMLElement): Promise<void> {
   }
 
   function renderSessionComplete(): void {
+    clearResume()
     const shell = document.getElementById('process-shell')!
     shell.innerHTML = `
       <div class="process-empty">
@@ -426,6 +441,27 @@ export async function renderProcess(app: HTMLElement): Promise<void> {
   function showError(msg: string): void {
     document.getElementById('process-shell')!.innerHTML = `<div class="process-error">${escHtml(msg)}</div>`
   }
+}
+
+// ── "Waar was ik" resume ────────────────────────────────────────────────────
+// Persist the note you're currently on so an interrupted session drops you back
+// exactly where you were, instead of forcing a cold restart from the top.
+const RESUME_KEY = 'process_resume'
+const RESUME_MAX_AGE_MS = 12 * 60 * 60 * 1000
+
+interface ResumeState { noteId: string; ts: number }
+
+function saveResume(noteId: string): void {
+  try { localStorage.setItem(RESUME_KEY, JSON.stringify({ noteId, ts: Date.now() } as ResumeState)) } catch { /* ignore */ }
+}
+function loadResume(): ResumeState | null {
+  try {
+    const raw = localStorage.getItem(RESUME_KEY)
+    return raw ? (JSON.parse(raw) as ResumeState) : null
+  } catch { return null }
+}
+function clearResume(): void {
+  try { localStorage.removeItem(RESUME_KEY) } catch { /* ignore */ }
 }
 
 let _undoTimer: ReturnType<typeof setTimeout> | null = null

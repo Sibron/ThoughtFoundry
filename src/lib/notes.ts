@@ -145,10 +145,30 @@ export async function bulkDelete(ids: string[]): Promise<void> {
   if (error) throw error
 }
 
-export async function fetchRandomNote(): Promise<Note | null> {
-  const notes = await fetchNotes(0, 50)
+export async function fetchRandomNote(status?: NoteStatus): Promise<Note | null> {
+  const notes = await fetchNotes(0, 100, status)
   if (!notes.length) return null
   return notes[Math.floor(Math.random() * notes.length)]
+}
+
+/**
+ * Surface a note from a previous period — "op deze dag". Prefers notes created
+ * on the same calendar day/month in the past; otherwise any note older than a
+ * week. Returns null when there's nothing old enough to feel like a rediscovery.
+ */
+export async function fetchOnThisDay(): Promise<Note | null> {
+  const notes = await fetchNotes(0, 300)
+  if (!notes.length) return null
+  const now = new Date()
+  const cutoff = Date.now() - 7 * 86400000
+  const older = notes.filter(n => new Date(n.created_at).getTime() < cutoff)
+  if (!older.length) return null
+  const sameDay = older.filter(n => {
+    const d = new Date(n.created_at)
+    return d.getDate() === now.getDate() && d.getMonth() === now.getMonth()
+  })
+  const pool = sameDay.length ? sameDay : older
+  return pool[Math.floor(Math.random() * pool.length)]
 }
 
 // ── Offline queue (IndexedDB) ───────────────────────────────────────────────

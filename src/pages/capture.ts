@@ -1,4 +1,4 @@
-import { insertNote, queueOfflineNote, flushOfflineQueue, offlineQueueSize, fetchNotes, fetchRandomNote, type NoteInsert, type Note } from '../lib/notes'
+import { insertNote, queueOfflineNote, flushOfflineQueue, offlineQueueSize, fetchNotes, fetchRandomNote, fetchOnThisDay, type NoteInsert, type Note } from '../lib/notes'
 import { fetchSources, type Source } from '../lib/sources'
 import { renderTopbar, attachTopbar } from '../lib/nav'
 import { navigateTo } from '../router'
@@ -67,7 +67,9 @@ export async function renderCapture(app: HTMLElement): Promise<void> {
 
       <div class="capture-footer">
         <button class="btn btn-primary" id="save-btn" disabled>Opslaan</button>
-        <button class="btn btn-ghost btn-sm" id="btn-random-note">Toon een oude nota</button>
+        <span class="capture-session" id="capture-session" hidden></span>
+        <button class="btn btn-ghost btn-sm" id="btn-surprise">Verras me</button>
+        <button class="btn btn-ghost btn-sm" id="btn-onthisday">Op deze dag</button>
       </div>
 
       <div class="capture-recent" id="capture-recent"></div>
@@ -75,8 +77,10 @@ export async function renderCapture(app: HTMLElement): Promise<void> {
 
     <div id="random-note-panel" class="random-note-panel" hidden>
       <div class="random-note-card">
+        <p class="random-note-label" id="random-note-label" hidden></p>
         <p class="random-note-content" id="random-note-content"></p>
         <div class="random-note-actions">
+          <button class="btn btn-ghost btn-sm" id="btn-open-surfaced">Openen</button>
           <button class="btn btn-ghost btn-sm" id="btn-reroll">Nog eentje</button>
           <button class="btn btn-ghost btn-sm" id="btn-close-random">Sluiten</button>
         </div>
@@ -99,6 +103,16 @@ export async function renderCapture(app: HTMLElement): Promise<void> {
   const saveBtn = document.getElementById('save-btn') as HTMLButtonElement
   const duplicateHint = document.getElementById('duplicate-hint') as HTMLParagraphElement
   const meerDetails = document.getElementById('meer-details') as HTMLDetailsElement
+  const sessionEl = document.getElementById('capture-session') as HTMLSpanElement
+
+  // "Capture and stay": rapid brain-dump count for this visit. Pure positive
+  // signal — never a backlog count, never persisted.
+  let sessionSaved = 0
+  const updateSessionIndicator = () => {
+    if (sessionSaved === 0) { sessionEl.hidden = true; return }
+    sessionEl.hidden = false
+    sessionEl.textContent = `✓ ${sessionSaved} vastgelegd`
+  }
 
   // Restore an in-progress draft so a reload never loses a thought.
   restoreDraft({ textarea, useForEl, miniTextarea, sourceUrl, sourceTitle, sourceAuthor })
@@ -220,6 +234,8 @@ export async function renderCapture(app: HTMLElement): Promise<void> {
       ;(document.getElementById('extra-details') as HTMLDetailsElement).open = false
       ;(document.getElementById('bron-details') as HTMLDetailsElement).open = false
       meerDetails.open = false
+      sessionSaved++
+      updateSessionIndicator()
       showToast(navigator.onLine ? 'Opgeslagen' : 'Opgeslagen (offline wachtrij)')
       await refreshOnlineIndicator()
       await refreshRecent()
@@ -232,21 +248,48 @@ export async function renderCapture(app: HTMLElement): Promise<void> {
     }
   })
 
-  // Random note panel
+  // Surfacing panel — "Verras me" (random, unprocessed-first) and "Op deze dag".
   const panel = document.getElementById('random-note-panel') as HTMLDivElement
   const randomContent = document.getElementById('random-note-content') as HTMLParagraphElement
+  const randomLabel = document.getElementById('random-note-label') as HTMLParagraphElement
+  let surfacedId: string | null = null
+  let lastSurfaceMode: 'surprise' | 'onthisday' = 'surprise'
 
-  const showRandomNote = async () => {
-    const note = await fetchRandomNote().catch(() => null)
-    if (!note) { showToast('Geen nota\'s gevonden'); return }
+  const renderSurfaced = (note: Note | null, label: string): boolean => {
+    if (!note) return false
+    surfacedId = note.id
+    randomLabel.textContent = label
+    randomLabel.hidden = label === ''
     randomContent.textContent = note.ai_title
       ? `${note.ai_title}\n\n${note.content.slice(0, 300)}${note.content.length > 300 ? '…' : ''}`
       : note.content.slice(0, 300) + (note.content.length > 300 ? '…' : '')
     panel.hidden = false
+    return true
   }
 
-  document.getElementById('btn-random-note')?.addEventListener('click', showRandomNote)
-  document.getElementById('btn-reroll')?.addEventListener('click', showRandomNote)
+  const showSurprise = async () => {
+    lastSurfaceMode = 'surprise'
+    // Prefer an unprocessed note (the pile that wants attention), else anything.
+    let note = await fetchRandomNote('inbox').catch(() => null)
+    if (!note) note = await fetchRandomNote().catch(() => null)
+    if (!renderSurfaced(note, '')) showToast('Geen nota\'s gevonden')
+  }
+
+  const showOnThisDay = async () => {
+    lastSurfaceMode = 'onthisday'
+    const note = await fetchOnThisDay().catch(() => null)
+    if (!renderSurfaced(note, note ? relTime(note.created_at) : '')) {
+      showToast('Nog geen oudere nota om terug te halen')
+    }
+  }
+
+  document.getElementById('btn-surprise')?.addEventListener('click', showSurprise)
+  document.getElementById('btn-onthisday')?.addEventListener('click', showOnThisDay)
+  document.getElementById('btn-reroll')?.addEventListener('click', () =>
+    lastSurfaceMode === 'onthisday' ? showOnThisDay() : showSurprise())
+  document.getElementById('btn-open-surfaced')?.addEventListener('click', () => {
+    if (surfacedId) navigateTo('/note?id=' + surfacedId)
+  })
   document.getElementById('btn-close-random')?.addEventListener('click', () => { panel.hidden = true })
 
   // Online/offline indicator + auto-flush on reconnect
@@ -375,6 +418,16 @@ function escHtml(str: string): string {
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 }
 
+function relTime(iso: string): string {
+  const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000)
+  if (days < 1) return 'vandaag'
+  if (days === 1) return 'gisteren'
+  if (days < 14) return `${days} dagen geleden`
+  if (days < 60) return `${Math.floor(days / 7)} weken geleden`
+  if (days < 365) return `${Math.floor(days / 30)} maanden geleden`
+  return `${Math.floor(days / 365)} jaar geleden`
+}
+
 function showToast(msg: string): void {
   const toast = document.getElementById('toast') as HTMLDivElement
   toast.textContent = msg
@@ -465,6 +518,12 @@ function injectCaptureStyles(): void {
       font-size: var(--fs-sm);
       padding: var(--s-2) var(--s-3);
     }
+    .capture-session {
+      font-size: var(--fs-sm);
+      color: var(--accent-hover);
+      font-weight: 500;
+      white-space: nowrap;
+    }
     .capture-recent {
       display: flex;
       flex-direction: column;
@@ -526,6 +585,14 @@ function injectCaptureStyles(): void {
       display: flex;
       flex-direction: column;
       gap: var(--s-2);
+    }
+    .random-note-label {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin: 0;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
     }
     .random-note-content {
       font-size: var(--fs-sm);

@@ -9,6 +9,7 @@ import { getInstallPrompt, clearInstallPrompt } from '../lib/pwa'
 import { countByStatus } from '../lib/notes'
 import { getPersona, setPersona, getDefaultPersona } from '../lib/persona'
 import { fetchThemes, updateTheme, type Theme } from '../lib/themes'
+import { getDensity, setDensity, getMotion, setMotion } from '../lib/display'
 
 export async function renderSettings(app: HTMLElement): Promise<void> {
   app.innerHTML = `
@@ -78,6 +79,22 @@ export async function renderSettings(app: HTMLElement): Promise<void> {
       ${isAiEnabled()
         ? ''
         : '<p class="muted">Zet dit pas aan als de edge functions en <code>ANTHROPIC_API_KEY</code> in Supabase geconfigureerd zijn.</p>'}
+    </section>
+
+    <section class="settings-section">
+      <h2>Weergave</h2>
+      <p class="muted">Pas dichtheid en beweging aan naar wat voor jou rustig werkt.</p>
+      <label class="field">
+        <span class="field-label">Dichtheid</span>
+        <select id="density-select">
+          <option value="comfortabel"${getDensity() === 'comfortabel' ? ' selected' : ''}>Comfortabel (ruim)</option>
+          <option value="compact"${getDensity() === 'compact' ? ' selected' : ''}>Compact (dicht)</option>
+        </select>
+      </label>
+      <label class="ai-toggle">
+        <input type="checkbox" id="motion-toggle" ${getMotion() === 'reduced' ? 'checked' : ''} />
+        <span>Beweging beperken (geen animaties / overgangen)</span>
+      </label>
     </section>
 
     <section class="settings-section">
@@ -200,6 +217,18 @@ export async function renderSettings(app: HTMLElement): Promise<void> {
     setAiEnabled(on)
     showToast(on ? 'AI ingeschakeld' : 'AI uitgeschakeld')
     renderSettings(app) // re-render so nav + hints reflect the new state
+  })
+
+  document.getElementById('density-select')?.addEventListener('change', (e) => {
+    const v = (e.target as HTMLSelectElement).value === 'compact' ? 'compact' : 'comfortabel'
+    setDensity(v)
+    showToast('Weergave bijgewerkt')
+  })
+
+  document.getElementById('motion-toggle')?.addEventListener('change', (e) => {
+    const on = (e.target as HTMLInputElement).checked
+    setMotion(on ? 'reduced' : 'auto')
+    showToast(on ? 'Beweging beperkt' : 'Beweging ingeschakeld')
   })
 
   document.getElementById('persona-save')?.addEventListener('click', () => {
