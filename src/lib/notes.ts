@@ -16,6 +16,7 @@ export interface Note {
   ai_summary: string | null
   ai_title: string | null
   processed_at: string | null
+  section: string | null
   created_at: string
   updated_at: string
 }
@@ -23,6 +24,7 @@ export interface Note {
 export interface NoteInsert {
   content: string
   mini_notes?: string
+  tags?: string[]
   source_url?: string
   source_title?: string
   source_author?: string
@@ -40,6 +42,7 @@ export interface NoteUpdate {
   ai_summary?: string | null
   ai_title?: string | null
   processed_at?: string | null
+  section?: string | null
 }
 
 const OFFLINE_QUEUE_KEY = 'offline_queue'
@@ -112,10 +115,29 @@ export async function bulkUpdateStatus(ids: string[], status: NoteStatus): Promi
   if (error) throw error
 }
 
+export async function fetchNotesByIds(ids: string[]): Promise<Note[]> {
+  if (ids.length === 0) return []
+  const { data, error } = await supabase.from('notes').select('*').in('id', ids)
+  if (error) throw error
+  return (data ?? []) as Note[]
+}
+
+export async function fetchNotesSections(): Promise<{ id: string; section: string | null }[]> {
+  const { data, error } = await supabase.from('notes').select('id, section')
+  if (error) throw error
+  return (data ?? []) as { id: string; section: string | null }[]
+}
+
 export async function bulkDelete(ids: string[]): Promise<void> {
   if (ids.length === 0) return
   const { error } = await supabase.from('notes').delete().in('id', ids)
   if (error) throw error
+}
+
+export async function fetchRandomNote(): Promise<Note | null> {
+  const notes = await fetchNotes(0, 50)
+  if (!notes.length) return null
+  return notes[Math.floor(Math.random() * notes.length)]
 }
 
 // ── Offline queue (IndexedDB) ───────────────────────────────────────────────

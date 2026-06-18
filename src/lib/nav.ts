@@ -20,7 +20,7 @@ export function setAiEnabled(on: boolean): void {
 // Single source of truth for navigation so every page stays consistent and
 // the AI-only items (Verwerken / Graaf / Boek) can be hidden in one place.
 
-export type NavKey = 'capture' | 'inbox' | 'process' | 'graph' | 'book' | 'themes' | 'settings'
+export type NavKey = 'capture' | 'inbox' | 'process' | 'graph' | 'book' | 'themes' | 'settings' | 'spark' | 'denkpartner' | 'clusters' | 'sources'
 
 /**
  * Render the topbar HTML. `extra` is injected at the start of the actions row
@@ -32,7 +32,12 @@ export function renderTopbar(title: string, active?: NavKey, extra = ''): string
     `<button class="topbar-btn${active === key ? ' active' : ''}" data-nav="${key}">${label}</button>`
 
   const aiButtons = ai
-    ? btn('process', 'Verwerken') + btn('graph', 'Graaf') + btn('book', 'Boek')
+    ? btn('process', 'Verwerken') +
+      btn('spark', 'Spark') +
+      btn('denkpartner', 'Denkpartner') +
+      btn('clusters', 'Clusters') +
+      btn('graph', 'Graaf') +
+      btn('book', 'Boek')
     : ''
 
   return `
@@ -44,6 +49,7 @@ export function renderTopbar(title: string, active?: NavKey, extra = ''): string
         ${active === 'inbox' ? '' : btn('inbox', 'Inbox')}
         ${aiButtons}
         ${btn('themes', "Thema's")}
+        ${btn('sources', 'Bronnen')}
         ${btn('settings', '⚙')}
         <button class="topbar-btn" data-nav="logout" title="Afmelden">&#x238B;</button>
       </div>

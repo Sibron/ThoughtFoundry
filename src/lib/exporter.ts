@@ -26,6 +26,30 @@ export async function buildExport(): Promise<ExportPayload> {
   return out as ExportPayload
 }
 
+export interface ImportResult {
+  imported: number
+  skipped: number
+  errors: string[]
+}
+
+export async function importFromJson(payload: ExportPayload): Promise<ImportResult> {
+  const result: ImportResult = { imported: 0, skipped: 0, errors: [] }
+  const notes = (payload.notes ?? []) as Record<string, unknown>[]
+
+  for (const note of notes) {
+    if (!note['id'] || !note['content']) { result.skipped++; continue }
+    const { error } = await supabase
+      .from('notes')
+      .upsert(note, { onConflict: 'id', ignoreDuplicates: true })
+    if (error) {
+      result.errors.push(String(note['id']) + ': ' + error.message)
+    } else {
+      result.imported++
+    }
+  }
+  return result
+}
+
 export function downloadJson(payload: unknown, filename: string): void {
   const blob = new Blob([JSON.stringify(payload, null, 2)], {
     type: 'application/json;charset=utf-8'

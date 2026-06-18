@@ -6,12 +6,29 @@ import {
   fetchAllNoteThemes,
   type Theme
 } from '../lib/themes'
+import { fetchNotesSections } from '../lib/notes'
 import { renderTopbar, attachTopbar } from '../lib/nav'
 
 const COLOR_PALETTE = [
   '#3AC48D', '#2E76A8', '#C45A3A', '#A83AC4',
   '#C4A83A', '#3AC4B5', '#C43A6E', '#6B6B6B'
 ]
+
+const SECTION_SLUGS = [
+  'probleemstelling',
+  'theoretische_onderbouwing',
+  'ondersteunende_concepten',
+  'methodieken',
+  'reflectievragen',
+]
+
+const SECTION_LABELS: Record<string, string> = {
+  probleemstelling:          'Probleemstelling',
+  theoretische_onderbouwing: 'Theoretische onderbouwing',
+  ondersteunende_concepten:  'Ondersteunende concepten',
+  methodieken:               'Methodieken / handvaten',
+  reflectievragen:           'Reflectie- of verdiepingsvragen',
+}
 
 export async function renderThemes(app: HTMLElement): Promise<void> {
   app.innerHTML = `
@@ -27,14 +44,31 @@ export async function renderThemes(app: HTMLElement): Promise<void> {
 
   let themes: Theme[] = []
   let counts: Record<string, number> = {}
+  let sectionsByTheme: Map<string, Set<string>> = new Map()
 
   try {
+    const [noteThemes, noteSections] = await Promise.all([
+      fetchAllNoteThemes(),
+      fetchNotesSections(),
+    ])
     themes = await fetchThemes()
-    const noteThemes = await fetchAllNoteThemes()
+
     counts = noteThemes.reduce<Record<string, number>>((acc, nt) => {
       acc[nt.theme_id] = (acc[nt.theme_id] ?? 0) + 1
       return acc
     }, {})
+
+    // Build map: themeId → Set of sections present in that theme's notes
+    const sectionByNoteId = new Map<string, string>()
+    for (const ns of noteSections) {
+      if (ns.section) sectionByNoteId.set(ns.id, ns.section)
+    }
+    for (const nt of noteThemes) {
+      const sec = sectionByNoteId.get(nt.note_id)
+      if (!sec) continue
+      if (!sectionsByTheme.has(nt.theme_id)) sectionsByTheme.set(nt.theme_id, new Set())
+      sectionsByTheme.get(nt.theme_id)!.add(sec)
+    }
   } catch (err) {
     document.getElementById('themes-body')!.innerHTML =
       `<div class="themes-error">Laden mislukt: ${escHtml(errMsg(err))}</div>`
@@ -82,6 +116,21 @@ export async function renderThemes(app: HTMLElement): Promise<void> {
     renderList()
   }
 
+  function renderSectionBar(themeId: string): string {
+    const present = sectionsByTheme.get(themeId) ?? new Set()
+    const filled = SECTION_SLUGS.filter(s => present.has(s)).length
+    const segs = SECTION_SLUGS.map(slug => {
+      const isFilled = present.has(slug)
+      return `<div class="sec-seg ${isFilled ? 'sec-filled' : 'sec-empty'}" title="${escHtml(SECTION_LABELS[slug] ?? slug)}"></div>`
+    }).join('')
+    return `
+      <div class="section-bar">
+        <span class="section-bar-label">Boek in wording: ${filled}/5 secties</span>
+        <div class="section-segments">${segs}</div>
+      </div>
+    `
+  }
+
   function renderList(): void {
     const listEl = document.getElementById('themes-list')!
     if (themes.length === 0) {
@@ -94,6 +143,7 @@ export async function renderThemes(app: HTMLElement): Promise<void> {
           <span class="theme-dot" style="background:${escHtml(t.color)}"></span>
           <span class="theme-name">${escHtml(t.name)}</span>
           <span class="theme-count">${counts[t.id] ?? 0} nota's</span>
+          ${renderSectionBar(t.id)}
         </summary>
         <div class="theme-edit">
           <label class="field">
@@ -185,6 +235,7 @@ export async function renderThemes(app: HTMLElement): Promise<void> {
       await deleteTheme(id)
       themes = themes.filter(x => x.id !== id)
       delete counts[id]
+      sectionsByTheme.delete(id)
       renderList()
       const total = document.querySelector('.themes-section-header h2')
       if (total) total.textContent = `Alle thema's (${themes.length})`
@@ -301,6 +352,7 @@ function injectThemesStyles(): void {
       align-items: center;
       gap: var(--s-3);
       padding: var(--s-3) var(--s-4);
+      flex-wrap: wrap;
     }
     .theme-summary::-webkit-details-marker { display: none; }
     .theme-dot {
@@ -309,8 +361,30 @@ function injectThemesStyles(): void {
       border-radius: 50%;
       flex-shrink: 0;
     }
-    .theme-name { flex: 1; font-weight: 500; }
-    .theme-count { font-size: var(--fs-sm); color: var(--text-muted); }
+    .theme-name { flex: 1; font-weight: 500; min-width: 120px; }
+    .theme-count { font-size: var(--fs-sm); color: var(--text-muted); white-space: nowrap; }
+    .section-bar {
+      display: flex;
+      align-items: center;
+      gap: var(--s-2);
+      flex-shrink: 0;
+    }
+    .section-bar-label {
+      font-size: 11px;
+      color: var(--text-muted);
+      white-space: nowrap;
+    }
+    .section-segments {
+      display: flex;
+      gap: 2px;
+    }
+    .sec-seg {
+      width: 14px;
+      height: 8px;
+      border-radius: 2px;
+    }
+    .sec-filled { background: var(--accent); }
+    .sec-empty  { background: var(--border); }
     .theme-edit {
       padding: var(--s-3) var(--s-4);
       border-top: 1px solid var(--border);

@@ -1,4 +1,4 @@
-import { insertNote, queueOfflineNote, flushOfflineQueue, offlineQueueSize, fetchNotes, type NoteInsert } from '../lib/notes'
+import { insertNote, queueOfflineNote, flushOfflineQueue, offlineQueueSize, fetchNotes, fetchRandomNote, type NoteInsert, type Note } from '../lib/notes'
 import { renderTopbar, attachTopbar } from '../lib/nav'
 import { navigateTo } from '../router'
 
@@ -26,6 +26,7 @@ export async function renderCapture(app: HTMLElement): Promise<void> {
         autofocus
         rows="6"
       ></textarea>
+      <p class="duplicate-hint" id="duplicate-hint"></p>
 
       <details class="capture-extra" id="extra-details">
         <summary class="capture-extra-toggle">+ Extra notitie</summary>
@@ -48,10 +49,22 @@ export async function renderCapture(app: HTMLElement): Promise<void> {
 
       <div class="capture-footer">
         <button class="btn btn-primary" id="save-btn" disabled>Opslaan</button>
+        <button class="btn btn-ghost btn-sm" id="btn-random-note">Toon een oude nota</button>
       </div>
 
       <div class="capture-recent" id="capture-recent"></div>
     </div>
+
+    <div id="random-note-panel" class="random-note-panel" hidden>
+      <div class="random-note-card">
+        <p class="random-note-content" id="random-note-content"></p>
+        <div class="random-note-actions">
+          <button class="btn btn-ghost btn-sm" id="btn-reroll">Nog eentje</button>
+          <button class="btn btn-ghost btn-sm" id="btn-close-random">Sluiten</button>
+        </div>
+      </div>
+    </div>
+
     <div class="toast" id="toast"></div>
   `
 
@@ -64,6 +77,7 @@ export async function renderCapture(app: HTMLElement): Promise<void> {
   const sourceTitle = document.getElementById('capture-source-title') as HTMLInputElement
   const sourceAuthor = document.getElementById('capture-source-author') as HTMLInputElement
   const saveBtn = document.getElementById('save-btn') as HTMLButtonElement
+  const duplicateHint = document.getElementById('duplicate-hint') as HTMLParagraphElement
 
   // Restore an in-progress draft so a reload or accidental close never loses a thought.
   restoreDraft({ textarea, miniTextarea, sourceUrl, sourceTitle, sourceAuthor })
@@ -71,6 +85,12 @@ export async function renderCapture(app: HTMLElement): Promise<void> {
   if (miniTextarea.value.trim()) (document.getElementById('extra-details') as HTMLDetailsElement).open = true
   if (sourceUrl.value || sourceTitle.value || sourceAuthor.value) {
     (document.getElementById('bron-details') as HTMLDetailsElement).open = true
+  }
+
+  // Load recent notes once for similarity checking (zero-cost, client-side only)
+  let recentNotes: Note[] = []
+  if (navigator.onLine) {
+    fetchNotes(0, 50).then(notes => { recentNotes = notes }).catch(() => {})
   }
 
   const saveDraft = () => {
@@ -86,9 +106,30 @@ export async function renderCapture(app: HTMLElement): Promise<void> {
     else localStorage.setItem(DRAFT_KEY, JSON.stringify(draft))
   }
 
+  // Debounced duplicate hint check — no API calls, pure client-side word overlap
+  let hintTimer: ReturnType<typeof setTimeout> | null = null
+  const checkDuplicates = () => {
+    if (hintTimer) clearTimeout(hintTimer)
+    hintTimer = setTimeout(() => {
+      const text = textarea.value.trim()
+      if (text.length < 20 || recentNotes.length === 0) {
+        duplicateHint.textContent = ''
+        return
+      }
+      const match = findSimilarNote(text, recentNotes)
+      if (match) {
+        const preview = (match.ai_title ?? match.content).slice(0, 60)
+        duplicateHint.textContent = `Lijkt op: "${preview}${preview.length === 60 ? '…' : ''}"`
+      } else {
+        duplicateHint.textContent = ''
+      }
+    }, 1000)
+  }
+
   const onInput = () => {
     saveBtn.disabled = textarea.value.trim() === ''
     saveDraft()
+    checkDuplicates()
   }
   textarea.addEventListener('input', onInput)
   ;[miniTextarea, sourceUrl, sourceTitle, sourceAuthor].forEach(el => el.addEventListener('input', saveDraft))
@@ -115,7 +156,8 @@ export async function renderCapture(app: HTMLElement): Promise<void> {
 
     try {
       if (navigator.onLine) {
-        await insertNote(note)
+        const saved = await insertNote(note)
+        recentNotes = [saved, ...recentNotes].slice(0, 50)
       } else {
         await queueOfflineNote(note)
       }
@@ -124,6 +166,7 @@ export async function renderCapture(app: HTMLElement): Promise<void> {
       sourceUrl.value = ''
       sourceTitle.value = ''
       sourceAuthor.value = ''
+      duplicateHint.textContent = ''
       localStorage.removeItem(DRAFT_KEY)
       ;(document.getElementById('extra-details') as HTMLDetailsElement).open = false
       ;(document.getElementById('bron-details') as HTMLDetailsElement).open = false
@@ -139,6 +182,23 @@ export async function renderCapture(app: HTMLElement): Promise<void> {
     }
   })
 
+  // Random note panel
+  const panel = document.getElementById('random-note-panel') as HTMLDivElement
+  const randomContent = document.getElementById('random-note-content') as HTMLParagraphElement
+
+  const showRandomNote = async () => {
+    const note = await fetchRandomNote().catch(() => null)
+    if (!note) { showToast('Geen nota\'s gevonden'); return }
+    randomContent.textContent = note.ai_title
+      ? `${note.ai_title}\n\n${note.content.slice(0, 300)}${note.content.length > 300 ? '…' : ''}`
+      : note.content.slice(0, 300) + (note.content.length > 300 ? '…' : '')
+    panel.hidden = false
+  }
+
+  document.getElementById('btn-random-note')?.addEventListener('click', showRandomNote)
+  document.getElementById('btn-reroll')?.addEventListener('click', showRandomNote)
+  document.getElementById('btn-close-random')?.addEventListener('click', () => { panel.hidden = true })
+
   // Online/offline indicator + auto-flush on reconnect
   await refreshOnlineIndicator()
   await refreshRecent()
@@ -146,12 +206,49 @@ export async function renderCapture(app: HTMLElement): Promise<void> {
   const onOnline = async () => {
     const flushed = await flushOfflineQueue()
     if (flushed > 0) showToast(`${flushed} offline-nota('s) gesynchroniseerd`)
+    recentNotes = await fetchNotes(0, 50).catch(() => recentNotes)
     await refreshOnlineIndicator()
     await refreshRecent()
   }
   const onOffline = () => refreshOnlineIndicator()
   window.addEventListener('online', onOnline)
   window.addEventListener('offline', onOffline)
+}
+
+function findSimilarNote(input: string, notes: Note[]): Note | null {
+  const inputWords = tokenize(input)
+  if (inputWords.size === 0) return null
+
+  let bestNote: Note | null = null
+  let bestScore = 0
+
+  for (const note of notes) {
+    const noteWords = tokenize(note.ai_title ? note.ai_title + ' ' + note.content : note.content)
+    const intersection = countIntersection(inputWords, noteWords)
+    const union = inputWords.size + noteWords.size - intersection
+    const score = union > 0 ? intersection / union : 0
+    if (score > bestScore) {
+      bestScore = score
+      bestNote = note
+    }
+  }
+
+  return bestScore > 0.25 ? bestNote : null
+}
+
+function tokenize(text: string): Set<string> {
+  return new Set(
+    text.toLowerCase()
+      .replace(/[^a-z0-9À-ɏ\s]/g, ' ')
+      .split(/\s+/)
+      .filter(w => w.length > 4)
+  )
+}
+
+function countIntersection(a: Set<string>, b: Set<string>): number {
+  let count = 0
+  for (const w of a) if (b.has(w)) count++
+  return count
 }
 
 function restoreDraft(els: {
@@ -249,6 +346,12 @@ function injectCaptureStyles(): void {
       line-height: 1.6;
       resize: none;
     }
+    .duplicate-hint {
+      font-size: var(--fs-sm);
+      color: var(--text-muted);
+      min-height: 1.2em;
+      margin: 0;
+    }
     .capture-mini-textarea {
       margin-top: var(--s-2);
     }
@@ -283,10 +386,18 @@ function injectCaptureStyles(): void {
       bottom: 0;
       background: var(--bg);
       padding: var(--s-3) 0;
+      display: flex;
+      gap: var(--s-2);
+      align-items: center;
     }
     .capture-footer .btn {
       min-height: 52px;
       font-size: var(--fs-base);
+    }
+    .capture-footer .btn-sm {
+      min-height: unset;
+      font-size: var(--fs-sm);
+      padding: var(--s-2) var(--s-3);
     }
     .capture-recent {
       display: flex;
@@ -330,6 +441,40 @@ function injectCaptureStyles(): void {
     .online-indicator.offline { color: var(--danger); }
     .online-indicator.sync    { color: #B57C00; }
     .online-indicator.online  { color: var(--accent-hover); }
+
+    /* Random note panel — fixed bottom strip, not a modal */
+    .random-note-panel {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      z-index: 100;
+      padding: var(--s-3) var(--s-4);
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      box-shadow: 0 -2px 12px rgba(0,0,0,0.08);
+    }
+    .random-note-card {
+      max-width: 640px;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      gap: var(--s-2);
+    }
+    .random-note-content {
+      font-size: var(--fs-sm);
+      line-height: 1.6;
+      white-space: pre-wrap;
+      color: var(--text);
+      margin: 0;
+      max-height: 8rem;
+      overflow-y: auto;
+    }
+    .random-note-actions {
+      display: flex;
+      gap: var(--s-2);
+    }
+    .random-note-actions .btn { width: auto; }
   `
   document.head.appendChild(style)
 }

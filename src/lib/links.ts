@@ -1,10 +1,22 @@
 import { supabase } from './supabase'
 
+export type LinkType = 'builds_on' | 'contradicts' | 'example_of' | 'contrasts' | 'applies_to' | 'related'
+
+export const LINK_TYPE_LABELS: Record<LinkType, string> = {
+  builds_on:   'Bouwt voort op',
+  contradicts: 'Weerspreekt',
+  example_of:  'Voorbeeld van',
+  contrasts:   'Contrasteert met',
+  applies_to:  'Past toe op',
+  related:     'Verwant aan',
+}
+
 export interface NoteLink {
   id: string
   user_id: string
   source_id: string
   target_id: string
+  type: LinkType
   reason: string | null
   created_at: string
 }
@@ -24,7 +36,12 @@ export async function fetchLinksForNote(noteId: string): Promise<NoteLink[]> {
   return (data ?? []) as NoteLink[]
 }
 
-export async function createLink(input: { sourceId: string; targetId: string; reason?: string }): Promise<NoteLink> {
+export async function createLink(input: {
+  sourceId: string
+  targetId: string
+  type?: LinkType
+  reason?: string
+}): Promise<NoteLink> {
   if (input.sourceId === input.targetId) throw new Error('Een nota kan niet aan zichzelf gelinkt worden.')
 
   const { data: userData } = await supabase.auth.getUser()
@@ -37,6 +54,7 @@ export async function createLink(input: { sourceId: string; targetId: string; re
       user_id: userId,
       source_id: input.sourceId,
       target_id: input.targetId,
+      type: input.type ?? 'related',
       reason: input.reason ?? null
     })
     .select()
