@@ -420,7 +420,7 @@ function injectStyles(): void {
   const style = document.createElement('style')
   style.id = 'proj-styles'
   style.textContent = `
-    .proj-body { flex: 1; padding: var(--s-4); max-width: 1100px; width: 100%; margin: 0 auto; }
+    .proj-body { flex: 1; padding: var(--s-4); padding-bottom: calc(var(--bottom-nav-h) + var(--s-4)); max-width: 1100px; width: 100%; margin: 0 auto; }
     .proj-loading { text-align: center; padding: var(--s-7); color: var(--text-muted); }
     .proj-layout { display: grid; grid-template-columns: 320px 1fr; gap: var(--s-5); align-items: start; }
     @media (max-width: 720px) { .proj-layout { grid-template-columns: 1fr; } }

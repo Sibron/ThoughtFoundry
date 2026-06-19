@@ -15,13 +15,13 @@ export async function renderInbox(app: HTMLElement): Promise<void> {
   app.innerHTML = `
     ${renderTopbar('Vangbak', 'inbox')}
     <div class="inbox-body">
-      <div class="inbox-tabs">
+      <div class="inbox-tabs focus-hide">
         <button class="inbox-tab" data-status="" aria-current="true">Alle</button>
         <button class="inbox-tab" data-status="inbox">Vangbak</button>
         <button class="inbox-tab" data-status="verwerkt">Verwerkt</button>
         <button class="inbox-tab" data-status="archief">Archief</button>
       </div>
-      <div class="inbox-type-pills" id="inbox-type-pills">
+      <div class="inbox-type-pills focus-hide" id="inbox-type-pills">
         <button class="type-pill active" data-note-type="">Alle types</button>
         ${NOTE_TYPE_ORDER.map(t => {
           const m = NOTE_TYPES[t]
@@ -344,6 +344,7 @@ function injectInboxStyles(): void {
       display: flex;
       flex-direction: column;
       padding: var(--s-4);
+      padding-bottom: calc(var(--bottom-nav-h) + var(--s-4));
       gap: var(--s-3);
       max-width: 800px;
       width: 100%;

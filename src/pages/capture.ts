@@ -449,7 +449,7 @@ function injectCaptureStyles(): void {
       max-width: 640px;
       width: 100%;
       margin: 0 auto;
-      padding-bottom: calc(var(--s-7) + env(safe-area-inset-bottom));
+      padding-bottom: calc(var(--bottom-nav-h) + var(--s-4));
     }
     .capture-textarea {
       min-height: 40vh;
@@ -503,6 +503,7 @@ function injectCaptureStyles(): void {
     .capture-footer {
       position: sticky;
       bottom: 0;
+      /* sits above bottom nav via padding-bottom on .capture-body */
       background: var(--bg);
       padding: var(--s-3) 0;
       display: flex;
@@ -567,10 +568,10 @@ function injectCaptureStyles(): void {
     .online-indicator.sync    { color: #B57C00; }
     .online-indicator.online  { color: var(--accent-hover); }
 
-    /* Random note panel — fixed bottom strip, not a modal */
+    /* Random note panel — fixed bottom strip, sits above the bottom nav */
     .random-note-panel {
       position: fixed;
-      bottom: 0;
+      bottom: var(--bottom-nav-h);
       left: 0;
       right: 0;
       z-index: 100;
