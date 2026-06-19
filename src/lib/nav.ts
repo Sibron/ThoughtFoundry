@@ -26,19 +26,36 @@ export type NavKey = 'capture' | 'inbox' | 'search' | 'process' | 'graph' | 'boo
  * Signature is unchanged: `title` shows in the header, `active` highlights
  * the matching tab, `extra` is injected into the header actions (e.g. online indicator).
  */
+// Tabs shown directly in the bottom bar. Anything else (Zoek, Graaf, Bronnen,
+// Projecten, AI-tools, Instellingen) lives behind the "Meer" overflow sheet.
+const PRIMARY_TABS: NavKey[] = ['capture', 'inbox', 'process', 'themes']
+
 export function renderTopbar(title: string, active?: NavKey, extra = ''): string {
   const ai = isAiEnabled()
 
   const tab = (key: NavKey, label: string) =>
     `<button class="tab-btn${active === key ? ' active' : ''}" data-nav="${key}">${label}</button>`
 
+  // "Meer" is active whenever the current screen isn't one of the primary tabs.
+  const meerActive = !active || !PRIMARY_TABS.includes(active)
+
+  const sheetItem = (key: NavKey, label: string) =>
+    `<button class="nav-sheet-item${active === key ? ' active' : ''}" data-nav="${key}">${label}</button>`
+
+  const aiSheetItems = ai
+    ? sheetItem('spark', 'Spark') +
+      sheetItem('denkpartner', 'Denkpartner') +
+      sheetItem('clusters', 'Clusters') +
+      sheetItem('book', 'Boek')
+    : ''
+
   return `
     <header class="topbar">
       <span class="topbar-title">${title}</span>
       <div class="topbar-actions">
         ${extra}
-        <button class="topbar-btn focus-hide" data-nav="focus-mode" aria-pressed="false" id="focus-mode-btn">Focus</button>
-        <button class="topbar-btn focus-hide" data-nav="toggle-theme" id="theme-toggle-btn">Donker</button>
+        <button class="topbar-btn" data-nav="focus-mode" aria-pressed="false" id="focus-mode-btn">Focus</button>
+        <button class="topbar-btn" data-nav="toggle-theme" id="theme-toggle-btn">Donker</button>
       </div>
     </header>
     <nav class="bottom-nav focus-hide ${ai ? 'bottom-nav--5col' : 'bottom-nav--4col'}" aria-label="Hoofdnavigatie">
@@ -46,8 +63,27 @@ export function renderTopbar(title: string, active?: NavKey, extra = ''): string
       ${tab('inbox', 'Vangbak')}
       ${ai ? tab('process', 'Verwerken') : ''}
       ${tab('themes', "Thema's")}
-      ${tab('settings', 'Meer')}
-    </nav>`
+      <button class="tab-btn${meerActive ? ' active' : ''}" data-nav="meer" aria-expanded="false" aria-controls="nav-sheet">Meer</button>
+    </nav>
+    <div class="nav-sheet-scrim focus-hide" id="nav-sheet-scrim" hidden></div>
+    <div class="nav-sheet focus-hide" id="nav-sheet" role="menu" aria-label="Meer" hidden>
+      ${sheetItem('search', 'Zoeken')}
+      ${sheetItem('graph', 'Graaf')}
+      ${sheetItem('sources', 'Bronnen')}
+      ${sheetItem('projects', 'Projecten')}
+      ${aiSheetItems}
+      ${sheetItem('settings', 'Instellingen')}
+    </div>`
+}
+
+/** Open or close the "Meer" overflow sheet. */
+function setSheetOpen(open: boolean): void {
+  const sheet = document.getElementById('nav-sheet')
+  const scrim = document.getElementById('nav-sheet-scrim')
+  const trigger = document.querySelector<HTMLElement>('[data-nav="meer"]')
+  if (sheet) sheet.hidden = !open
+  if (scrim) scrim.hidden = !open
+  if (trigger) trigger.setAttribute('aria-expanded', String(open))
 }
 
 /** Wire up every `[data-nav]` button in the document. Idempotent per render. */
@@ -77,10 +113,24 @@ export function attachTopbar(): void {
         updateNavButtons()
         return
       }
+      if (nav === 'meer') {
+        const sheet = document.getElementById('nav-sheet')
+        setSheetOpen(!!sheet?.hidden)
+        return
+      }
 
+      // Any real navigation closes the overflow sheet first.
+      setSheetOpen(false)
       navigateTo('/' + nav)
     })
   })
+
+  // Tapping the scrim closes the sheet without navigating.
+  const scrim = document.getElementById('nav-sheet-scrim')
+  if (scrim && !scrim.dataset['navBound']) {
+    scrim.dataset['navBound'] = '1'
+    scrim.addEventListener('click', () => setSheetOpen(false))
+  }
 
   updateNavButtons()
 }
