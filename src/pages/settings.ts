@@ -278,10 +278,17 @@ export async function renderSettings(app: HTMLElement): Promise<void> {
       try {
         const parsed = JSON.parse(reader.result as string) as ExportPayload
         const noteCount = (parsed.notes ?? []).length
+        const themeCount = (parsed.themes ?? []).length
+        const linkCount = (parsed.note_links ?? []).length
+        const sourceCount = ((parsed as unknown as Record<string, unknown>)['sources'] as unknown[] ?? []).length
         const previewEl = document.getElementById('import-preview') as HTMLDivElement
         const importBtn = document.getElementById('import-btn') as HTMLButtonElement
         previewEl.hidden = false
-        previewEl.textContent = `Gevonden: ${noteCount} nota${noteCount === 1 ? '' : "'s"} in dit bestand. Bestaande nota's (zelfde ID) worden overgeslagen.`
+        const parts = [`${noteCount} nota${noteCount === 1 ? '' : "'s"}`]
+        if (themeCount) parts.push(`${themeCount} thema's`)
+        if (sourceCount) parts.push(`${sourceCount} bronnen`)
+        if (linkCount) parts.push(`${linkCount} links`)
+        previewEl.textContent = `Gevonden: ${parts.join(', ')}. Bestaande nota's (zelfde ID) worden overgeslagen.`
         importBtn.hidden = false
         pendingImport = parsed
       } catch {
@@ -324,7 +331,12 @@ export async function renderSettings(app: HTMLElement): Promise<void> {
     btn.textContent = 'Importeren…'
     try {
       const result = await importFromJson(pendingImport)
-      showToast(`Geïmporteerd: ${result.imported} nota${result.imported === 1 ? '' : "'s"}${result.skipped > 0 ? `, ${result.skipped} overgeslagen` : ''}`)
+      const parts = [`${result.imported} nota${result.imported === 1 ? '' : "'s"}`]
+      if (result.themes) parts.push(`${result.themes} thema's`)
+      if (result.sources) parts.push(`${result.sources} bronnen`)
+      if (result.links) parts.push(`${result.links} links`)
+      if (result.skipped) parts.push(`${result.skipped} overgeslagen`)
+      showToast(`Geïmporteerd: ${parts.join(', ')}`)
       if (result.errors.length > 0) {
         console.warn('Import errors:', result.errors)
       }
