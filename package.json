@@ -9,6 +9,8 @@
     "preview": "vite preview"
   },
   "devDependencies": {
+    "csv-parse": "^5.6.0",
+    "tsx": "^4.22.4",
     "typescript": "~5.6.3",
     "vite": "^7.0.0",
     "vite-plugin-pwa": "^1.2.0"
