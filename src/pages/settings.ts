@@ -9,7 +9,7 @@ import { getInstallPrompt, clearInstallPrompt } from '../lib/pwa'
 import { countByStatus } from '../lib/notes'
 import { getPersona, setPersona, getDefaultPersona } from '../lib/persona'
 import { fetchThemes, updateTheme, type Theme } from '../lib/themes'
-import { getDensity, setDensity, getMotion, setMotion } from '../lib/display'
+import { getDensity, setDensity, getMotion, setMotion, getTheme, setTheme, getFocusMode, setFocusMode, type Theme as DisplayTheme } from '../lib/display'
 
 export async function renderSettings(app: HTMLElement): Promise<void> {
   app.innerHTML = `
@@ -94,6 +94,18 @@ export async function renderSettings(app: HTMLElement): Promise<void> {
       <label class="ai-toggle">
         <input type="checkbox" id="motion-toggle" ${getMotion() === 'reduced' ? 'checked' : ''} />
         <span>Beweging beperken (geen animaties / overgangen)</span>
+      </label>
+      <label class="field">
+        <span class="field-label">Thema</span>
+        <select id="theme-select">
+          <option value="auto"${getTheme() === 'auto' ? ' selected' : ''}>Automatisch (volgt systeem)</option>
+          <option value="dark"${getTheme() === 'dark' ? ' selected' : ''}>Donker</option>
+          <option value="light"${getTheme() === 'light' ? ' selected' : ''}>Licht</option>
+        </select>
+      </label>
+      <label class="ai-toggle">
+        <input type="checkbox" id="focus-mode-toggle" ${getFocusMode() ? 'checked' : ''} />
+        <span>Focusmodus (verbergt navigatie en extra knoppen)</span>
       </label>
     </section>
 
@@ -229,6 +241,18 @@ export async function renderSettings(app: HTMLElement): Promise<void> {
     const on = (e.target as HTMLInputElement).checked
     setMotion(on ? 'reduced' : 'auto')
     showToast(on ? 'Beweging beperkt' : 'Beweging ingeschakeld')
+  })
+
+  document.getElementById('theme-select')?.addEventListener('change', (e) => {
+    const v = (e.target as HTMLSelectElement).value as DisplayTheme
+    setTheme(v)
+    showToast('Thema bijgewerkt')
+  })
+
+  document.getElementById('focus-mode-toggle')?.addEventListener('change', (e) => {
+    const on = (e.target as HTMLInputElement).checked
+    setFocusMode(on)
+    showToast(on ? 'Focusmodus ingeschakeld' : 'Focusmodus uitgeschakeld')
   })
 
   document.getElementById('persona-save')?.addEventListener('click', () => {
@@ -393,6 +417,7 @@ function injectSettingsStyles(): void {
       flex-direction: column;
       gap: var(--s-5);
       padding: var(--s-4);
+      padding-bottom: calc(var(--bottom-nav-h) + var(--s-4));
       max-width: 760px;
       width: 100%;
       margin: 0 auto;

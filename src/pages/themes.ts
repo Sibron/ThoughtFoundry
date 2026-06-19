@@ -10,8 +10,8 @@ import { fetchNotesSections } from '../lib/notes'
 import { renderTopbar, attachTopbar } from '../lib/nav'
 
 const COLOR_PALETTE = [
-  '#3AC48D', '#2E76A8', '#C45A3A', '#A83AC4',
-  '#C4A83A', '#3AC4B5', '#C43A6E', '#6B6B6B'
+  '#5E9A77', '#5E84A8', '#BE7156', '#9A6B9E',
+  '#B79350', '#4F9E9A', '#B36480', '#837A6B'
 ]
 
 const SECTION_SLUGS = [
@@ -276,6 +276,7 @@ function injectThemesStyles(): void {
       flex-direction: column;
       gap: var(--s-5);
       padding: var(--s-4);
+      padding-bottom: calc(var(--bottom-nav-h) + var(--s-4));
       max-width: 760px;
       width: 100%;
       margin: 0 auto;

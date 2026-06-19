@@ -188,6 +188,7 @@ function injectSparkStyles(): void {
       flex-direction: column;
       gap: var(--s-4);
       padding: var(--s-4);
+      padding-bottom: calc(var(--bottom-nav-h) + var(--s-4));
       max-width: 760px;
       width: 100%;
       margin: 0 auto;

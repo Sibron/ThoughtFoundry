@@ -526,6 +526,7 @@ function injectNoteStyles(): void {
       display: flex;
       flex-direction: column;
       padding: var(--s-4);
+      padding-bottom: calc(var(--bottom-nav-h) + var(--s-4));
       max-width: 760px;
       width: 100%;
       margin: 0 auto;
