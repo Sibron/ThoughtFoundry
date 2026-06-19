@@ -46,13 +46,24 @@ interface MarkdownInfo {
   rawContent: string
 }
 
+type Section =
+  | 'probleemstelling'
+  | 'theoretische_onderbouwing'
+  | 'ondersteunende_concepten'
+  | 'methodieken'
+  | 'reflectievragen'
+  | ''
+
 interface MigrationNote {
   id: string
   content: string
   ai_title: string
+  ai_summary: string | null
   note_type: NoteType
   status: 'verwerkt'
+  section: Section | null
   core_idea: string | null
+  use_for: string | null
   source_author: string | null
   source_title: string | null
   source_id: string | null
@@ -287,35 +298,147 @@ function parseCreatedAt(str: string): string {
   return d.toISOString()
 }
 
+// ── Note processing (replicates the app's process-note pipeline) ──────────────
+// ThoughtFoundry's processor fills: ai_title, ai_summary, tags, section, the
+// note_type, status='verwerkt' + theme/note links. core_idea and use_for are
+// deliberately left for the user's manual reflection step, so we leave them
+// null here to stay faithful to the product. See docs/ROADMAP.md and
+// supabase/functions/process-note/index.ts.
+
+// "Ik speel. Ik groei. Ik durf" is a book of coaching games/exercises — every
+// note from it is a reusable method, i.e. a framework, not plain literature.
+const METHOD_BOOK = 'Ik speel. Ik groei. Ik durf'
+
+// Title patterns that signal a model / method / framework note.
+const FRAMEWORK_RE =
+  /\b(theorie|model(?:len)?|effect|de\s+wet|wet\s+van|methode|techniek|principe|kader|raamwerk|venster|axioma'?s?|matrix|piramide|cyclus|stappenplan|framework|regel|syndroom|paradox|dilemma|quadrant|kwadrant)\b/i
+
+// Themes whose notes are theory/science → "theoretische onderbouwing".
+const THEORY_THEMES = new Set([
+  'Brein', 'Intelligentie', 'Genetica', 'Psychologie', 'Nature/nurture',
+  'Autisme', 'Hoogbegaafdheid', 'Pedagogiek', 'Emoties', 'ADHD',
+  'Identiteit', 'Karakter', 'Gender', 'Introvert/extravert', 'Slaap',
+])
+
+// Themes whose notes are practical methods/tools → "methodieken".
+const METHOD_THEMES = new Set([
+  'Methodiek', 'Coaching', 'Productiviteit', 'Job crafting', 'Solliciteren',
+  'Communicatie', 'Schrijven', 'Spreken in het openbaar', 'Kennismanagement',
+  'Ezelsbruggetje', 'Contentcreatie', 'Videocreatie', 'Websitecreatie',
+])
+
+function isResourceRef(title: string): boolean {
+  return /^(course|tool|book|boek|podcast|video|cursus)\s*:/i.test(title) || /https?:\/\//i.test(title)
+}
+
 /**
- * Decides the note type from the actual content rather than trusting Notion's
- * label (which marked nearly everything "Permanent Note"). The principle:
- *   - A permanent note is a developed idea written out in prose.
- *   - A note that is sourced from a book/article/tool is a literature note.
- *   - A bare one-line capture with no body is a fleeting note — it still needs
- *     to be worked out, however good the one-liner is.
- *   - A note phrased as a question is a question note.
+ * Classify a note into one of the six ThoughtFoundry note types, judged from
+ * its actual content rather than Notion's blanket "Permanent Note" label.
  */
-function mapNoteType(
-  notionType: string,
-  title: string,
-  hasMedia: boolean,
-  hasBody: boolean,
-): NoteType {
+function classifyNote(opts: {
+  notionType: string
+  title: string
+  mediaTitle: string | null
+  hasBody: boolean
+  areas: string[]
+}): NoteType {
+  const { notionType, title, mediaTitle, hasBody, areas } = opts
   const t = title.trim()
 
-  // Questions first — they're a distinct kind regardless of body
+  // 1. Question — a distinct kind regardless of body
   if (notionType.trim() === 'Question' || t.endsWith('?')) return 'question'
 
-  // Backed by an external source → literature note
-  const isResourceRef = /^(course|tool|book|boek|podcast|video|cursus)\s*:/i.test(t) || /https?:\/\//i.test(t)
-  if (hasMedia || isResourceRef) return 'literature'
+  // 2. Framework — a reusable model/method (incl. the coaching-games book)
+  if (mediaTitle === METHOD_BOOK || FRAMEWORK_RE.test(t)) return 'framework'
 
-  // Developed prose → genuine permanent note
+  // 3. Literature — sourced from a (knowledge) book or external resource
+  if (mediaTitle || isResourceRef(t)) return 'literature'
+
+  // 4. Reflection — a coaching case or personal experience worked out in prose
+  if (hasBody && areas.some(a => a === 'Reflecteren' || a === 'Coaching')) return 'reflection'
+
+  // 5. Permanent — a developed idea in the user's own words
   if (hasBody) return 'permanent'
 
-  // Bare title, no source, no body → undeveloped capture
+  // 6. Fleeting — a bare capture still to be developed
   return 'fleeting'
+}
+
+/** Assign one of the five book sections from the note type + its themes. */
+function assignSection(noteType: NoteType, areas: string[], title: string): Section {
+  if (noteType === 'question') return 'reflectievragen'
+  if (noteType === 'framework') return 'methodieken'
+  if (noteType === 'reflection') return 'reflectievragen'
+
+  // A note that frames a problem/risk/pitfall belongs in the problem statement.
+  if (/\b(probleem|valkuil|risico|gevaar|uitdaging|knelpunt)\b/i.test(title)) {
+    return 'probleemstelling'
+  }
+
+  if (areas.some(a => THEORY_THEMES.has(a))) return 'theoretische_onderbouwing'
+  if (areas.some(a => METHOD_THEMES.has(a))) return 'methodieken'
+  return 'ondersteunende_concepten'
+}
+
+/** Slugify a theme name into a tag: lowercase, hyphenated, ascii-ish. */
+function slugifyTag(name: string): string {
+  return name
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '') // strip accents
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+}
+
+/** Build up to 5 lowercase, hyphenated tags from the note's themes. */
+function generateTags(areas: string[]): string[] {
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const a of areas) {
+    const slug = slugifyTag(a)
+    if (slug && !seen.has(slug)) {
+      seen.add(slug)
+      out.push(slug)
+    }
+    if (out.length >= 5) break
+  }
+  return out
+}
+
+/**
+ * Produce a 1-2 sentence Dutch "kerngedachte". For a developed note that's the
+ * opening of its body; for a bare-title note the title itself is the kernel.
+ */
+function generateSummary(cleanBody: string, title: string): string {
+  const source = cleanBody && !isEmptyBody(cleanBody) ? cleanBody : title
+
+  // Collapse the body to a single line of prose (drop headings & list bullets)
+  const prose = source
+    .split('\n')
+    .map(l => l.trim())
+    .filter(l => l && !l.startsWith('#') && l !== '-' && l !== '*' && l !== '---')
+    .map(l => l.replace(/^[-*]\s+/, ''))
+    .join(' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+  if (!prose) return ensureStop(title.trim())
+
+  // Take up to the first two sentences, capped at ~200 chars.
+  const sentences = prose.match(/[^.!?]+[.!?]+/g)
+  let summary: string
+  if (sentences && sentences.length) {
+    summary = sentences.slice(0, 2).join(' ').trim()
+  } else {
+    summary = prose
+  }
+  if (summary.length > 200) summary = summary.slice(0, 197).trimEnd() + '…'
+  return ensureStop(summary)
+}
+
+function ensureStop(s: string): string {
+  if (!s) return s
+  return /[.!?…:]$/.test(s) ? s : s + '.'
 }
 
 // ── Markdown body extractor ───────────────────────────────────────────────────
@@ -353,20 +476,6 @@ function isEmptyBody(body: string): boolean {
     return s && !s.startsWith('#') && s !== '-' && s !== '*' && s !== '---'
   })
   return meaningful.length === 0
-}
-
-function extractCoreIdea(body: string, fallback: string): string | null {
-  if (!body || isEmptyBody(body)) return fallback.trim().slice(0, 280) || null
-
-  const firstReal = body.split('\n').find(l => {
-    const s = l.trim()
-    return s && !s.startsWith('#') && s !== '-' && s !== '*'
-  })
-  if (!firstReal) return fallback.trim().slice(0, 280) || null
-
-  const sentence = firstReal.trim().match(/^[^.!?]*[.!?]/)
-  const idea = sentence ? sentence[0].trim() : firstReal.trim()
-  return idea.slice(0, 280) || null
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
@@ -466,31 +575,47 @@ function main() {
 
     const persons = parsePersons(row['📚 Persons'])
     const primaryPerson = persons[0] ?? null
-    const extraPersons = persons.slice(1)
 
-    const hasMedia = Boolean(row.Media.trim())
+    const areas = parseAreas(row.AREAS)
+    const mediaTitle = parseMediaTitle(row.Media)
     const hasBody = Boolean(cleanBody)
-    const noteType = mapNoteType(row['Note Type'], title, hasMedia, hasBody)
     const createdAt = parseCreatedAt(row['Created time'])
     const dbId = randomUUID()
+
+    // ── Processing (replicates the in-app process-note pipeline) ──
+    const noteType = classifyNote({
+      notionType: row['Note Type'],
+      title,
+      mediaTitle,
+      hasBody,
+      areas,
+    })
+    const section = assignSection(noteType, areas, title)
+    const aiTitle = title.length > 80 ? title.slice(0, 79).trimEnd() + '…' : title
+    const aiSummary = generateSummary(cleanBody, title)
+    // Persons become tags alongside the theme-derived tags (capped at 5).
+    const tags = [...new Set([...generateTags(areas), ...persons.map(p => slugifyTag(p.name))])].slice(0, 5)
 
     if (rawUuid) notionUuidToDbId.set(rawUuid, dbId)
 
     notes.push({
       id: dbId,
       content,
-      ai_title: title,
+      ai_title: aiTitle,
+      ai_summary: aiSummary,
       note_type: noteType,
       status: 'verwerkt',
-      core_idea: extractCoreIdea(cleanBody, title),
+      section: section || null,
+      core_idea: null, // manual reflection field — left for the user
+      use_for: null, // manual reflection field — left for the user
       source_author: primaryPerson?.name ?? null,
-      source_title: parseMediaTitle(row.Media),
+      source_title: mediaTitle,
       source_id: primaryPerson ? (sourceByName.get(primaryPerson.name)?.id ?? null) : null,
-      tags: extraPersons.map(p => p.name),
+      tags,
       processed_at: createdAt,
       created_at: createdAt,
       _rawUuid: rawUuid ?? '',
-      _areas: parseAreas(row.AREAS),
+      _areas: areas,
       _ideaUuids: parseIdeaUuids(row.Ideas),
       _primaryPersonName: primaryPerson?.name ?? null,
     })
