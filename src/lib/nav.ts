@@ -1,5 +1,6 @@
 import { navigateTo } from '../router'
 import { signOut } from './auth'
+import { getTheme, setTheme, getFocusMode, setFocusMode, type Theme } from './display'
 
 // ── AI feature flag ───────────────────────────────────────────────────────
 // AI (process / graph / book generation) is OFF by default. The core
@@ -16,72 +17,87 @@ export function setAiEnabled(on: boolean): void {
   localStorage.setItem(AI_ENABLED_KEY, on ? 'true' : 'false')
 }
 
-// ── Shared topbar ─────────────────────────────────────────────────────────
-// Single source of truth for navigation so every page stays consistent and
-// the AI-only items (Verwerken / Graaf / Boek) can be hidden in one place.
+// ── Navigation ────────────────────────────────────────────────────────────
 
 export type NavKey = 'capture' | 'inbox' | 'search' | 'process' | 'graph' | 'book' | 'themes' | 'settings' | 'spark' | 'denkpartner' | 'clusters' | 'sources' | 'projects'
 
 /**
- * Render the topbar HTML. `extra` is injected at the start of the actions row
- * (used by the capture page for its online/offline indicator).
- *
- * Two-layer structure:
- * Layer 1 (always visible, primary): + Nieuw, Vangbak, Graaf
- * Layer 2 (secondary, muted): AI tools + management pages
+ * Render the slim sticky header + fixed bottom tab bar.
+ * Signature is unchanged: `title` shows in the header, `active` highlights
+ * the matching tab, `extra` is injected into the header actions (e.g. online indicator).
  */
 export function renderTopbar(title: string, active?: NavKey, extra = ''): string {
   const ai = isAiEnabled()
-  const btn = (key: NavKey, label: string, secondary = false) =>
-    `<button class="topbar-btn${active === key ? ' active' : ''}${secondary ? ' topbar-secondary' : ''}" data-nav="${key}">${label}</button>`
 
-  const layer1 =
-    (active === 'capture' ? '' : btn('capture', '+ Nieuw')) +
-    (active === 'inbox' ? '' : btn('inbox', 'Vangbak')) +
-    (active === 'search' ? '' : btn('search', 'Zoek')) +
-    (active === 'graph' ? '' : btn('graph', 'Graaf'))
-
-  const aiLayer2 = ai
-    ? btn('process', 'Verwerken', true) +
-      btn('spark', 'Spark', true) +
-      btn('denkpartner', 'Denkpartner', true) +
-      btn('clusters', 'Clusters', true) +
-      btn('book', 'Boek', true)
-    : ''
-
-  const layer2 = aiLayer2 +
-    btn('themes', "Thema's", true) +
-    btn('sources', 'Bronnen', true) +
-    btn('projects', 'Projecten', true) +
-    btn('settings', '⚙', true) +
-    `<button class="topbar-btn topbar-secondary" data-nav="logout" title="Afmelden">&#x238B;</button>`
+  const tab = (key: NavKey, label: string) =>
+    `<button class="tab-btn${active === key ? ' active' : ''}" data-nav="${key}">${label}</button>`
 
   return `
-    <div class="topbar">
+    <header class="topbar">
       <span class="topbar-title">${title}</span>
       <div class="topbar-actions">
         ${extra}
-        ${layer1}
-        <span class="topbar-sep" aria-hidden="true">|</span>
-        ${layer2}
+        <button class="topbar-btn focus-hide" data-nav="focus-mode" aria-pressed="false" id="focus-mode-btn">Focus</button>
+        <button class="topbar-btn focus-hide" data-nav="toggle-theme" id="theme-toggle-btn">Donker</button>
       </div>
-    </div>`
+    </header>
+    <nav class="bottom-nav focus-hide ${ai ? 'bottom-nav--5col' : 'bottom-nav--4col'}" aria-label="Hoofdnavigatie">
+      ${tab('capture', 'Nieuw')}
+      ${tab('inbox', 'Vangbak')}
+      ${ai ? tab('process', 'Verwerken') : ''}
+      ${tab('themes', "Thema's")}
+      ${tab('settings', 'Meer')}
+    </nav>`
 }
 
-/** Wire up every `[data-nav]` button in the document (idempotent per render). */
+/** Wire up every `[data-nav]` button in the document. Idempotent per render. */
 export function attachTopbar(): void {
   document.querySelectorAll<HTMLElement>('[data-nav]').forEach((el) => {
+    if (el.dataset['navBound']) return
+    el.dataset['navBound'] = '1'
+
     el.addEventListener('click', async () => {
       const nav = el.dataset['nav']
       if (!nav) return
+
       if (nav === 'logout') {
         await signOut()
         navigateTo('/login')
         return
       }
+      if (nav === 'toggle-theme') {
+        const t = getTheme()
+        const next: Theme = t === 'auto' ? 'dark' : t === 'dark' ? 'light' : 'auto'
+        setTheme(next)
+        updateNavButtons()
+        return
+      }
+      if (nav === 'focus-mode') {
+        setFocusMode(!getFocusMode())
+        updateNavButtons()
+        return
+      }
+
       navigateTo('/' + nav)
     })
   })
+
+  updateNavButtons()
+}
+
+function updateNavButtons(): void {
+  const themeBtn = document.getElementById('theme-toggle-btn')
+  if (themeBtn) {
+    const t = getTheme()
+    themeBtn.textContent = t === 'dark' ? 'Licht' : t === 'light' ? 'Auto' : 'Donker'
+    themeBtn.title = `Thema: ${t}`
+  }
+  const focusBtn = document.getElementById('focus-mode-btn')
+  if (focusBtn) {
+    const on = getFocusMode()
+    focusBtn.textContent = on ? 'Focus uit' : 'Focus'
+    focusBtn.setAttribute('aria-pressed', String(on))
+  }
 }
 
 /** Full-screen panel shown when an AI-only route is opened while AI is off. */
@@ -113,6 +129,7 @@ function injectAiDisabledStyles(): void {
       gap: var(--s-3);
       text-align: center;
       padding: var(--s-7);
+      padding-bottom: calc(var(--bottom-nav-h) + var(--s-7));
       color: var(--text-muted);
     }
     .ai-disabled h2 { color: var(--text); }
