@@ -99,11 +99,63 @@ interface NoteLinkRow {
   reason: null
 }
 
-// ── Typo / spelling corrections for AREAS names ───────────────────────────────
+// ── AREAS normalisation ───────────────────────────────────────────────────────
+// The original Notion areas mix Dutch and English ("Leren / Learning"),
+// use inconsistent casing ("adhd"), contain spelling slips, and include several
+// singletons that are really the same concept. This map makes every theme a
+// single coherent Dutch name and merges the obvious duplicates.
+// Anything not listed here is kept as-is (already coherent).
 
-const AREA_FIXES: Record<string, string> = {
-  'Zetelkasten': 'Zettelkasten',
-  'Project Managment': 'Project Management',
+const AREA_NORMALIZE: Record<string, string> = {
+  // ── Language: drop the English half / translate to Dutch ──
+  'Leren / Learning': 'Leren',
+  'Personal growth': 'Persoonlijke groei',
+  'Gezondheid / Health and Wellness': 'Gezondheid',
+  'Content Production': 'Contentcreatie',
+  'Video creating': 'Videocreatie',
+  'Website creating': 'Websitecreatie',
+  'Ondernemen / Entrepreneurship': 'Ondernemen',
+  'Beroep/ Work': 'Werk',
+  'Toekomst / future': 'Toekomst',
+  'Huis / House / Home': 'Huis',
+  'Tuin / Garden': 'Tuin',
+  'Schrijven / Writing': 'Schrijven',
+  'Afslanken / Weight control': 'Afslanken',
+  'Bijberoep / Sidejob': 'Bijberoep',
+  'Apps/ Tool': 'Apps & tools',
+  'Studeren / Education': 'Studeren',
+  'Koken / Cooking': 'Koken',
+  'Slaap / Sleep': 'Slaap',
+  'Genetica / DNA': 'Genetica',
+  'Voeding / Food': 'Voeding',
+  'Vrouw / Female': 'Vrouw',
+  'Karakter / Personality': 'Karakter',
+  'Uitspraken / Quotes': 'Citaten',
+  'Public Speaking': 'Spreken in het openbaar',
+  'Exponential growth': 'Exponentiële groei',
+  'Task Management': 'Productiviteit',
+  'Project Management': 'Projectmanagement',
+  'Project Managment': 'Projectmanagement',
+  'Job Crafting': 'Job crafting',
+  'Introvert / Extravert': 'Introvert/extravert',
+  'Nature/Nurture': 'Nature/nurture',
+
+  // ── Casing / spelling fixes ──
+  'adhd': 'ADHD',
+  'Electriciteit': 'Elektriciteit',
+  'Sexualiteit': 'Seksualiteit',
+  'Groepdynamiek': 'Groepsdynamiek',
+
+  // ── Merge redundant singletons into one concept ──
+  'Zetelkasten': 'Kennismanagement',
+  'Zettelkasten': 'Kennismanagement',
+  'Second Brain': 'Kennismanagement',
+  'Knowledge Management': 'Kennismanagement',
+  'Band / Connectie / Relaties': 'Relaties',
+  'Relatie': 'Relaties',
+  'Metafoor/Uitspraak': 'Citaten',
+  'Heritabiliteit': 'Nature/nurture',
+  'Business': 'Ondernemen',
 }
 
 // ── Color palette — assigned alphabetically across themes ─────────────────────
@@ -198,12 +250,14 @@ function parseNameUrlList(str: string): { name: string; url: string }[] {
 }
 
 function parseAreas(str: string): string[] {
-  return parseNameUrlList(str)
+  const out = parseNameUrlList(str)
     .map(({ name }) => {
       const clean = name.trim()
-      return AREA_FIXES[clean] ?? clean
+      return AREA_NORMALIZE[clean] ?? clean
     })
     .filter(Boolean)
+  // Dedupe within a single note (merges can collapse two areas into one)
+  return [...new Set(out)]
 }
 
 function parsePersons(str: string): { name: string; url: string }[] {
@@ -233,14 +287,35 @@ function parseCreatedAt(str: string): string {
   return d.toISOString()
 }
 
-function mapNoteType(notionType: string, title: string, hasMedia: boolean): NoteType {
-  const t = notionType.trim()
-  if (t === 'Insight/Idea (Permanent Note)') return 'permanent'
-  if (t === 'Question') return 'question'
-  // 12 rows with empty Note Type
-  if (hasMedia) return 'literature'
-  if (title.trim().endsWith('?')) return 'question'
-  return 'permanent'
+/**
+ * Decides the note type from the actual content rather than trusting Notion's
+ * label (which marked nearly everything "Permanent Note"). The principle:
+ *   - A permanent note is a developed idea written out in prose.
+ *   - A note that is sourced from a book/article/tool is a literature note.
+ *   - A bare one-line capture with no body is a fleeting note — it still needs
+ *     to be worked out, however good the one-liner is.
+ *   - A note phrased as a question is a question note.
+ */
+function mapNoteType(
+  notionType: string,
+  title: string,
+  hasMedia: boolean,
+  hasBody: boolean,
+): NoteType {
+  const t = title.trim()
+
+  // Questions first — they're a distinct kind regardless of body
+  if (notionType.trim() === 'Question' || t.endsWith('?')) return 'question'
+
+  // Backed by an external source → literature note
+  const isResourceRef = /^(course|tool|book|boek|podcast|video|cursus)\s*:/i.test(t) || /https?:\/\//i.test(t)
+  if (hasMedia || isResourceRef) return 'literature'
+
+  // Developed prose → genuine permanent note
+  if (hasBody) return 'permanent'
+
+  // Bare title, no source, no body → undeveloped capture
+  return 'fleeting'
 }
 
 // ── Markdown body extractor ───────────────────────────────────────────────────
@@ -394,7 +469,8 @@ function main() {
     const extraPersons = persons.slice(1)
 
     const hasMedia = Boolean(row.Media.trim())
-    const noteType = mapNoteType(row['Note Type'], title, hasMedia)
+    const hasBody = Boolean(cleanBody)
+    const noteType = mapNoteType(row['Note Type'], title, hasMedia, hasBody)
     const createdAt = parseCreatedAt(row['Created time'])
     const dbId = randomUUID()
 
