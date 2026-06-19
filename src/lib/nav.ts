@@ -1,5 +1,6 @@
 import { navigateTo } from '../router'
 import { signOut } from './auth'
+import { getTheme, setTheme, getFocusMode, setFocusMode, type Theme } from './display'
 
 // ── AI feature flag ───────────────────────────────────────────────────────
 // AI (process / graph / book generation) is OFF by default. The core
@@ -16,72 +17,137 @@ export function setAiEnabled(on: boolean): void {
   localStorage.setItem(AI_ENABLED_KEY, on ? 'true' : 'false')
 }
 
-// ── Shared topbar ─────────────────────────────────────────────────────────
-// Single source of truth for navigation so every page stays consistent and
-// the AI-only items (Verwerken / Graaf / Boek) can be hidden in one place.
+// ── Navigation ────────────────────────────────────────────────────────────
 
 export type NavKey = 'capture' | 'inbox' | 'search' | 'process' | 'graph' | 'book' | 'themes' | 'settings' | 'spark' | 'denkpartner' | 'clusters' | 'sources' | 'projects'
 
 /**
- * Render the topbar HTML. `extra` is injected at the start of the actions row
- * (used by the capture page for its online/offline indicator).
- *
- * Two-layer structure:
- * Layer 1 (always visible, primary): + Nieuw, Vangbak, Graaf
- * Layer 2 (secondary, muted): AI tools + management pages
+ * Render the slim sticky header + fixed bottom tab bar.
+ * Signature is unchanged: `title` shows in the header, `active` highlights
+ * the matching tab, `extra` is injected into the header actions (e.g. online indicator).
  */
+// Tabs shown directly in the bottom bar. Anything else (Zoek, Graaf, Bronnen,
+// Projecten, AI-tools, Instellingen) lives behind the "Meer" overflow sheet.
+const PRIMARY_TABS: NavKey[] = ['capture', 'inbox', 'process', 'themes']
+
 export function renderTopbar(title: string, active?: NavKey, extra = ''): string {
   const ai = isAiEnabled()
-  const btn = (key: NavKey, label: string, secondary = false) =>
-    `<button class="topbar-btn${active === key ? ' active' : ''}${secondary ? ' topbar-secondary' : ''}" data-nav="${key}">${label}</button>`
 
-  const layer1 =
-    (active === 'capture' ? '' : btn('capture', '+ Nieuw')) +
-    (active === 'inbox' ? '' : btn('inbox', 'Vangbak')) +
-    (active === 'search' ? '' : btn('search', 'Zoek')) +
-    (active === 'graph' ? '' : btn('graph', 'Graaf'))
+  const tab = (key: NavKey, label: string) =>
+    `<button class="tab-btn${active === key ? ' active' : ''}" data-nav="${key}">${label}</button>`
 
-  const aiLayer2 = ai
-    ? btn('process', 'Verwerken', true) +
-      btn('spark', 'Spark', true) +
-      btn('denkpartner', 'Denkpartner', true) +
-      btn('clusters', 'Clusters', true) +
-      btn('book', 'Boek', true)
+  // "Meer" is active whenever the current screen isn't one of the primary tabs.
+  const meerActive = !active || !PRIMARY_TABS.includes(active)
+
+  const sheetItem = (key: NavKey, label: string) =>
+    `<button class="nav-sheet-item${active === key ? ' active' : ''}" data-nav="${key}">${label}</button>`
+
+  const aiSheetItems = ai
+    ? sheetItem('spark', 'Spark') +
+      sheetItem('denkpartner', 'Denkpartner') +
+      sheetItem('clusters', 'Clusters') +
+      sheetItem('book', 'Boek')
     : ''
 
-  const layer2 = aiLayer2 +
-    btn('themes', "Thema's", true) +
-    btn('sources', 'Bronnen', true) +
-    btn('projects', 'Projecten', true) +
-    btn('settings', '⚙', true) +
-    `<button class="topbar-btn topbar-secondary" data-nav="logout" title="Afmelden">&#x238B;</button>`
-
   return `
-    <div class="topbar">
+    <header class="topbar">
       <span class="topbar-title">${title}</span>
       <div class="topbar-actions">
         ${extra}
-        ${layer1}
-        <span class="topbar-sep" aria-hidden="true">|</span>
-        ${layer2}
+        <button class="topbar-btn" data-nav="focus-mode" aria-pressed="false" id="focus-mode-btn">Focus</button>
+        <button class="topbar-btn" data-nav="toggle-theme" id="theme-toggle-btn">Donker</button>
       </div>
+    </header>
+    <nav class="bottom-nav focus-hide ${ai ? 'bottom-nav--5col' : 'bottom-nav--4col'}" aria-label="Hoofdnavigatie">
+      ${tab('capture', 'Nieuw')}
+      ${tab('inbox', 'Vangbak')}
+      ${ai ? tab('process', 'Verwerken') : ''}
+      ${tab('themes', "Thema's")}
+      <button class="tab-btn${meerActive ? ' active' : ''}" data-nav="meer" aria-expanded="false" aria-controls="nav-sheet">Meer</button>
+    </nav>
+    <div class="nav-sheet-scrim focus-hide" id="nav-sheet-scrim" hidden></div>
+    <div class="nav-sheet focus-hide" id="nav-sheet" role="menu" aria-label="Meer" hidden>
+      ${sheetItem('search', 'Zoeken')}
+      ${sheetItem('graph', 'Graaf')}
+      ${sheetItem('sources', 'Bronnen')}
+      ${sheetItem('projects', 'Projecten')}
+      ${aiSheetItems}
+      ${sheetItem('settings', 'Instellingen')}
     </div>`
 }
 
-/** Wire up every `[data-nav]` button in the document (idempotent per render). */
+/** Open or close the "Meer" overflow sheet. */
+function setSheetOpen(open: boolean): void {
+  const sheet = document.getElementById('nav-sheet')
+  const scrim = document.getElementById('nav-sheet-scrim')
+  const trigger = document.querySelector<HTMLElement>('[data-nav="meer"]')
+  if (sheet) sheet.hidden = !open
+  if (scrim) scrim.hidden = !open
+  if (trigger) trigger.setAttribute('aria-expanded', String(open))
+}
+
+/** Wire up every `[data-nav]` button in the document. Idempotent per render. */
 export function attachTopbar(): void {
   document.querySelectorAll<HTMLElement>('[data-nav]').forEach((el) => {
+    if (el.dataset['navBound']) return
+    el.dataset['navBound'] = '1'
+
     el.addEventListener('click', async () => {
       const nav = el.dataset['nav']
       if (!nav) return
+
       if (nav === 'logout') {
         await signOut()
         navigateTo('/login')
         return
       }
+      if (nav === 'toggle-theme') {
+        const t = getTheme()
+        const next: Theme = t === 'auto' ? 'dark' : t === 'dark' ? 'light' : 'auto'
+        setTheme(next)
+        updateNavButtons()
+        return
+      }
+      if (nav === 'focus-mode') {
+        setFocusMode(!getFocusMode())
+        updateNavButtons()
+        return
+      }
+      if (nav === 'meer') {
+        const sheet = document.getElementById('nav-sheet')
+        setSheetOpen(!!sheet?.hidden)
+        return
+      }
+
+      // Any real navigation closes the overflow sheet first.
+      setSheetOpen(false)
       navigateTo('/' + nav)
     })
   })
+
+  // Tapping the scrim closes the sheet without navigating.
+  const scrim = document.getElementById('nav-sheet-scrim')
+  if (scrim && !scrim.dataset['navBound']) {
+    scrim.dataset['navBound'] = '1'
+    scrim.addEventListener('click', () => setSheetOpen(false))
+  }
+
+  updateNavButtons()
+}
+
+function updateNavButtons(): void {
+  const themeBtn = document.getElementById('theme-toggle-btn')
+  if (themeBtn) {
+    const t = getTheme()
+    themeBtn.textContent = t === 'dark' ? 'Licht' : t === 'light' ? 'Auto' : 'Donker'
+    themeBtn.title = `Thema: ${t}`
+  }
+  const focusBtn = document.getElementById('focus-mode-btn')
+  if (focusBtn) {
+    const on = getFocusMode()
+    focusBtn.textContent = on ? 'Focus uit' : 'Focus'
+    focusBtn.setAttribute('aria-pressed', String(on))
+  }
 }
 
 /** Full-screen panel shown when an AI-only route is opened while AI is off. */
@@ -113,6 +179,7 @@ function injectAiDisabledStyles(): void {
       gap: var(--s-3);
       text-align: center;
       padding: var(--s-7);
+      padding-bottom: calc(var(--bottom-nav-h) + var(--s-7));
       color: var(--text-muted);
     }
     .ai-disabled h2 { color: var(--text); }

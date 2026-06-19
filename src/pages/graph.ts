@@ -440,6 +440,7 @@ function injectGraphStyles(): void {
       flex-direction: column;
       gap: var(--s-3);
       padding: var(--s-4);
+      padding-bottom: calc(var(--bottom-nav-h) + var(--s-4));
       max-width: 1400px;
       width: 100%;
       margin: 0 auto;
