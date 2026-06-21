@@ -571,6 +571,11 @@ textarea:focus {
   border-top-right-radius: var(--r-lg);
 }
 
+.nav-sheet[hidden],
+.nav-sheet-scrim[hidden] {
+  display: none;
+}
+
 .nav-sheet-item {
   display: flex;
   align-items: center;
