@@ -62,10 +62,12 @@ export async function fetchNotes(
   page = 0,
   pageSize = 50,
   status?: NoteStatus,
-  search?: string
+  search?: string,
+  noteType?: NoteType
 ): Promise<Note[]> {
   let q = supabase.from('notes').select('*').order('created_at', { ascending: false })
   if (status) q = q.eq('status', status)
+  if (noteType) q = q.eq('note_type', noteType)
   if (search && search.trim()) {
     const safe = search.trim().replace(/[%,]/g, ' ')
     q = q.or(`content.ilike.%${safe}%,ai_title.ilike.%${safe}%,ai_summary.ilike.%${safe}%`)
