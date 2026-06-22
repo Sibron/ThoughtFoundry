@@ -361,12 +361,23 @@ export async function renderSettings(app: HTMLElement): Promise<void> {
       if (result.links) parts.push(`${result.links} links`)
       if (result.skipped) parts.push(`${result.skipped} overgeslagen`)
       showToast(`Geïmporteerd: ${parts.join(', ')}`)
-      if (result.errors.length > 0) {
-        console.warn('Import errors:', result.errors)
-      }
       pendingImport = null
       const previewEl = document.getElementById('import-preview') as HTMLDivElement
-      previewEl.hidden = true
+      if (result.errors.length > 0) {
+        console.warn('Import errors:', result.errors)
+        const linkErrors = result.errors.filter(e => e.startsWith('link')).length
+        const summary = linkErrors > 0
+          ? `${linkErrors} link${linkErrors === 1 ? '' : 's'} kon niet worden geïmporteerd (ontbrekende nota's).`
+          : ''
+        previewEl.hidden = false
+        previewEl.innerHTML = `
+          <p class="import-warn">⚠ ${result.errors.length} probleem${result.errors.length === 1 ? '' : 'en'} bij import. ${escHtml(summary)}</p>
+          <details><summary>Details</summary><ul class="import-error-list">${
+            result.errors.slice(0, 50).map(e => `<li>${escHtml(e)}</li>`).join('')
+          }</ul></details>`
+      } else {
+        previewEl.hidden = true
+      }
       btn.hidden = true
       ;(document.getElementById('import-file') as HTMLInputElement).value = ''
     } catch (err) {
@@ -444,6 +455,9 @@ function injectSettingsStyles(): void {
       font-size: var(--fs-sm);
       color: var(--text);
     }
+    .import-warn { color: var(--danger); font-weight: 500; margin: 0 0 var(--s-1); }
+    .import-error-list { margin: var(--s-1) 0 0; padding-left: var(--s-4); color: var(--text-muted); }
+    .import-error-list li { word-break: break-word; }
     .stats-grid {
       list-style: none;
       display: grid;
