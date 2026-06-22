@@ -36,6 +36,10 @@ export async function renderGraph(app: HTMLElement): Promise<void> {
             <option value="">Alle</option>
           </select>
         </label>
+        <label class="graph-filter graph-toggle">
+          <input type="checkbox" id="graph-theme-edges" />
+          Toon thema-verbanden
+        </label>
         <span class="graph-stats" id="graph-stats"></span>
       </header>
       <div class="graph-shell">
@@ -95,6 +99,15 @@ export async function renderGraph(app: HTMLElement): Promise<void> {
     rebuild()
   })
 
+  // Theme connections are hidden by default so the typed (explicit) links stand
+  // out; the user can switch them on to see thematic clustering.
+  let showThemeEdges = false
+  const themeEdgesToggle = document.getElementById('graph-theme-edges') as HTMLInputElement
+  themeEdgesToggle.addEventListener('change', () => {
+    showThemeEdges = themeEdgesToggle.checked
+    renderSvg()
+  })
+
   let nodes: GraphNode[] = []
   let edges: GraphEdge[] = []
   let svg: SVGSVGElement | null = null
@@ -126,22 +139,23 @@ export async function renderGraph(app: HTMLElement): Promise<void> {
     const ids = new Set(nodes.map(n => n.id))
     edges = []
 
-    // Theme-based edges (notes sharing the same theme connect)
+    // Theme-based edges: connect each note in a theme to a single representative
+    // (the first note of that theme) — a "star", not a clique. A clique is
+    // O(n²) edges per theme and turns the canvas into a hairball that buries the
+    // real typed links; a star keeps the clustering pull at O(n) edges.
     const byTheme: Record<string, string[]> = {}
     noteThemes.forEach(nt => {
       if (!ids.has(nt.note_id)) return
       ;(byTheme[nt.theme_id] ??= []).push(nt.note_id)
     })
     Object.values(byTheme).forEach(group => {
-      // connect each pair lightly
-      for (let i = 0; i < group.length; i++) {
-        for (let j = i + 1; j < group.length; j++) {
-          edges.push({ source: group[i], target: group[j], kind: 'theme' })
-        }
+      const hub = group[0]
+      for (let i = 1; i < group.length; i++) {
+        edges.push({ source: hub, target: group[i], kind: 'theme' })
       }
     })
 
-    // Explicit links
+    // Explicit links — added last so they paint on top of theme edges.
     links.forEach(l => {
       if (ids.has(l.source_id) && ids.has(l.target_id)) {
         edges.push({ source: l.source_id, target: l.target_id, kind: 'explicit', reason: l.reason, linkId: l.id })
@@ -188,8 +202,18 @@ export async function renderGraph(app: HTMLElement): Promise<void> {
     svg.setAttribute('class', 'graph-svg')
     wrap.appendChild(svg)
 
-    // Edges first (so nodes paint on top)
+    // Arrowhead marker for explicit (typed) links so direction reads at a glance.
+    const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs')
+    defs.innerHTML = `<marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5"
+        markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+        <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--accent)" />
+      </marker>`
+    svg.appendChild(defs)
+
+    // Edges first (so nodes paint on top). Theme edges only when toggled on;
+    // explicit links always, painted last via array order so they sit on top.
     edges.forEach(e => {
+      if (e.kind === 'theme' && !showThemeEdges) return
       const a = nodes.find(n => n.id === e.source)
       const b = nodes.find(n => n.id === e.target)
       if (!a || !b) return
@@ -199,6 +223,19 @@ export async function renderGraph(app: HTMLElement): Promise<void> {
       line.setAttribute('x2', String(b.x))
       line.setAttribute('y2', String(b.y))
       line.setAttribute('class', e.kind === 'explicit' ? 'graph-edge graph-edge-explicit' : 'graph-edge graph-edge-theme')
+      // Reference endpoints by id (not array index) so dragging stays correct
+      // even when some edges are hidden.
+      line.dataset['src'] = e.source
+      line.dataset['tgt'] = e.target
+      if (e.kind === 'explicit') {
+        line.setAttribute('marker-end', 'url(#arrow)')
+        const link = links.find(l => l.id === e.linkId)
+        if (link) {
+          const title = document.createElementNS('http://www.w3.org/2000/svg', 'title')
+          title.textContent = [LINK_TYPE_LABELS[link.type], link.reason].filter(Boolean).join(' · ')
+          line.appendChild(title)
+        }
+      }
       svg!.appendChild(line)
     })
 
@@ -252,15 +289,13 @@ export async function renderGraph(app: HTMLElement): Promise<void> {
       n.x += dx
       n.y += dy
       g.setAttribute('transform', `translate(${n.x}, ${n.y})`)
-      // also update edges connected to this node
-      svg.querySelectorAll<SVGLineElement>('line.graph-edge').forEach((line, idx) => {
-        const e2 = edges[idx]
-        if (!e2) return
-        if (e2.source === n.id) {
+      // Update only the lines actually touching this node, matched by id.
+      svg.querySelectorAll<SVGLineElement>('line.graph-edge').forEach(line => {
+        if (line.dataset['src'] === n.id) {
           line.setAttribute('x1', String(n.x))
           line.setAttribute('y1', String(n.y))
         }
-        if (e2.target === n.id) {
+        if (line.dataset['tgt'] === n.id) {
           line.setAttribute('x2', String(n.x))
           line.setAttribute('y2', String(n.y))
         }

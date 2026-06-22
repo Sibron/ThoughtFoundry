@@ -15,6 +15,7 @@ import {
   fetchThemesForNote,
   fetchNoteIdsByThemes,
   setThemesForNote,
+  createTheme,
   type Theme
 } from '../lib/themes'
 import {
@@ -55,7 +56,6 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
   let noteThemeIds: string[] = []
   let links: NoteLink[] = []
   let sources: Source[] = []
-  let allNotes: Note[] = []
 
   try {
     [note, themes, noteThemeIds, links, sources] = await Promise.all([
@@ -89,8 +89,6 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
     } catch { /* best-effort */ }
   }
 
-  // Notes for the link-search picker (loaded lazily on first use).
-  let allNotesLoaded = false
   let tagsState: string[] = [...(current.tags ?? [])]
   let linkTargetId: string | null = null
 
@@ -208,12 +206,14 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
               <button class="btn btn-ghost btn-sm" id="link-add-btn">Koppel</button>
             </div>
           </div>
+          <div class="ai-link-suggestions" id="ai-link-suggestions"></div>
         </fieldset>
 
         ${isAiEnabled() ? `
         <div class="note-ai">
           <button class="btn btn-ghost btn-sm" id="ai-prefill">AI-suggesties ophalen</button>
           <span class="muted">Vult titel, samenvatting, tags en sectie voor. Niets wordt opgeslagen tot je opslaat.</span>
+          <div class="ai-theme-suggestions" id="ai-theme-suggestions"></div>
         </div>` : ''}
 
         <div class="note-actions">
@@ -300,8 +300,16 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
   // ── Links ───────────────────────────────────────────────────────────────--
   function renderLinkList(): void {
     const el = document.getElementById('link-list')!
-    if (links.length === 0) { el.innerHTML = '<span class="muted">Nog geen links</span>'; return }
-    el.innerHTML = links.map(l => {
+    // Collapse legacy reciprocal rows (A→B and B→A) so each neighbour shows once.
+    const seen = new Set<string>()
+    const uniqueLinks = links.filter(l => {
+      const otherId = l.source_id === id ? l.target_id : l.source_id
+      if (seen.has(otherId)) return false
+      seen.add(otherId)
+      return true
+    })
+    if (uniqueLinks.length === 0) { el.innerHTML = '<span class="muted">Nog geen links</span>'; return }
+    el.innerHTML = uniqueLinks.map(l => {
       const otherId = l.source_id === id ? l.target_id : l.source_id
       const dir = l.source_id === id ? '→' : '←'
       const label = labelMap.get(otherId) ?? otherId
@@ -348,22 +356,17 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
     const targetLabel = document.getElementById('link-target-label')!
     let debounce: ReturnType<typeof setTimeout> | null = null
 
-    const ensureNotes = async () => {
-      if (allNotesLoaded) return
-      try { allNotes = await fetchNotes(0, 200) } catch { allNotes = [] }
-      allNotesLoaded = true
-    }
-
     search.addEventListener('input', () => {
       if (debounce) clearTimeout(debounce)
       debounce = setTimeout(async () => {
-        const q = search.value.trim().toLowerCase()
+        const q = search.value.trim()
         if (!q) { sugg.innerHTML = ''; return }
-        await ensureNotes()
+        // Search server-side so every note is reachable (not just the first page).
+        let found: Note[] = []
+        try { found = await fetchNotes(0, 20, undefined, q) } catch { found = [] }
         const linkedSet = new Set(links.flatMap(l => [l.source_id, l.target_id]))
-        const matches = allNotes
-          .filter(n => n.id !== id && !linkedSet.has(n.id) &&
-            ((n.ai_title ?? '') + ' ' + n.content).toLowerCase().includes(q))
+        const matches = found
+          .filter(n => n.id !== id && !linkedSet.has(n.id))
           .slice(0, 6)
         sugg.innerHTML = matches.length
           ? matches.map(n => `<button class="link-suggestion" data-id="${n.id}">${escHtml((n.ai_title ?? n.content).slice(0, 80))}</button>`).join('')
@@ -393,6 +396,86 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
         renderLinkList()
         showToast('Gekoppeld')
       } catch (err) { showToast(`Mislukt: ${errMsg(err)}`) }
+    })
+  }
+
+  // ── AI suggestions: related-note links + new themes ───────────────────────
+  async function renderAiLinkSuggestions(relatedIds: string[]): Promise<void> {
+    const box = document.getElementById('ai-link-suggestions')
+    if (!box) return
+    const linkedSet = new Set(links.flatMap(l => [l.source_id, l.target_id]))
+    const candidates = relatedIds.filter(rid => rid !== id && !linkedSet.has(rid))
+    if (candidates.length === 0) { box.innerHTML = ''; return }
+
+    try {
+      const notes = await fetchNotesByIds(candidates)
+      notes.forEach(n => labelMap.set(n.id, n.ai_title ?? n.content.slice(0, 60)))
+    } catch { /* fall back to ids */ }
+
+    const typeOpts = Object.entries(LINK_TYPE_LABELS)
+      .map(([k, v]) => `<option value="${k}"${k === 'related' ? ' selected' : ''}>${escHtml(v)}</option>`)
+      .join('')
+    box.innerHTML = `
+      <div class="ai-sugg-label">AI stelt deze links voor:</div>
+      ${candidates.map(rid => `
+        <div class="ai-sugg-row" data-rid="${rid}">
+          <label class="chip-check"><input type="checkbox" class="ai-link-check" value="${rid}" checked/> ${escHtml(labelMap.get(rid) ?? rid)}</label>
+          <select class="ai-link-type" data-for="${rid}">${typeOpts}</select>
+        </div>`).join('')}
+      <button class="btn btn-ghost btn-sm" id="ai-link-apply">Geselecteerde koppelen</button>
+    `
+    document.getElementById('ai-link-apply')?.addEventListener('click', async (e) => {
+      const btn = e.currentTarget as HTMLButtonElement
+      btn.disabled = true
+      const checked = Array.from(box.querySelectorAll<HTMLInputElement>('.ai-link-check:checked'))
+      let added = 0
+      for (const cb of checked) {
+        const targetId = cb.value
+        const type = (box.querySelector<HTMLSelectElement>(`.ai-link-type[data-for="${targetId}"]`)?.value ?? 'related') as LinkType
+        try {
+          const link = await createLink({ sourceId: id, targetId, type, reason: 'AI-suggestie' })
+          if (!links.some(l => l.id === link.id)) links.push(link)
+          added++
+        } catch { /* skip failures (e.g. duplicate) */ }
+      }
+      box.innerHTML = ''
+      renderLinkList()
+      showToast(added ? `${added} link${added === 1 ? '' : 's'} toegevoegd` : 'Niets gekoppeld')
+    })
+  }
+
+  function renderNewThemeHint(newThemes: { name: string; description: string }[]): void {
+    const box = document.getElementById('ai-theme-suggestions')
+    if (!box) return
+    if (newThemes.length === 0) { box.innerHTML = ''; return }
+    box.innerHTML = newThemes.map((t, i) =>
+      `<div class="ai-sugg-row">
+        <span class="muted">Nieuw thema: <strong>${escHtml(t.name)}</strong></span>
+        <button class="btn btn-ghost btn-sm" data-new-theme="${i}">Aanmaken</button>
+      </div>`
+    ).join('')
+    box.querySelectorAll<HTMLButtonElement>('[data-new-theme]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const t = newThemes[Number(btn.dataset['newTheme'])]
+        btn.disabled = true
+        try {
+          const created = await createTheme({ name: t.name, description: t.description })
+          themes.push(created)
+          // Append a pre-checked chip so it's saved with the note.
+          const group = document.querySelector('.chip-group')
+          if (group) {
+            const label = document.createElement('label')
+            label.className = 'chip-check'
+            label.innerHTML = `<input type="checkbox" class="theme-check" value="${created.id}" checked/> ${escHtml(created.name)}`
+            group.appendChild(label)
+          }
+          btn.textContent = 'Aangemaakt ✓'
+          showToast('Thema aangemaakt')
+        } catch (err) {
+          btn.disabled = false
+          showToast(`Mislukt: ${errMsg(err)}`)
+        }
+      })
     })
   }
 
@@ -478,6 +561,8 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
           const cb = document.querySelector<HTMLInputElement>(`.theme-check[value="${tid}"]`)
           if (cb) cb.checked = true
         })
+        await renderAiLinkSuggestions(suggestion.related_note_ids ?? [])
+        renderNewThemeHint(suggestion.new_themes ?? [])
         showToast('Suggesties ingevuld — controleer en sla op')
       } catch (err) {
         showToast(`AI mislukt: ${errMsg(err)}`)
@@ -579,6 +664,18 @@ function injectNoteStyles(): void {
     .link-suggestion:hover { background: var(--surface); }
     .link-add-row { display: flex; align-items: center; gap: var(--s-2); flex-wrap: wrap; }
     .link-target-label { flex: 1; min-width: 0; font-size: var(--fs-sm); font-weight: 500; }
+    .ai-link-suggestions:empty, .ai-theme-suggestions:empty { display: none; }
+    .ai-link-suggestions {
+      display: flex; flex-direction: column; gap: var(--s-1);
+      margin-top: var(--s-2); padding: var(--s-2);
+      border: 1px dashed var(--accent); border-radius: var(--r-sm);
+    }
+    .ai-sugg-label { font-size: var(--fs-sm); color: var(--text-muted); font-weight: 500; }
+    .ai-sugg-row { display: flex; align-items: center; gap: var(--s-2); flex-wrap: wrap; }
+    .ai-sugg-row .chip-check { flex: 1; min-width: 0; }
+    .ai-link-type { width: auto; font-size: var(--fs-sm); }
+    .ai-theme-suggestions { display: flex; flex-direction: column; gap: var(--s-1); margin-top: var(--s-1); width: 100%; }
+    .ai-link-suggestions .btn, .ai-theme-suggestions .btn { width: auto; }
     .note-ai { display: flex; align-items: center; gap: var(--s-2); flex-wrap: wrap; }
     .note-ai .btn { width: auto; }
     .note-actions { display: flex; gap: var(--s-2); flex-wrap: wrap; margin-top: var(--s-2); }
