@@ -48,6 +48,21 @@ export async function createLink(input: {
   const userId = userData.user?.id
   if (!userId) throw new Error('Niet aangemeld')
 
+  // A link is conceptually undirected for the purpose of "are these two notes
+  // connected?". The unique index only covers (source_id, target_id), so guard
+  // against the reverse direction here to avoid a visible duplicate. If a link
+  // already exists either way, return it instead of creating a second row.
+  const { data: existing } = await supabase
+    .from('note_links')
+    .select('*')
+    .or(
+      `and(source_id.eq.${input.sourceId},target_id.eq.${input.targetId}),` +
+      `and(source_id.eq.${input.targetId},target_id.eq.${input.sourceId})`
+    )
+    .limit(1)
+    .maybeSingle()
+  if (existing) return existing as NoteLink
+
   const { data, error } = await supabase
     .from('note_links')
     .insert({

@@ -2,6 +2,7 @@ import { detectClusters, type Cluster } from '../lib/ai'
 import { getCostStatus, formatUsd, type CostStatus } from '../lib/cost'
 import { renderTopbar, attachTopbar } from '../lib/nav'
 import { insertNote, fetchNotesByIds } from '../lib/notes'
+import { createLink } from '../lib/links'
 
 export async function renderClusters(app: HTMLElement): Promise<void> {
   app.innerHTML = `
@@ -114,12 +115,21 @@ export async function renderClusters(app: HTMLElement): Promise<void> {
     btn.disabled = true
     btn.textContent = 'Aanmaken…'
     try {
-      await insertNote({
+      const created = await insertNote({
         content: c.missing_note,
         mini_notes: `Automatisch aangemaakt door Cluster-detectie: "${c.name}"`,
       })
+      // Connect the new note to the cluster it came from, so the detected gap
+      // becomes a linked synthesis rather than an orphan in the inbox.
+      let linked = 0
+      for (const targetId of c.note_ids) {
+        try {
+          await createLink({ sourceId: created.id, targetId, type: 'related', reason: `Cluster: ${c.name}` })
+          linked++
+        } catch { /* skip self/duplicate/missing */ }
+      }
       btn.textContent = 'Aangemaakt ✓'
-      showToast('Nota aangemaakt in inbox')
+      showToast(linked ? `Nota aangemaakt en aan ${linked} nota's gekoppeld` : 'Nota aangemaakt in inbox')
     } catch (err) {
       showToast(`Mislukt: ${errMsg(err)}`)
       btn.disabled = false

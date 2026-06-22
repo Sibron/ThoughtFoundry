@@ -134,9 +134,8 @@ export async function renderInbox(app: HTMLElement): Promise<void> {
 
   async function loadNotes(): Promise<void> {
     try {
-      const notes = await fetchNotes(page, 50, statusFilter, searchText || undefined)
-      const filtered = noteTypeFilter ? notes.filter(n => n.note_type === noteTypeFilter) : notes
-      allNotes = page === 0 ? filtered : [...allNotes, ...filtered]
+      const notes = await fetchNotes(page, 50, statusFilter, searchText || undefined, noteTypeFilter)
+      allNotes = page === 0 ? notes : [...allNotes, ...notes]
       loadMoreBtn.style.display = notes.length === 50 ? 'flex' : 'none'
       renderList()
     } catch (err) {
