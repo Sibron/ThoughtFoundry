@@ -1,4 +1,5 @@
 import { supabase } from './supabase'
+import { saveUserSetting } from './user-settings'
 
 const MONTHLY_CAP_KEY = 'ai_monthly_cap_usd'
 const DEFAULT_CAP_USD = 5
@@ -11,6 +12,7 @@ export function getMonthlyCap(): number {
 
 export function setMonthlyCap(usd: number): void {
   localStorage.setItem(MONTHLY_CAP_KEY, String(usd))
+  saveUserSetting({ ai_monthly_cap_usd: usd }).catch(() => {})
 }
 
 export async function fetchMonthlySpend(): Promise<number> {

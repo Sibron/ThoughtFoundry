@@ -1,5 +1,5 @@
 import { signOut } from '../lib/auth'
-import { supabase } from '../lib/supabase'
+import { supabase, clearSupabaseConfig } from '../lib/supabase'
 import { renderTopbar, attachTopbar, isAiEnabled, setAiEnabled } from '../lib/nav'
 import { navigateTo } from '../router'
 import { getMonthlyCap, setMonthlyCap, getCostStatus, formatUsd } from '../lib/cost'
@@ -67,6 +67,7 @@ export async function renderSettings(app: HTMLElement): Promise<void> {
       <h2>Account</h2>
       <p>${escHtml(userEmail ?? 'onbekend')}</p>
       <button class="btn btn-ghost" id="settings-logout">Afmelden</button>
+      <button class="btn btn-ghost" id="settings-reset-config" style="color:var(--danger)">Verbinding wisselen…</button>
     </section>
 
     <section class="settings-section">
@@ -154,7 +155,7 @@ export async function renderSettings(app: HTMLElement): Promise<void> {
 
     <section class="settings-section">
       <h2>AI-kostenplafond</h2>
-      <p class="muted">Maandelijkse waarschuwingsdrempel. Boven de cap krijg je een expliciete confirm. Lokaal opgeslagen — niet gesynchroniseerd.</p>
+      <p class="muted">Maandelijkse waarschuwingsdrempel. Boven de cap krijg je een expliciete confirm.</p>
       <div class="cost-row">
         <label class="field">
           <span class="field-label">Cap (USD)</span>
@@ -222,6 +223,12 @@ export async function renderSettings(app: HTMLElement): Promise<void> {
   document.getElementById('settings-logout')?.addEventListener('click', async () => {
     await signOut()
     navigateTo('/login')
+  })
+
+  document.getElementById('settings-reset-config')?.addEventListener('click', () => {
+    if (!confirm('Hiermee verwijder je de opgeslagen Supabase-verbinding uit deze browser. Je wordt daarna naar het setup-scherm gestuurd. Doorgaan?')) return
+    clearSupabaseConfig()
+    location.reload()
   })
 
   document.getElementById('ai-toggle')?.addEventListener('change', (e) => {

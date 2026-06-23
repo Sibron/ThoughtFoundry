@@ -1,3 +1,5 @@
+import { saveUserSetting } from './user-settings'
+
 const PERSONA_KEY = 'ai_persona'
 
 const DEFAULT_PERSONA = `De gebruiker is coach en leidinggevende, analytisch-systematisch ingesteld (ISTJ-A). Pas je stijl aan:
@@ -14,8 +16,13 @@ export function getPersona(): string {
 
 export function setPersona(text: string): void {
   const trimmed = text.trim()
-  if (trimmed) localStorage.setItem(PERSONA_KEY, trimmed)
-  else localStorage.removeItem(PERSONA_KEY)
+  if (trimmed) {
+    localStorage.setItem(PERSONA_KEY, trimmed)
+    saveUserSetting({ ai_persona: trimmed }).catch(() => {})
+  } else {
+    localStorage.removeItem(PERSONA_KEY)
+    saveUserSetting({ ai_persona: null }).catch(() => {})
+  }
 }
 
 export function getDefaultPersona(): string {

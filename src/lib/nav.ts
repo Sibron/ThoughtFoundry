@@ -1,6 +1,7 @@
 import { navigateTo } from '../router'
 import { signOut } from './auth'
 import { getTheme, setTheme, getFocusMode, setFocusMode, type Theme } from './display'
+import { saveUserSetting, resetSettingsCache } from './user-settings'
 
 // ── AI feature flag ───────────────────────────────────────────────────────
 // AI (process / graph / book generation) is OFF by default. The core
@@ -15,6 +16,7 @@ export function isAiEnabled(): boolean {
 
 export function setAiEnabled(on: boolean): void {
   localStorage.setItem(AI_ENABLED_KEY, on ? 'true' : 'false')
+  saveUserSetting({ ai_enabled: on }).catch(() => {})
 }
 
 // ── Guidance Banner ───────────────────────────────────────────────────────
@@ -109,6 +111,7 @@ export function attachTopbar(): void {
       if (!nav) return
 
       if (nav === 'logout') {
+        resetSettingsCache()
         await signOut()
         navigateTo('/login')
         return
