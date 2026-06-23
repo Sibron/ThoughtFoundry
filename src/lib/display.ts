@@ -1,5 +1,8 @@
-// Display preferences — density, motion, theme, focus mode. Stored locally
-// (per-device), applied as attributes/classes on <html> so plain CSS does the rest.
+// Display preferences — density, motion, theme, focus mode. Stored in
+// localStorage for instant reads and synced to Supabase so they follow the
+// user across devices.
+
+import { saveUserSetting } from './user-settings'
 
 export type Density = 'comfortabel' | 'compact'
 export type Motion = 'auto' | 'reduced'
@@ -17,6 +20,7 @@ export function getDensity(): Density {
 export function setDensity(d: Density): void {
   localStorage.setItem(DENSITY_KEY, d)
   applyDisplayPrefs()
+  saveUserSetting({ display_density: d }).catch(() => {})
 }
 
 export function getMotion(): Motion {
@@ -26,6 +30,7 @@ export function getMotion(): Motion {
 export function setMotion(m: Motion): void {
   localStorage.setItem(MOTION_KEY, m)
   applyDisplayPrefs()
+  saveUserSetting({ display_motion: m }).catch(() => {})
 }
 
 export function getTheme(): Theme {
@@ -36,6 +41,7 @@ export function getTheme(): Theme {
 export function setTheme(t: Theme): void {
   localStorage.setItem(THEME_KEY, t)
   applyDisplayPrefs()
+  saveUserSetting({ display_theme: t }).catch(() => {})
 }
 
 export function getFocusMode(): boolean {
@@ -45,6 +51,7 @@ export function getFocusMode(): boolean {
 export function setFocusMode(on: boolean): void {
   localStorage.setItem(FOCUS_KEY, on ? 'true' : 'false')
   applyDisplayPrefs()
+  saveUserSetting({ focus_mode: on }).catch(() => {})
 }
 
 /** Reflect stored preferences onto <html>. Safe to call repeatedly. */
