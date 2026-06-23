@@ -17,6 +17,18 @@ export function setAiEnabled(on: boolean): void {
   localStorage.setItem(AI_ENABLED_KEY, on ? 'true' : 'false')
 }
 
+// ── Guidance Banner ───────────────────────────────────────────────────────
+
+/**
+ * Returns a GuidanceBanner HTML string.
+ * anchor: left-border accent variant for primary capture/focus screens.
+ * quiet: subtle surface-2 variant for browse/overview screens.
+ */
+export function renderGuidanceBanner(text: string, tone: 'anchor' | 'quiet' = 'quiet'): string {
+  const cls = tone === 'anchor' ? 'guidance-banner guidance-banner--anchor' : 'guidance-banner'
+  return `<div class="${cls}" role="complementary" aria-label="Wat nu te doen">${text}</div>`
+}
+
 // ── Navigation ────────────────────────────────────────────────────────────
 
 export type NavKey = 'capture' | 'inbox' | 'search' | 'process' | 'graph' | 'book' | 'themes' | 'settings' | 'spark' | 'denkpartner' | 'clusters' | 'sources' | 'projects'
