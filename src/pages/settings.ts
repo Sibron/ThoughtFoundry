@@ -154,7 +154,7 @@ export async function renderSettings(app: HTMLElement): Promise<void> {
 
     <section class="settings-section">
       <h2>AI-kostenplafond</h2>
-      <p class="muted">Maandelijkse waarschuwingsdrempel. Boven de cap krijg je een expliciete confirm. Lokaal opgeslagen — niet gesynchroniseerd.</p>
+      <p class="muted">Maandelijkse waarschuwingsdrempel. Boven de cap krijg je een expliciete confirm.</p>
       <div class="cost-row">
         <label class="field">
           <span class="field-label">Cap (USD)</span>

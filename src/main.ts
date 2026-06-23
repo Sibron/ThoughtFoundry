@@ -4,6 +4,7 @@ import { getSession } from './lib/auth'
 import { isConfigured } from './lib/supabase'
 import { isAiEnabled, renderAiDisabled } from './lib/nav'
 import { applyDisplayPrefs } from './lib/display'
+import { loadUserSettings } from './lib/user-settings'
 import { consumeSharedContent } from './lib/share'
 import { createRouter, navigateTo } from './router'
 import { renderLogin } from './pages/login'
@@ -34,6 +35,8 @@ consumeSharedContent()
 async function guard(handler: (app: HTMLElement) => void | Promise<void>): Promise<void> {
   const session = await getSession()
   if (!session) { navigateTo('/login'); return }
+  await loadUserSettings()
+  applyDisplayPrefs()
   await handler(app)
 }
 
