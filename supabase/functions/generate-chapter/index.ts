@@ -20,6 +20,7 @@ interface NoteRow {
   ai_title: string | null
   ai_summary: string | null
   tags: string[] | null
+  section: string | null
 }
 
 interface ChapterPlan {
@@ -47,7 +48,7 @@ Regels:
 - Maximaal 5 secties.
 - Elke note_id mag in maximaal één sectie voorkomen.
 - Sluit nota's uit die er niet bij passen (laat ze gewoon weg).
-- Maak de structuur logisch: opbouw van algemeen naar specifiek of van probleem naar oplossing.`
+- Elke nota heeft een sectie-aanwijzing (probleemstelling → theoretische_onderbouwing → ondersteunende_concepten → methodieken → reflectievragen). Gebruik deze volgorde als leidraad: groepeer nota's van dezelfde sectie bij voorkeur samen, en laat de hoofdstukopbouw deze logische volgorde volgen van probleemstelling naar reflectie.`
 
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
@@ -71,7 +72,7 @@ Deno.serve(async (req: Request) => {
 
   const { data: notesData, error: notesErr } = await supabase
     .from('notes')
-    .select('id, content, mini_notes, ai_title, ai_summary, tags')
+    .select('id, content, mini_notes, ai_title, ai_summary, tags, section')
     .in('id', body.noteIds)
 
   if (notesErr) return jsonResponse({ error: notesErr.message }, 500)
@@ -130,12 +131,21 @@ Deno.serve(async (req: Request) => {
   })
 })
 
+const SECTION_LABELS: Record<string, string> = {
+  probleemstelling:          'Probleemstelling',
+  theoretische_onderbouwing: 'Theoretische onderbouwing',
+  ondersteunende_concepten:  'Ondersteunende concepten',
+  methodieken:               'Methodieken / handvaten',
+  reflectievragen:           'Reflectie- of verdiepingsvragen',
+}
+
 function buildPrompt(notes: NoteRow[], themeName: string | null, angle: string | undefined): string {
   const noteText = notes.map(n => {
     const head = n.ai_title ? n.ai_title : n.content.slice(0, 60)
     const body = n.ai_summary ?? n.content
     const tags = (n.tags ?? []).join(', ')
-    return `### [${n.id}] ${head}\n${body}${tags ? `\nTags: ${tags}` : ''}`
+    const sectionLabel = n.section ? (SECTION_LABELS[n.section] ?? n.section) : 'niet toegewezen'
+    return `### [${n.id}] ${head}  (sectie: ${sectionLabel})\n${body}${tags ? `\nTags: ${tags}` : ''}`
   }).join('\n\n')
 
   const themeLine = themeName ? `Thema: **${themeName}**` : 'Thema: (geen)'

@@ -90,6 +90,7 @@ export async function renderThemeSections(app: HTMLElement): Promise<void> {
       <div class="ts-theme-label">
         <span class="ts-dot" style="background:${escHtml(theme?.color ?? '#888')}"></span>
         <h2>${escHtml(theme?.name ?? 'Onbekend thema')}</h2>
+        <button class="ts-book-btn" id="ts-book-btn" title="Open boekwerkbank voor dit thema">Genereer hoofdstuk →</button>
       </div>
       <p class="ts-subtitle">Nota's georganiseerd per sectie van het boek in wording</p>
     </div>
@@ -100,6 +101,7 @@ export async function renderThemeSections(app: HTMLElement): Promise<void> {
   `
 
   document.getElementById('ts-back')?.addEventListener('click', () => navigateTo('/themes'))
+  document.getElementById('ts-book-btn')?.addEventListener('click', () => navigateTo(`/book?theme=${themeId}`))
   body.querySelectorAll<HTMLElement>('.ts-note-link').forEach(el => {
     el.addEventListener('click', () => navigateTo(`/note?id=${el.dataset['id']}`))
   })
@@ -156,7 +158,18 @@ function injectStyles(): void {
       border-radius: 50%;
       flex-shrink: 0;
     }
-    .ts-theme-label h2 { font-size: var(--fs-xl); font-weight: 600; }
+    .ts-theme-label h2 { font-size: var(--fs-xl); font-weight: 600; flex: 1; }
+    .ts-book-btn {
+      background: var(--accent);
+      border: none;
+      border-radius: var(--r-sm);
+      color: #fff;
+      cursor: pointer;
+      font-size: var(--fs-sm);
+      padding: var(--s-1) var(--s-3);
+      white-space: nowrap;
+    }
+    .ts-book-btn:hover { opacity: 0.85; }
     .ts-subtitle { font-size: var(--fs-sm); color: var(--text-muted); }
     .ts-sections {
       display: flex;

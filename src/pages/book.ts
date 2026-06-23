@@ -5,6 +5,7 @@ import { fetchBooks, createBook, updateBook, deleteBook, type Book } from '../li
 import { generateChapter, type ChapterPlan } from '../lib/ai'
 import { getCostStatus, formatUsd } from '../lib/cost'
 import { renderTopbar, attachTopbar } from '../lib/nav'
+import { SECTIONS } from '../lib/sections'
 
 export async function renderBook(app: HTMLElement): Promise<void> {
   app.innerHTML = `
@@ -118,6 +119,9 @@ export async function renderBook(app: HTMLElement): Promise<void> {
     `
 
     const themeSelect = document.getElementById('book-theme') as HTMLSelectElement
+    const urlParams = new URLSearchParams(window.location.hash.split('?')[1] ?? '')
+    const preselectedTheme = urlParams.get('theme')
+    if (preselectedTheme) themeSelect.value = preselectedTheme
     themeSelect.addEventListener('change', () => renderNoteList())
     renderNoteList()
     renderSaved()
@@ -367,15 +371,42 @@ export async function renderBook(app: HTMLElement): Promise<void> {
       updateGenerateState()
       return
     }
-    listEl.innerHTML = filtered.map(n => `
+
+    const noteRow = (n: Note) => `
       <label class="book-note-row">
         <input type="checkbox" value="${n.id}" checked />
         <div class="book-note-text">
           <strong>${escHtml(n.ai_title ?? n.content.slice(0, 80))}</strong>
           <span class="muted">${escHtml((n.ai_summary ?? n.content).slice(0, 140))}</span>
         </div>
-      </label>
-    `).join('')
+      </label>`
+
+    const groups: string[] = SECTIONS.map(sec => {
+      const secNotes = filtered.filter(n => n.section === sec.slug)
+      if (secNotes.length === 0) return ''
+      return `
+        <div class="book-section-group">
+          <div class="book-section-group-header">
+            <span>${escHtml(sec.label)}</span>
+            <span class="muted">${secNotes.length}</span>
+          </div>
+          ${secNotes.map(noteRow).join('')}
+        </div>`
+    }).filter(Boolean)
+
+    const unsectioned = filtered.filter(n => !n.section)
+    if (unsectioned.length > 0) {
+      groups.push(`
+        <div class="book-section-group book-section-group--unsectioned">
+          <div class="book-section-group-header">
+            <span>Zonder sectie</span>
+            <span class="muted">${unsectioned.length}</span>
+          </div>
+          ${unsectioned.map(noteRow).join('')}
+        </div>`)
+    }
+
+    listEl.innerHTML = groups.join('')
     listEl.querySelectorAll('input').forEach(el => el.addEventListener('change', updateGenerateState))
     updateGenerateState()
   }
@@ -797,6 +828,26 @@ function injectBookStyles(): void {
       border-radius: var(--r-sm);
     }
     .book-note-row:hover { background: var(--surface); }
+    .book-section-group {
+      display: flex;
+      flex-direction: column;
+      gap: var(--s-1);
+      margin-bottom: var(--s-2);
+    }
+    .book-section-group-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: var(--s-1) var(--s-2);
+      font-size: var(--fs-sm);
+      font-weight: 600;
+      color: var(--text-muted);
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 2px;
+    }
+    .book-section-group--unsectioned .book-section-group-header {
+      font-style: italic;
+    }
     .book-note-text {
       display: flex;
       flex-direction: column;
