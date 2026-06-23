@@ -1,4 +1,5 @@
 import { fetchNotes, type Note } from '../lib/notes'
+import { rankByQuery } from '../lib/similarity'
 import { renderTopbar, attachTopbar } from '../lib/nav'
 import { navigateTo } from '../router'
 
@@ -52,9 +53,12 @@ export async function renderSearch(app: HTMLElement): Promise<void> {
     }
     resultsEl.innerHTML = '<p class="search-hint">Zoeken…</p>'
     try {
-      const notes = await fetchNotes(0, 50, undefined, q)
+      // Fetch a wide candidate set, then rank by relevance client-side so the
+      // best match leads — not merely the most recent note containing a word.
+      const notes = await fetchNotes(0, 80, undefined, q)
       if (q !== lastQuery) return // a newer query already superseded this one
-      renderResults(notes, q)
+      const ranked = rankByQuery(q, notes).map(s => s.note)
+      renderResults(ranked, q)
     } catch (err) {
       resultsEl.innerHTML = `<p class="search-hint">Zoeken mislukt: ${escHtml(errMsg(err))}</p>`
     }
@@ -96,26 +100,38 @@ export async function renderSearch(app: HTMLElement): Promise<void> {
   }
 }
 
-/** Pull a ~160-char window of content centred on the first match. */
+/** Pull a ~160-char window of content centred on the first matching word. */
 function snippetAround(content: string, q: string): string {
   const lower = content.toLowerCase()
-  const idx = lower.indexOf(q.toLowerCase())
+  // Centre on whichever query word appears first in the body.
+  let idx = -1, matchLen = q.length
+  for (const w of queryWords(q)) {
+    const at = lower.indexOf(w)
+    if (at !== -1 && (idx === -1 || at < idx)) { idx = at; matchLen = w.length }
+  }
   if (idx === -1) return escHtml(content.slice(0, 160)) + (content.length > 160 ? '…' : '')
   const start = Math.max(0, idx - 60)
-  const end = Math.min(content.length, idx + q.length + 100)
+  const end = Math.min(content.length, idx + matchLen + 100)
   const prefix = start > 0 ? '…' : ''
   const suffix = end < content.length ? '…' : ''
   return escHtml(prefix + content.slice(start, end) + suffix)
 }
 
-/** Wrap matches of q (already-escaped haystack) in <mark>. */
+/** Wrap matches of each query word (already-escaped haystack) in <mark>. */
 function highlight(escaped: string, q: string): string {
-  const safe = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const words = queryWords(q)
+  if (words.length === 0) return escaped
+  const safe = words.map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')
   try {
     return escaped.replace(new RegExp(`(${safe})`, 'gi'), '<mark>$1</mark>')
   } catch {
     return escaped
   }
+}
+
+/** Split a query into the words worth matching/highlighting. */
+function queryWords(q: string): string[] {
+  return Array.from(new Set(q.toLowerCase().split(/\s+/).map(w => w.trim()).filter(w => w.length >= 2)))
 }
 
 function formatDate(iso: string): string {
