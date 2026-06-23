@@ -7,11 +7,11 @@ import {
   type Theme
 } from '../lib/themes'
 import { fetchNotesSections } from '../lib/notes'
-import { renderTopbar, attachTopbar } from '../lib/nav'
+import { renderTopbar, attachTopbar, renderGuidanceBanner } from '../lib/nav'
 
 const COLOR_PALETTE = [
-  '#5E9A77', '#5E84A8', '#BE7156', '#9A6B9E',
-  '#B79350', '#4F9E9A', '#B36480', '#837A6B'
+  '#5A8E6A', '#5B7B98', '#967165', '#896789',
+  '#A8874F', '#4D8E8A', '#A16074', '#7E766A'
 ]
 
 const SECTION_SLUGS = [
@@ -80,6 +80,7 @@ export async function renderThemes(app: HTMLElement): Promise<void> {
   function renderShell(): void {
     const body = document.getElementById('themes-body')!
     body.innerHTML = `
+      ${renderGuidanceBanner("Thema's verbinden verwante gedachten. Kies er één om mee te werken.")}
       <section class="themes-section">
         <header class="themes-section-header">
           <h2>Nieuw thema</h2>
