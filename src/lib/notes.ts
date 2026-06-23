@@ -69,8 +69,15 @@ export async function fetchNotes(
   if (status) q = q.eq('status', status)
   if (noteType) q = q.eq('note_type', noteType)
   if (search && search.trim()) {
-    const safe = search.trim().replace(/[%,]/g, ' ')
-    q = q.or(`content.ilike.%${safe}%,ai_title.ilike.%${safe}%,ai_summary.ilike.%${safe}%`)
+    const safe = search.trim().replace(/[%,()]/g, ' ')
+    // Match on ANY query word (not just the whole string) so multi-word and
+    // differently-phrased queries still surface candidates. Ranking by actual
+    // relevance happens client-side via rankByQuery.
+    const words = Array.from(new Set(safe.split(/\s+/).filter(w => w.length >= 2)))
+    const terms = (words.length ? words : [safe]).flatMap(w =>
+      [`content.ilike.%${w}%`, `ai_title.ilike.%${w}%`, `ai_summary.ilike.%${w}%`]
+    )
+    q = q.or(terms.join(','))
   }
   const { data, error } = await q.range(page * pageSize, (page + 1) * pageSize - 1)
   if (error) throw error
@@ -126,6 +133,26 @@ export async function bulkUpdateStatus(ids: string[], status: NoteStatus): Promi
   if (ids.length === 0) return
   const { error } = await supabase.from('notes').update({ status }).in('id', ids)
   if (error) throw error
+}
+
+/**
+ * IDs of notes that are "connected" — they appear in at least one link (either
+ * direction) or are tagged with at least one theme. The complement of this set
+ * (over non-archived notes) is the orphan pile worth surfacing for connection.
+ */
+export async function fetchConnectedNoteIds(): Promise<Set<string>> {
+  const [linksRes, themesRes] = await Promise.all([
+    supabase.from('note_links').select('source_id, target_id'),
+    supabase.from('note_themes').select('note_id')
+  ])
+  if (linksRes.error) throw linksRes.error
+  if (themesRes.error) throw themesRes.error
+  const set = new Set<string>()
+  for (const l of (linksRes.data ?? []) as { source_id: string; target_id: string }[]) {
+    set.add(l.source_id); set.add(l.target_id)
+  }
+  for (const t of (themesRes.data ?? []) as { note_id: string }[]) set.add(t.note_id)
+  return set
 }
 
 export async function fetchNotesByIds(ids: string[]): Promise<Note[]> {

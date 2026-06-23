@@ -1,5 +1,6 @@
 import {
   fetchNotes,
+  fetchConnectedNoteIds,
   deleteNote,
   bulkUpdateStatus,
   bulkDelete,
@@ -28,7 +29,9 @@ export async function renderInbox(app: HTMLElement): Promise<void> {
           const m = NOTE_TYPES[t]
           return `<button class="type-pill" data-note-type="${t}" style="--pill-color:${m.color}">${escHtml(m.label)}</button>`
         }).join('')}
+        <button class="type-pill orphan-pill" id="orphan-pill" title="Notities zonder enkele link of thema">⚓ Wees-notities</button>
       </div>
+      <div class="orphan-banner focus-hide" id="orphan-banner" hidden></div>
       <div class="inbox-toolbar">
         <input type="text" id="inbox-filter" placeholder="Zoeken in content, titel, samenvatting…" class="inbox-filter" />
         <label class="inbox-select-all"><input type="checkbox" id="select-all" /> alles</label>
@@ -56,6 +59,8 @@ export async function renderInbox(app: HTMLElement): Promise<void> {
   let searchText = ''
   let statusFilter: NoteStatus | undefined = undefined
   let noteTypeFilter: NoteType | undefined = undefined
+  let orphanMode = false
+  let connectedIds: Set<string> | null = null
   const selected = new Set<string>()
   let searchDebounce: ReturnType<typeof setTimeout> | null = null
 
@@ -131,10 +136,37 @@ export async function renderInbox(app: HTMLElement): Promise<void> {
     await loadNotes()
   })
 
+  const orphanPill = document.getElementById('orphan-pill') as HTMLButtonElement
+  orphanPill.addEventListener('click', async () => {
+    orphanMode = !orphanMode
+    orphanPill.classList.toggle('active', orphanMode)
+    page = 0
+    allNotes = []
+    selected.clear()
+    updateBulkBar()
+    await loadNotes()
+  })
+
   await loadNotes()
+  void initOrphanBanner()
+
+  async function ensureConnected(): Promise<Set<string>> {
+    if (!connectedIds) connectedIds = await fetchConnectedNoteIds()
+    return connectedIds
+  }
 
   async function loadNotes(): Promise<void> {
     try {
+      if (orphanMode) {
+        // Orphans = notes with no link and no theme. Filter a wide recent pool
+        // client-side; no pagination (the pile is meant to be drained, not browsed).
+        const connected = await ensureConnected()
+        const pool = await fetchNotes(0, 300, statusFilter, searchText || undefined, noteTypeFilter)
+        allNotes = pool.filter(n => !connected.has(n.id))
+        loadMoreBtn.style.display = 'none'
+        renderList()
+        return
+      }
       const notes = await fetchNotes(page, 50, statusFilter, searchText || undefined, noteTypeFilter)
       allNotes = page === 0 ? notes : [...allNotes, ...notes]
       loadMoreBtn.style.display = notes.length === 50 ? 'flex' : 'none'
@@ -143,6 +175,33 @@ export async function renderInbox(app: HTMLElement): Promise<void> {
       listEl.innerHTML = `<div class="inbox-error">Laden mislukt: ${escHtml(errMsg(err))}</div>`
       console.error(err)
     }
+  }
+
+  async function initOrphanBanner(): Promise<void> {
+    const banner = document.getElementById('orphan-banner')
+    if (!banner) return
+    if (localStorage.getItem('orphan_banner_dismissed') === '1') return
+    try {
+      const connected = await ensureConnected()
+      const pool = await fetchNotes(0, 300)
+      const orphans = pool.filter(n => n.status !== 'archief' && !connected.has(n.id))
+      if (orphans.length === 0) return
+      const capped = pool.length === 300 ? '+' : ''
+      banner.hidden = false
+      banner.innerHTML = `
+        <span>Je hebt <strong>${orphans.length}${capped}</strong> losse notities zonder enkele verbinding.</span>
+        <button class="btn btn-ghost btn-sm" id="orphan-show">Toon</button>
+        <button class="orphan-dismiss" id="orphan-dismiss" title="Verberg">✕</button>
+      `
+      document.getElementById('orphan-show')?.addEventListener('click', async () => {
+        if (!orphanMode) orphanPill.click()
+        banner.hidden = true
+      })
+      document.getElementById('orphan-dismiss')?.addEventListener('click', () => {
+        localStorage.setItem('orphan_banner_dismissed', '1')
+        banner.hidden = true
+      })
+    } catch { /* best-effort */ }
   }
 
   function renderList(): void {
@@ -503,6 +562,28 @@ function injectInboxStyles(): void {
       background: var(--pill-color, var(--accent));
       color: #fff;
       font-weight: 600;
+    }
+    .orphan-pill { border-style: dashed; }
+    .orphan-banner {
+      display: flex;
+      align-items: center;
+      gap: var(--s-2);
+      flex-wrap: wrap;
+      padding: var(--s-2) var(--s-3);
+      background: var(--surface);
+      border: 1px solid var(--accent);
+      border-radius: var(--r-sm);
+      font-size: var(--fs-sm);
+      color: var(--text);
+    }
+    .orphan-banner .btn { width: auto; min-height: 32px; padding: var(--s-1) var(--s-3); }
+    .orphan-dismiss {
+      margin-left: auto;
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: var(--fs-base);
     }
     .note-type-badge {
       display: inline-block;

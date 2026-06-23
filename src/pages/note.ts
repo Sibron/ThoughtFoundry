@@ -29,6 +29,7 @@ import {
 } from '../lib/links'
 import { fetchSources, type Source } from '../lib/sources'
 import { SECTIONS } from '../lib/sections'
+import { rankBySimilarity } from '../lib/similarity'
 import { processNote } from '../lib/ai'
 import { renderTopbar, attachTopbar, isAiEnabled } from '../lib/nav'
 import { navigateTo } from '../router'
@@ -207,6 +208,7 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
             </div>
           </div>
           <div class="ai-link-suggestions" id="ai-link-suggestions"></div>
+          <div class="suggested-links" id="suggested-links"></div>
         </fieldset>
 
         ${isAiEnabled() ? `
@@ -236,6 +238,52 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
     wireLinkSearch()
     wireActions()
     void loadRelatedNotes()
+    void loadSuggestedLinks()
+  }
+
+  // ── Suggested links (lexical, no AI) ──────────────────────────────────────--
+  // Always-on counterpart to the AI suggestions: surfaces notes that share
+  // words/tags with this one so you can connect them in one tap.
+  async function loadSuggestedLinks(): Promise<void> {
+    const box = document.getElementById('suggested-links')
+    if (!box) return
+    let pool: Note[] = []
+    try { pool = await fetchNotes(0, 300) } catch { return }
+    const linkedSet = new Set(links.flatMap(l => [l.source_id, l.target_id]))
+    const candidates = pool.filter(n => n.id !== id && !linkedSet.has(n.id))
+    const ranked = rankBySimilarity(current, candidates, 5)
+    if (ranked.length === 0) { box.innerHTML = ''; return }
+
+    ranked.forEach(({ note }) => labelMap.set(note.id, note.ai_title ?? note.content.slice(0, 60)))
+    const typeOpts = Object.entries(LINK_TYPE_LABELS)
+      .map(([k, v]) => `<option value="${k}"${k === 'related' ? ' selected' : ''}>${escHtml(v)}</option>`)
+      .join('')
+    box.innerHTML = `
+      <div class="ai-sugg-label">Misschien verwant (op basis van woorden &amp; tags):</div>
+      ${ranked.map(({ note }) => `
+        <div class="ai-sugg-row" data-rid="${note.id}">
+          <span class="sugg-link-label">${escHtml(labelMap.get(note.id) ?? note.id)}</span>
+          <select class="sugg-link-type" data-for="${note.id}">${typeOpts}</select>
+          <button class="btn btn-ghost btn-sm sugg-link-add" data-for="${note.id}">Koppel</button>
+        </div>`).join('')}
+    `
+    box.querySelectorAll<HTMLButtonElement>('.sugg-link-add').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const targetId = btn.dataset['for']!
+        const type = (box.querySelector<HTMLSelectElement>(`.sugg-link-type[data-for="${targetId}"]`)?.value ?? 'related') as LinkType
+        btn.disabled = true
+        try {
+          const link = await createLink({ sourceId: id, targetId, type })
+          if (!links.some(l => l.id === link.id)) links.push(link)
+          renderLinkList()
+          showToast('Gekoppeld')
+          void loadSuggestedLinks() // refresh so the now-linked note drops out
+        } catch (err) {
+          btn.disabled = false
+          showToast(`Mislukt: ${errMsg(err)}`)
+        }
+      })
+    })
   }
 
   async function loadRelatedNotes(): Promise<void> {
@@ -670,6 +718,15 @@ function injectNoteStyles(): void {
       margin-top: var(--s-2); padding: var(--s-2);
       border: 1px dashed var(--accent); border-radius: var(--r-sm);
     }
+    .suggested-links:empty { display: none; }
+    .suggested-links {
+      display: flex; flex-direction: column; gap: var(--s-1);
+      margin-top: var(--s-2); padding: var(--s-2);
+      border: 1px dashed var(--border); border-radius: var(--r-sm);
+    }
+    .sugg-link-label { flex: 1; min-width: 0; font-size: var(--fs-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .sugg-link-type { width: auto; font-size: var(--fs-sm); }
+    .suggested-links .btn { width: auto; }
     .ai-sugg-label { font-size: var(--fs-sm); color: var(--text-muted); font-weight: 500; }
     .ai-sugg-row { display: flex; align-items: center; gap: var(--s-2); flex-wrap: wrap; }
     .ai-sugg-row .chip-check { flex: 1; min-width: 0; }
