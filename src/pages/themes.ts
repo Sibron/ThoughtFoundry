@@ -8,6 +8,7 @@ import {
 } from '../lib/themes'
 import { fetchNotesSections } from '../lib/notes'
 import { renderTopbar, attachTopbar, renderGuidanceBanner } from '../lib/nav'
+import { navigateTo } from '../router'
 
 const COLOR_PALETTE = [
   '#5A8E6A', '#5B7B98', '#967165', '#896789',
@@ -125,10 +126,10 @@ export async function renderThemes(app: HTMLElement): Promise<void> {
       return `<div class="sec-seg ${isFilled ? 'sec-filled' : 'sec-empty'}" title="${escHtml(SECTION_LABELS[slug] ?? slug)}"></div>`
     }).join('')
     return `
-      <div class="section-bar">
+      <button class="section-bar" data-section-link="${escHtml(themeId)}" title="Bekijk nota's per sectie">
         <span class="section-bar-label">Boek in wording: ${filled}/5 secties</span>
         <div class="section-segments">${segs}</div>
-      </div>
+      </button>
     `
   }
 
@@ -175,6 +176,14 @@ export async function renderThemes(app: HTMLElement): Promise<void> {
       const id = row.dataset['id']!
       row.querySelector<HTMLButtonElement>('[data-action="save"]')?.addEventListener('click', () => onSave(row, id))
       row.querySelector<HTMLButtonElement>('[data-action="delete"]')?.addEventListener('click', () => onDelete(id))
+    })
+
+    listEl.querySelectorAll<HTMLButtonElement>('[data-section-link]').forEach(btn => {
+      btn.addEventListener('click', e => {
+        e.stopPropagation()
+        e.preventDefault()
+        navigateTo(`/theme-sections?id=${btn.dataset['sectionLink']}`)
+      })
     })
   }
 
@@ -373,7 +382,14 @@ function injectThemesStyles(): void {
       align-items: center;
       gap: var(--s-2);
       flex-shrink: 0;
+      background: none;
+      border: none;
+      cursor: pointer;
+      padding: 2px 4px;
+      border-radius: var(--r-sm);
+      transition: background 0.15s;
     }
+    .section-bar:hover { background: var(--border); }
     .section-bar-label {
       font-size: 11px;
       color: var(--text-muted);

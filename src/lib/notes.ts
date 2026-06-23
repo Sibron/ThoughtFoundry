@@ -168,6 +168,22 @@ export async function fetchNotesSections(): Promise<{ id: string; section: strin
   return (data ?? []) as { id: string; section: string | null }[]
 }
 
+export async function fetchNotesByTheme(themeId: string): Promise<{ id: string; ai_title: string | null; section: string | null }[]> {
+  const { data: nt, error: err1 } = await supabase
+    .from('note_themes')
+    .select('note_id')
+    .eq('theme_id', themeId)
+  if (err1) throw err1
+  const ids = (nt ?? []).map((r: { note_id: string }) => r.note_id)
+  if (ids.length === 0) return []
+  const { data, error: err2 } = await supabase
+    .from('notes')
+    .select('id, ai_title, section')
+    .in('id', ids)
+  if (err2) throw err2
+  return (data ?? []) as { id: string; ai_title: string | null; section: string | null }[]
+}
+
 export async function bulkDelete(ids: string[]): Promise<void> {
   if (ids.length === 0) return
   const { error } = await supabase.from('notes').delete().in('id', ids)

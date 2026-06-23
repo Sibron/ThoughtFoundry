@@ -21,6 +21,7 @@ import { renderDenkpartner } from './pages/denkpartner'
 import { renderClusters } from './pages/clusters'
 import { renderSources } from './pages/sources'
 import { renderProjects } from './pages/projects'
+import { renderThemeSections } from './pages/theme-sections'
 
 const app = document.getElementById('app') as HTMLElement
 
@@ -64,7 +65,8 @@ if (!isConfigured) {
     '/process':  aiGuard(renderProcess, 'Verwerken'),
     '/graph':    () => guard(renderGraph),
     '/book':     aiGuard(renderBook, 'Boek'),
-    '/themes':      () => guard(renderThemes),
+    '/themes':           () => guard(renderThemes),
+    '/theme-sections':   () => guard(renderThemeSections),
     '/settings':    () => guard(renderSettings),
     '/spark':       aiGuard(renderSpark, 'Spark'),
     '/denkpartner': aiGuard(renderDenkpartner, 'Denkpartner'),
