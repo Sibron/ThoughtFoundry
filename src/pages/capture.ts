@@ -1,6 +1,6 @@
 import { insertNote, queueOfflineNote, flushOfflineQueue, offlineQueueSize, fetchNotes, fetchRandomNote, fetchOnThisDay, type NoteInsert, type Note } from '../lib/notes'
 import { fetchSources, type Source } from '../lib/sources'
-import { renderTopbar, attachTopbar } from '../lib/nav'
+import { renderTopbar, attachTopbar, renderGuidanceBanner } from '../lib/nav'
 import { navigateTo } from '../router'
 
 const DRAFT_KEY = 'capture_draft'
@@ -28,6 +28,8 @@ export async function renderCapture(app: HTMLElement): Promise<void> {
   app.innerHTML = `
     ${renderTopbar('ThoughtFoundry', 'capture', '<span class="online-indicator" id="online-indicator" title=""></span>')}
     <div class="capture-body">
+
+      ${renderGuidanceBanner('Schrijf op wat er nu in je hoofd zit. Niets beslissen — gewoon vastleggen.', 'anchor')}
 
       <textarea
         id="capture-content"
@@ -105,14 +107,21 @@ export async function renderCapture(app: HTMLElement): Promise<void> {
   const meerDetails = document.getElementById('meer-details') as HTMLDetailsElement
   const sessionEl = document.getElementById('capture-session') as HTMLSpanElement
 
-  // "Capture and stay": rapid brain-dump count for this visit. Pure positive
-  // signal — never a backlog count, never persisted.
-  let sessionSaved = 0
-  const updateSessionIndicator = () => {
-    if (sessionSaved === 0) { sessionEl.hidden = true; return }
-    sessionEl.hidden = false
-    sessionEl.textContent = `✓ ${sessionSaved} vastgelegd`
+  // Session counter: persisted via localStorage, keyed by calendar date.
+  const TODAY_KEY = `tf_today_count_${new Date().toDateString()}`
+  const getTodayCount = (): number => parseInt(localStorage.getItem(TODAY_KEY) ?? '0', 10)
+  const incrementTodayCount = (): number => {
+    const n = getTodayCount() + 1
+    localStorage.setItem(TODAY_KEY, String(n))
+    return n
   }
+  const updateSessionIndicator = () => {
+    const n = getTodayCount()
+    if (n === 0) { sessionEl.hidden = true; return }
+    sessionEl.hidden = false
+    sessionEl.textContent = n === 1 ? '1 gedachte vandaag' : `${n} gedachten vandaag`
+  }
+  updateSessionIndicator()
 
   // Restore an in-progress draft so a reload never loses a thought.
   restoreDraft({ textarea, useForEl, miniTextarea, sourceUrl, sourceTitle, sourceAuthor })
@@ -234,7 +243,7 @@ export async function renderCapture(app: HTMLElement): Promise<void> {
       ;(document.getElementById('extra-details') as HTMLDetailsElement).open = false
       ;(document.getElementById('bron-details') as HTMLDetailsElement).open = false
       meerDetails.open = false
-      sessionSaved++
+      incrementTodayCount()
       updateSessionIndicator()
       showToast(navigator.onLine ? 'Opgeslagen' : 'Opgeslagen (offline wachtrij)')
       await refreshOnlineIndicator()
