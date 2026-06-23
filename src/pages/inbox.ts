@@ -9,13 +9,14 @@ import {
   type NoteType
 } from '../lib/notes'
 import { NOTE_TYPES, NOTE_TYPE_ORDER } from '../lib/noteTypes'
-import { renderTopbar, attachTopbar } from '../lib/nav'
+import { renderTopbar, attachTopbar, renderGuidanceBanner } from '../lib/nav'
 import { navigateTo } from '../router'
 
 export async function renderInbox(app: HTMLElement): Promise<void> {
   app.innerHTML = `
     ${renderTopbar('Vangbak', 'inbox')}
     <div class="inbox-body">
+      ${renderGuidanceBanner('Pak er één uit. Lees het. Geef het een plek.')}
       <div class="inbox-tabs focus-hide">
         <button class="inbox-tab" data-status="" aria-current="true">Alle</button>
         <button class="inbox-tab" data-status="inbox">Vangbak</button>
