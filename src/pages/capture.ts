@@ -1,5 +1,8 @@
 import { insertNote, queueOfflineNote, flushOfflineQueue, offlineQueueSize, fetchNotes, fetchRandomNote, fetchOnThisDay, type NoteInsert, type Note } from '../lib/notes'
 import { fetchSources, type Source } from '../lib/sources'
+import { fetchLinks, createLink } from '../lib/links'
+import { fetchAllNoteThemes } from '../lib/themes'
+import { findSurprisingPair, pairKey, type SurprisingPair } from '../lib/similarity'
 import { renderTopbar, attachTopbar } from '../lib/nav'
 import { navigateTo } from '../router'
 
@@ -70,6 +73,7 @@ export async function renderCapture(app: HTMLElement): Promise<void> {
         <span class="capture-session" id="capture-session" hidden></span>
         <button class="btn btn-ghost btn-sm" id="btn-surprise">Verras me</button>
         <button class="btn btn-ghost btn-sm" id="btn-onthisday">Op deze dag</button>
+        <button class="btn btn-ghost btn-sm" id="btn-connect">Verbind twee</button>
       </div>
 
       <div class="capture-recent" id="capture-recent"></div>
@@ -83,6 +87,22 @@ export async function renderCapture(app: HTMLElement): Promise<void> {
           <button class="btn btn-ghost btn-sm" id="btn-open-surfaced">Openen</button>
           <button class="btn btn-ghost btn-sm" id="btn-reroll">Nog eentje</button>
           <button class="btn btn-ghost btn-sm" id="btn-close-random">Sluiten</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="connect-pair-panel" class="random-note-panel" hidden>
+      <div class="random-note-card">
+        <p class="random-note-label">Verrassende verbinding · lijken verwant, nog niet gekoppeld</p>
+        <div class="pair-notes">
+          <p class="random-note-content pair-note" id="pair-a"></p>
+          <span class="pair-link-icon">↔</span>
+          <p class="random-note-content pair-note" id="pair-b"></p>
+        </div>
+        <div class="random-note-actions">
+          <button class="btn btn-primary btn-sm" id="btn-pair-link">Koppel deze twee</button>
+          <button class="btn btn-ghost btn-sm" id="btn-pair-next">Andere suggestie</button>
+          <button class="btn btn-ghost btn-sm" id="btn-pair-close">Sluiten</button>
         </div>
       </div>
     </div>
@@ -263,6 +283,7 @@ export async function renderCapture(app: HTMLElement): Promise<void> {
     randomContent.textContent = note.ai_title
       ? `${note.ai_title}\n\n${note.content.slice(0, 300)}${note.content.length > 300 ? '…' : ''}`
       : note.content.slice(0, 300) + (note.content.length > 300 ? '…' : '')
+    document.getElementById('connect-pair-panel')?.setAttribute('hidden', '')
     panel.hidden = false
     return true
   }
@@ -291,6 +312,77 @@ export async function renderCapture(app: HTMLElement): Promise<void> {
     if (surfacedId) navigateTo('/note?id=' + surfacedId)
   })
   document.getElementById('btn-close-random')?.addEventListener('click', () => { panel.hidden = true })
+
+  // "Verbind twee" — surface two notes that look related (shared words/tags) yet
+  // are not linked and share no theme. The cross-theme bridge that sparks a book.
+  const pairPanel = document.getElementById('connect-pair-panel') as HTMLDivElement
+  const pairAEl = document.getElementById('pair-a') as HTMLParagraphElement
+  const pairBEl = document.getElementById('pair-b') as HTMLParagraphElement
+  let currentPair: SurprisingPair | null = null
+  let pairData: { pool: Note[]; linkedPairs: Set<string>; themeMap: Map<string, Set<string>> } | null = null
+
+  const pairPreview = (n: Note): string =>
+    n.ai_title ?? (n.content.slice(0, 120) + (n.content.length > 120 ? '…' : ''))
+
+  const loadPairData = async (): Promise<void> => {
+    const [pool, allLinks, noteThemes] = await Promise.all([
+      fetchNotes(0, 300),
+      fetchLinks(),
+      fetchAllNoteThemes()
+    ])
+    const linkedPairs = new Set<string>()
+    allLinks.forEach(l => linkedPairs.add(pairKey(l.source_id, l.target_id)))
+    const themeMap = new Map<string, Set<string>>()
+    noteThemes.forEach(({ note_id, theme_id }) => {
+      const s = themeMap.get(note_id) ?? new Set<string>()
+      s.add(theme_id)
+      themeMap.set(note_id, s)
+    })
+    pairData = { pool, linkedPairs, themeMap }
+  }
+
+  const showSurprisingPair = async (): Promise<void> => {
+    panel.hidden = true
+    try {
+      if (!pairData) await loadPairData()
+      const pair = findSurprisingPair(pairData!.pool, pairData!.linkedPairs, pairData!.themeMap)
+      if (!pair) {
+        pairPanel.hidden = true
+        showToast('Nog geen verrassende verbinding gevonden')
+        return
+      }
+      currentPair = pair
+      pairAEl.textContent = pairPreview(pair.a as Note)
+      pairBEl.textContent = pairPreview(pair.b as Note)
+      pairPanel.hidden = false
+    } catch {
+      showToast('Kon geen suggestie laden')
+    }
+  }
+
+  document.getElementById('btn-connect')?.addEventListener('click', showSurprisingPair)
+  document.getElementById('btn-pair-next')?.addEventListener('click', showSurprisingPair)
+  document.getElementById('btn-pair-close')?.addEventListener('click', () => { pairPanel.hidden = true })
+  document.getElementById('btn-pair-link')?.addEventListener('click', async (e) => {
+    if (!currentPair || !pairData) return
+    const btn = e.currentTarget as HTMLButtonElement
+    btn.disabled = true
+    try {
+      await createLink({
+        sourceId: currentPair.a.id,
+        targetId: currentPair.b.id,
+        type: 'related',
+        reason: 'Verrassende verbinding'
+      })
+      pairData.linkedPairs.add(pairKey(currentPair.a.id, currentPair.b.id))
+      showToast('Gekoppeld')
+      await showSurprisingPair() // roll the next bridge
+    } catch {
+      showToast('Koppelen mislukt')
+    } finally {
+      btn.disabled = false
+    }
+  })
 
   // Online/offline indicator + auto-flush on reconnect
   await refreshOnlineIndicator()
@@ -607,8 +699,29 @@ function injectCaptureStyles(): void {
     .random-note-actions {
       display: flex;
       gap: var(--s-2);
+      flex-wrap: wrap;
     }
     .random-note-actions .btn { width: auto; }
+    .pair-notes {
+      display: flex;
+      align-items: stretch;
+      gap: var(--s-2);
+    }
+    .pair-note {
+      flex: 1;
+      min-width: 0;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--r-sm);
+      padding: var(--s-2);
+      max-height: 6rem;
+    }
+    .pair-link-icon {
+      align-self: center;
+      color: var(--accent);
+      font-weight: 700;
+      font-size: var(--fs-lg);
+    }
   `
   document.head.appendChild(style)
 }
