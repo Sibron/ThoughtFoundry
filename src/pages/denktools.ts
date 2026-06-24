@@ -21,7 +21,7 @@ export async function renderDenktools(app: HTMLElement): Promise<void> {
   app.innerHTML = `
     ${renderTopbar('Denktools', 'denktools')}
     <div class="shell-body" id="denktools-shell">
-      <div class="shell-tabs" id="denktools-tabs"></div>
+      <div class="shell-tabs focus-hide" id="denktools-tabs"></div>
       <p class="shell-intro muted" id="denktools-intro"></p>
       <div id="denktools-panel"></div>
     </div>

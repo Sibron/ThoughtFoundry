@@ -18,7 +18,7 @@ import { injectShellStyles } from './denktools'
 export async function renderInbox(app: HTMLElement): Promise<void> {
   app.innerHTML = `
     ${renderTopbar('Vangbak', 'inbox')}
-    <div class="inbox-view-toggle" id="inbox-view-toggle">
+    <div class="inbox-view-toggle focus-hide" id="inbox-view-toggle">
       <button class="shell-tab" data-view="list" aria-current="true">Lijst</button>
       <button class="shell-tab" data-view="search">Zoeken</button>
       <button class="shell-tab" data-view="graph">Graaf</button>
