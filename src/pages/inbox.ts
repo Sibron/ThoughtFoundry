@@ -11,10 +11,45 @@ import {
 import { NOTE_TYPES, NOTE_TYPE_ORDER } from '../lib/noteTypes'
 import { renderTopbar, attachTopbar, renderGuidanceBanner } from '../lib/nav'
 import { navigateTo } from '../router'
+import { mountSearch } from './search'
+import { mountGraph } from './graph'
+import { injectShellStyles } from './denktools'
 
 export async function renderInbox(app: HTMLElement): Promise<void> {
   app.innerHTML = `
     ${renderTopbar('Vangbak', 'inbox')}
+    <div class="inbox-view-toggle" id="inbox-view-toggle">
+      <button class="shell-tab" data-view="list" aria-current="true">Lijst</button>
+      <button class="shell-tab" data-view="search">Zoeken</button>
+      <button class="shell-tab" data-view="graph">Graaf</button>
+    </div>
+    <div id="inbox-view"></div>
+    <div class="toast" id="toast"></div>
+  `
+  injectShellStyles()
+  attachTopbar()
+
+  const view = document.getElementById('inbox-view')!
+  const toggle = document.getElementById('inbox-view-toggle')!
+  let current: 'list' | 'search' | 'graph' = 'list'
+  toggle.querySelectorAll<HTMLButtonElement>('.shell-tab').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const v = btn.dataset['view'] as 'list' | 'search' | 'graph'
+      if (v === current) return
+      current = v
+      toggle.querySelectorAll('.shell-tab').forEach(b => b.removeAttribute('aria-current'))
+      btn.setAttribute('aria-current', 'true')
+      view.innerHTML = ''
+      if (v === 'list') await mountInboxList(view)
+      else if (v === 'search') await mountSearch(view)
+      else await mountGraph(view)
+    })
+  })
+  await mountInboxList(view)
+}
+
+export async function mountInboxList(root: HTMLElement): Promise<void> {
+  root.innerHTML = `
     <div class="inbox-body">
       ${renderGuidanceBanner('Pak er één uit. Lees het. Geef het een plek.')}
       <div class="inbox-tabs focus-hide">
@@ -48,11 +83,9 @@ export async function renderInbox(app: HTMLElement): Promise<void> {
       </div>
       <button class="btn btn-ghost inbox-load-more" id="load-more" style="display:none">Meer laden</button>
     </div>
-    <div class="toast" id="toast"></div>
   `
 
   injectInboxStyles()
-  attachTopbar()
 
   let page = 0
   let allNotes: Note[] = []

@@ -4,27 +4,35 @@ import { fetchChapters, saveChapter, deleteChapter, type Chapter } from '../lib/
 import { fetchBooks, createBook, updateBook, deleteBook, type Book } from '../lib/books'
 import { generateChapter, type ChapterPlan } from '../lib/ai'
 import { getCostStatus, formatUsd } from '../lib/cost'
-import { renderTopbar, attachTopbar } from '../lib/nav'
+import { renderTopbar, attachTopbar, isAiEnabled } from '../lib/nav'
 import { SECTIONS } from '../lib/sections'
+import { mountProjects } from './projects'
 
 export async function renderBook(app: HTMLElement): Promise<void> {
   app.innerHTML = `
     ${renderTopbar('Boek', 'book')}
+    <div id="book-root"></div>
+    <div class="toast" id="toast"></div>
+  `
+  attachTopbar()
+  await mountBook(document.getElementById('book-root')!)
+}
+
+export async function mountBook(root: HTMLElement): Promise<void> {
+  root.innerHTML = `
     <div class="book-body" id="book-body">
       <div class="book-loading">Laden…</div>
     </div>
-    <div class="toast" id="toast"></div>
   `
 
   injectBookStyles()
-  attachTopbar()
 
   let notes: Note[] = []
   let themes: Theme[] = []
   let noteThemes: { note_id: string; theme_id: string }[] = []
   let chapters: Chapter[] = []
   let books: Book[] = []
-  let activeTab: 'chapters' | 'books' = 'chapters'
+  let activeTab: 'projects' | 'chapters' | 'books' = 'chapters'
 
   try {
     [notes, themes, noteThemes, chapters, books] = await Promise.all([
@@ -40,22 +48,13 @@ export async function renderBook(app: HTMLElement): Promise<void> {
     return
   }
 
-  if (notes.length === 0) {
-    document.getElementById('book-body')!.innerHTML = `
-      <div class="book-empty">
-        <h2>Nog geen verwerkte nota's</h2>
-        <p>Hoofdstukken bouwen zich uit verwerkte nota's. Ga eerst door je inbox in <a href="#/process">Verwerken</a>.</p>
-      </div>
-    `
-    return
-  }
-
   renderShell()
 
   function renderShell(): void {
     const body = document.getElementById('book-body')!
     body.innerHTML = `
       <div class="book-tabs">
+        <button class="book-tab" data-tab="projects" ${activeTab === 'projects' ? 'aria-current="true"' : ''}>Projecten</button>
         <button class="book-tab" data-tab="chapters" ${activeTab === 'chapters' ? 'aria-current="true"' : ''}>Hoofdstukken</button>
         <button class="book-tab" data-tab="books" ${activeTab === 'books' ? 'aria-current="true"' : ''}>Boeken</button>
       </div>
@@ -63,12 +62,19 @@ export async function renderBook(app: HTMLElement): Promise<void> {
     `
     body.querySelectorAll<HTMLButtonElement>('.book-tab').forEach(t => {
       t.addEventListener('click', () => {
-        activeTab = t.dataset['tab'] as 'chapters' | 'books'
+        activeTab = t.dataset['tab'] as 'projects' | 'chapters' | 'books'
         renderShell()
       })
     })
-    if (activeTab === 'chapters') renderChaptersTab()
+    if (activeTab === 'projects') renderProjectsTab()
+    else if (activeTab === 'chapters') renderChaptersTab()
     else renderBooksTab()
+  }
+
+  function renderProjectsTab(): void {
+    const panel = document.getElementById('book-tabpanel')!
+    panel.innerHTML = ''
+    void mountProjects(panel)
   }
 
   function renderChaptersTab(): void {
@@ -424,6 +430,7 @@ export async function renderBook(app: HTMLElement): Promise<void> {
   async function onGenerate(): Promise<void> {
     const ids = selectedNoteIds()
     if (ids.length < 2) return
+    if (!isAiEnabled()) { showToast('Zet AI aan in Instellingen om hoofdstukken te genereren'); return }
 
     const status = await getCostStatus()
     if (status.block) {
