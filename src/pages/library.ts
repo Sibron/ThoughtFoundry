@@ -16,7 +16,7 @@ export async function renderLibrary(app: HTMLElement): Promise<void> {
   app.innerHTML = `
     ${renderTopbar('Bibliotheek', 'library')}
     <div class="shell-body" id="library-shell">
-      <div class="shell-tabs" id="library-tabs"></div>
+      <div class="shell-tabs focus-hide" id="library-tabs"></div>
       <div id="library-panel"></div>
     </div>
     <div class="toast" id="toast"></div>
