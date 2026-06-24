@@ -33,16 +33,17 @@ export function renderGuidanceBanner(text: string, tone: 'anchor' | 'quiet' = 'q
 
 // ── Navigation ────────────────────────────────────────────────────────────
 
-export type NavKey = 'capture' | 'inbox' | 'search' | 'process' | 'graph' | 'book' | 'themes' | 'settings' | 'spark' | 'denkpartner' | 'clusters' | 'sources' | 'projects'
+export type NavKey = 'capture' | 'inbox' | 'search' | 'process' | 'graph' | 'book' | 'themes' | 'settings' | 'spark' | 'denkpartner' | 'clusters' | 'sources' | 'projects' | 'denktools' | 'library'
 
 /**
  * Render the slim sticky header + fixed bottom tab bar.
  * Signature is unchanged: `title` shows in the header, `active` highlights
  * the matching tab, `extra` is injected into the header actions (e.g. online indicator).
  */
-// Tabs shown directly in the bottom bar. Anything else (Zoek, Graaf, Bronnen,
-// Projecten, AI-tools, Instellingen) lives behind the "Meer" overflow sheet.
-const PRIMARY_TABS: NavKey[] = ['capture', 'inbox', 'process', 'themes']
+// Tabs shown directly in the bottom bar. Anything else (Denktools, Instellingen)
+// lives behind the "Meer" overflow sheet. Zoeken/Graaf live as views inside
+// Vangbak; Thema's/Bronnen/Boek/Projecten live as sub-tabs inside Bibliotheek.
+const PRIMARY_TABS: NavKey[] = ['capture', 'inbox', 'process', 'library']
 
 export function renderTopbar(title: string, active?: NavKey, extra = ''): string {
   const ai = isAiEnabled()
@@ -56,12 +57,7 @@ export function renderTopbar(title: string, active?: NavKey, extra = ''): string
   const sheetItem = (key: NavKey, label: string) =>
     `<button class="nav-sheet-item${active === key ? ' active' : ''}" data-nav="${key}">${label}</button>`
 
-  const aiSheetItems = ai
-    ? sheetItem('spark', 'Spark') +
-      sheetItem('denkpartner', 'Denkpartner') +
-      sheetItem('clusters', 'Clusters') +
-      sheetItem('book', 'Boek')
-    : ''
+  const aiSheetItems = ai ? sheetItem('denktools', 'Denktools') : ''
 
   return `
     <header class="topbar">
@@ -76,15 +72,11 @@ export function renderTopbar(title: string, active?: NavKey, extra = ''): string
       ${tab('capture', 'Nieuw')}
       ${tab('inbox', 'Vangbak')}
       ${ai ? tab('process', 'Verwerken') : ''}
-      ${tab('themes', "Thema's")}
+      ${tab('library', 'Bibliotheek')}
       <button class="tab-btn${meerActive ? ' active' : ''}" data-nav="meer" aria-expanded="false" aria-controls="nav-sheet">Meer</button>
     </nav>
     <div class="nav-sheet-scrim focus-hide" id="nav-sheet-scrim" hidden></div>
     <div class="nav-sheet focus-hide" id="nav-sheet" role="menu" aria-label="Meer" hidden>
-      ${sheetItem('search', 'Zoeken')}
-      ${sheetItem('graph', 'Graaf')}
-      ${sheetItem('sources', 'Bronnen')}
-      ${sheetItem('projects', 'Projecten')}
       ${aiSheetItems}
       ${sheetItem('settings', 'Instellingen')}
     </div>`

@@ -12,14 +12,21 @@ import { getCostStatus } from '../lib/cost'
 export async function renderProjects(app: HTMLElement): Promise<void> {
   app.innerHTML = `
     ${renderTopbar('Projecten', 'projects')}
+    <div id="proj-root"></div>
+    <div class="toast" id="toast"></div>
+  `
+  attachTopbar()
+  await mountProjects(document.getElementById('proj-root')!)
+}
+
+export async function mountProjects(root: HTMLElement): Promise<void> {
+  root.innerHTML = `
     <div class="proj-body" id="proj-body">
       <div class="proj-loading">Laden…</div>
     </div>
-    <div class="toast" id="toast"></div>
   `
   injectStyles()
-  attachTopbar()
-  await reloadProjects(app)
+  await reloadProjects(root)
 }
 
 async function reloadProjects(app: HTMLElement): Promise<void> {
