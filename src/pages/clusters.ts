@@ -7,6 +7,15 @@ import { createLink } from '../lib/links'
 export async function renderClusters(app: HTMLElement): Promise<void> {
   app.innerHTML = `
     ${renderTopbar('Clusters', 'clusters')}
+    <div id="clusters-root"></div>
+    <div class="toast" id="toast"></div>
+  `
+  attachTopbar()
+  await mountClusters(document.getElementById('clusters-root')!)
+}
+
+export async function mountClusters(root: HTMLElement): Promise<void> {
+  root.innerHTML = `
     <div class="clusters-body">
       <div class="clusters-intro-card">
         <p class="clusters-intro">
@@ -21,11 +30,9 @@ export async function renderClusters(app: HTMLElement): Promise<void> {
 
       <div id="clusters-result" hidden></div>
     </div>
-    <div class="toast" id="toast"></div>
   `
 
   injectClustersStyles()
-  attachTopbar()
 
   try {
     const cost = await getCostStatus()

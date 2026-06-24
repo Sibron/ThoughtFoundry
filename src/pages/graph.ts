@@ -28,6 +28,15 @@ const HEIGHT = 720
 export async function renderGraph(app: HTMLElement): Promise<void> {
   app.innerHTML = `
     ${renderTopbar('Graaf', 'graph')}
+    <div id="graph-root"></div>
+    <div class="toast" id="toast"></div>
+  `
+  attachTopbar()
+  await mountGraph(document.getElementById('graph-root')!)
+}
+
+export async function mountGraph(root: HTMLElement): Promise<void> {
+  root.innerHTML = `
     <div class="graph-body">
       <header class="graph-header">
         <label class="graph-filter">
@@ -51,11 +60,9 @@ export async function renderGraph(app: HTMLElement): Promise<void> {
         </aside>
       </div>
     </div>
-    <div class="toast" id="toast"></div>
   `
 
   injectGraphStyles()
-  attachTopbar()
 
   let notes: Note[] = []
   let themes: Theme[] = []

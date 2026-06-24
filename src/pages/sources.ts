@@ -5,13 +5,20 @@ import { renderTopbar, attachTopbar } from '../lib/nav'
 export async function renderSources(app: HTMLElement): Promise<void> {
   app.innerHTML = `
     ${renderTopbar('Bronnen', 'sources')}
+    <div id="src-root"></div>
+    <div class="toast" id="toast"></div>
+  `
+  attachTopbar()
+  await mountSources(document.getElementById('src-root')!)
+}
+
+export async function mountSources(root: HTMLElement): Promise<void> {
+  root.innerHTML = `
     <div class="src-body" id="src-body">
       <div class="src-loading">Laden…</div>
     </div>
-    <div class="toast" id="toast"></div>
   `
   injectStyles()
-  attachTopbar()
   await reload()
 }
 
