@@ -713,23 +713,34 @@ function injectBookStyles(): void {
       flex-direction: column;
       gap: var(--s-5);
     }
+    /* Secondary underline style: distinguishes these in-page subtabs from the
+       primary Bibliotheek shell pills above them, so the two rows don't read as
+       one stacked block. */
     .book-tabs {
       display: flex;
-      gap: var(--s-2);
+      gap: var(--s-4);
+      border-bottom: 1px solid var(--border);
     }
     .book-tab {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: var(--r-sm);
-      padding: var(--s-2) var(--s-3);
+      background: none;
+      border: none;
+      border-bottom: 2px solid transparent;
+      padding: var(--s-2) var(--s-1);
+      margin-bottom: -1px;
       cursor: pointer;
       font-size: var(--fs-sm);
       color: var(--text-muted);
     }
     .book-tab[aria-current="true"] {
-      background: var(--accent);
-      color: #fff;
-      border-color: var(--accent);
+      color: var(--accent);
+      border-bottom-color: var(--accent);
+      font-weight: 600;
+    }
+    /* When the Projecten subtab hosts the projects UI inside the book panel,
+       drop its outer page padding/width so it isn't double-inset. */
+    #book-tabpanel .proj-body {
+      padding: 0;
+      max-width: 100%;
     }
     .book-row {
       background: var(--bg);

@@ -47,18 +47,32 @@ export async function renderDenktools(app: HTMLElement): Promise<void> {
     })
   }
 
+  // Mount is async (network). Guard against fast tab-switching: only one mount
+  // runs at a time, and the loop re-mounts if a newer tab was requested mid-load,
+  // so the last-clicked tab always wins.
+  let loading = false
+  let desired: DenktoolsTab = active
+
   async function switchTo(tab: DenktoolsTab): Promise<void> {
+    desired = tab
     active = tab
     renderTabs()
     introEl.textContent = INTROS[tab]
-    panel.innerHTML = ''
-    const t = TABS.find(x => x.key === tab)!
-    await t.mount(panel)
+    if (loading) return
+    loading = true
+    try {
+      while (true) {
+        const t = desired
+        panel.innerHTML = ''
+        await TABS.find(x => x.key === t)!.mount(panel)
+        if (desired === t) break
+      }
+    } finally {
+      loading = false
+    }
   }
 
-  renderTabs()
-  introEl.textContent = INTROS[active]
-  await TABS.find(t => t.key === active)!.mount(panel)
+  await switchTo(active)
 }
 
 /** Shared styles for the Denktools / Bibliotheek host shells. Injected once. */
@@ -114,7 +128,9 @@ export function injectShellStyles(): void {
     }
     #denktools-panel,
     #library-panel,
-    #inbox-view {
+    #inbox-view,
+    #inbox-list-view:not([hidden]),
+    #inbox-aux-view:not([hidden]) {
       display: flex;
       flex-direction: column;
       flex: 1;
