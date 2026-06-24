@@ -40,13 +40,28 @@ export async function renderLibrary(app: HTMLElement): Promise<void> {
     })
   }
 
+  // Single in-flight mount; re-mount if a newer tab was clicked mid-load so the
+  // last-clicked tab always wins (guards against fast tab-switching).
+  let loading = false
+  let desired: LibraryTab = active
+
   async function switchTo(tab: LibraryTab): Promise<void> {
+    desired = tab
     active = tab
     renderTabs()
-    panel.innerHTML = ''
-    await TABS.find(x => x.key === tab)!.mount(panel)
+    if (loading) return
+    loading = true
+    try {
+      while (true) {
+        const t = desired
+        panel.innerHTML = ''
+        await TABS.find(x => x.key === t)!.mount(panel)
+        if (desired === t) break
+      }
+    } finally {
+      loading = false
+    }
   }
 
-  renderTabs()
-  await TABS.find(t => t.key === active)!.mount(panel)
+  await switchTo(active)
 }
