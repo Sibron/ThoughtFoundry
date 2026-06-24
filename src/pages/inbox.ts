@@ -11,10 +11,84 @@ import {
 import { NOTE_TYPES, NOTE_TYPE_ORDER } from '../lib/noteTypes'
 import { renderTopbar, attachTopbar, renderGuidanceBanner } from '../lib/nav'
 import { navigateTo } from '../router'
+import { mountSearch } from './search'
+import { mountGraph } from './graph'
+import { injectShellStyles } from './denktools'
 
 export async function renderInbox(app: HTMLElement): Promise<void> {
   app.innerHTML = `
     ${renderTopbar('Vangbak', 'inbox')}
+    <div class="inbox-view-toggle focus-hide" id="inbox-view-toggle">
+      <button class="shell-tab" data-view="list" aria-current="true">Lijst</button>
+      <button class="shell-tab" data-view="search">Zoeken</button>
+      <button class="shell-tab" data-view="graph">Graaf</button>
+    </div>
+    <div id="inbox-view">
+      <div id="inbox-list-view"></div>
+      <div id="inbox-aux-view" hidden></div>
+    </div>
+    <div class="toast" id="toast"></div>
+  `
+  injectShellStyles()
+  attachTopbar()
+
+  const listView = document.getElementById('inbox-list-view')!
+  const auxView = document.getElementById('inbox-aux-view')!
+  const toggle = document.getElementById('inbox-view-toggle')!
+
+  // The list holds expensive state (status/type filters, search text, selection,
+  // loaded pages, scroll), so it is mounted once and only hidden/shown. Zoeken
+  // and Graaf are "re-finding" views without state worth keeping — they mount
+  // fresh into a separate aux container.
+  let current: 'list' | 'search' | 'graph' = 'list'
+  let auxLoading = false
+  let auxDesired: 'search' | 'graph' | null = null
+
+  // Single in-flight aux mount; re-mount if a newer view was requested mid-load
+  // so the last-clicked view wins (guards against fast switching).
+  async function showAux(v: 'search' | 'graph'): Promise<void> {
+    auxDesired = v
+    if (auxLoading) return
+    auxLoading = true
+    try {
+      while (auxDesired) {
+        const t: 'search' | 'graph' = auxDesired
+        auxView.innerHTML = ''
+        if (t === 'search') await mountSearch(auxView)
+        else await mountGraph(auxView)
+        if (auxDesired === t) break
+      }
+    } finally {
+      auxLoading = false
+    }
+  }
+
+  toggle.querySelectorAll<HTMLButtonElement>('.shell-tab').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const v = btn.dataset['view'] as 'list' | 'search' | 'graph'
+      if (v === current) return
+      current = v
+      toggle.querySelectorAll('.shell-tab').forEach(b => b.removeAttribute('aria-current'))
+      btn.setAttribute('aria-current', 'true')
+      if (v === 'list') {
+        // Stop any pending aux mount and reveal the preserved list. Don't clear
+        // aux content here — an in-flight mount may still be writing into it.
+        auxDesired = null
+        auxView.hidden = true
+        listView.hidden = false
+      } else {
+        listView.hidden = true
+        auxView.hidden = false
+        await showAux(v)
+      }
+    })
+  })
+
+  await mountInboxList(listView)
+}
+
+export async function mountInboxList(root: HTMLElement): Promise<void> {
+  root.innerHTML = `
     <div class="inbox-body">
       ${renderGuidanceBanner('Pak er één uit. Lees het. Geef het een plek.')}
       <div class="inbox-tabs focus-hide">
@@ -48,11 +122,9 @@ export async function renderInbox(app: HTMLElement): Promise<void> {
       </div>
       <button class="btn btn-ghost inbox-load-more" id="load-more" style="display:none">Meer laden</button>
     </div>
-    <div class="toast" id="toast"></div>
   `
 
   injectInboxStyles()
-  attachTopbar()
 
   let page = 0
   let allNotes: Note[] = []

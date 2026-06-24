@@ -100,8 +100,8 @@ export async function renderThemeSections(app: HTMLElement): Promise<void> {
     </div>
   `
 
-  document.getElementById('ts-back')?.addEventListener('click', () => navigateTo('/themes'))
-  document.getElementById('ts-book-btn')?.addEventListener('click', () => navigateTo(`/book?theme=${themeId}`))
+  document.getElementById('ts-back')?.addEventListener('click', () => navigateTo('/library?tab=themes'))
+  document.getElementById('ts-book-btn')?.addEventListener('click', () => navigateTo(`/library?tab=book&theme=${themeId}`))
   body.querySelectorAll<HTMLElement>('.ts-note-link').forEach(el => {
     el.addEventListener('click', () => navigateTo(`/note?id=${el.dataset['id']}`))
   })

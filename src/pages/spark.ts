@@ -15,6 +15,15 @@ type OutputType = typeof OUTPUT_TYPES[number]['value']
 export async function renderSpark(app: HTMLElement): Promise<void> {
   app.innerHTML = `
     ${renderTopbar('Spark', 'spark')}
+    <div id="spark-root"></div>
+    <div class="toast" id="toast"></div>
+  `
+  attachTopbar()
+  await mountSpark(document.getElementById('spark-root')!)
+}
+
+export async function mountSpark(root: HTMLElement): Promise<void> {
+  root.innerHTML = `
     <div class="spark-body">
       <div class="spark-card">
         <p class="spark-intro">
@@ -53,11 +62,9 @@ export async function renderSpark(app: HTMLElement): Promise<void> {
         </div>
       </div>
     </div>
-    <div class="toast" id="toast"></div>
   `
 
   injectSparkStyles()
-  attachTopbar()
 
   // Wire up type-chip visual selection
   document.querySelectorAll<HTMLInputElement>('input[name="output-type"]').forEach(radio => {

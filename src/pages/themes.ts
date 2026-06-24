@@ -34,14 +34,21 @@ const SECTION_LABELS: Record<string, string> = {
 export async function renderThemes(app: HTMLElement): Promise<void> {
   app.innerHTML = `
     ${renderTopbar("Thema's", 'themes')}
+    <div id="themes-root"></div>
+    <div class="toast" id="toast"></div>
+  `
+  attachTopbar()
+  await mountThemes(document.getElementById('themes-root')!)
+}
+
+export async function mountThemes(root: HTMLElement): Promise<void> {
+  root.innerHTML = `
     <div class="themes-body" id="themes-body">
       <div class="themes-loading">Laden…</div>
     </div>
-    <div class="toast" id="toast"></div>
   `
 
   injectThemesStyles()
-  attachTopbar()
 
   let themes: Theme[] = []
   let counts: Record<string, number> = {}

@@ -24,6 +24,8 @@ import { renderClusters } from './pages/clusters'
 import { renderSources } from './pages/sources'
 import { renderProjects } from './pages/projects'
 import { renderThemeSections } from './pages/theme-sections'
+import { renderDenktools } from './pages/denktools'
+import { renderLibrary } from './pages/library'
 
 const app = document.getElementById('app') as HTMLElement
 
@@ -76,7 +78,9 @@ if (!isConfigured) {
     '/denkpartner': aiGuard(renderDenkpartner, 'Denkpartner'),
     '/clusters':    aiGuard(renderClusters, 'Clusters'),
     '/sources':     () => guard(renderSources),
-    '/projects':    () => guard(renderProjects)
+    '/projects':    () => guard(renderProjects),
+    '/denktools':   aiGuard(renderDenktools, 'Denktools'),
+    '/library':     () => guard(renderLibrary)
   })
 }
 

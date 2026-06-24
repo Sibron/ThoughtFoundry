@@ -10,6 +10,15 @@ import { navigateTo } from '../router'
 export async function renderSearch(app: HTMLElement): Promise<void> {
   app.innerHTML = `
     ${renderTopbar('Zoeken', 'search')}
+    <div id="search-root"></div>
+    <div class="toast" id="toast"></div>
+  `
+  attachTopbar()
+  await mountSearch(document.getElementById('search-root')!)
+}
+
+export async function mountSearch(root: HTMLElement): Promise<void> {
+  root.innerHTML = `
     <div class="search-body">
       <input
         type="text"
@@ -23,11 +32,9 @@ export async function renderSearch(app: HTMLElement): Promise<void> {
         <p class="search-hint">Typ om te zoeken in content, titel en samenvatting.</p>
       </div>
     </div>
-    <div class="toast" id="toast"></div>
   `
 
   injectSearchStyles()
-  attachTopbar()
 
   const input = document.getElementById('search-input') as HTMLInputElement
   const resultsEl = document.getElementById('search-results') as HTMLDivElement

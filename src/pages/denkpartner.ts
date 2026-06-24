@@ -7,6 +7,15 @@ import { renderTopbar, attachTopbar } from '../lib/nav'
 export async function renderDenkpartner(app: HTMLElement): Promise<void> {
   app.innerHTML = `
     ${renderTopbar('Denkpartner', 'denkpartner')}
+    <div id="dp-root"></div>
+    <div class="toast" id="toast"></div>
+  `
+  attachTopbar()
+  await mountDenkpartner(document.getElementById('dp-root')!)
+}
+
+export async function mountDenkpartner(root: HTMLElement): Promise<void> {
+  root.innerHTML = `
     <div class="dp-body">
       <div class="dp-card">
         <p class="dp-intro">
@@ -39,11 +48,9 @@ export async function renderDenkpartner(app: HTMLElement): Promise<void> {
         <p class="muted">Lege antwoorden worden overgeslagen. De tag <code>denkpartner</code> wordt automatisch toegevoegd.</p>
       </div>
     </div>
-    <div class="toast" id="toast"></div>
   `
 
   injectDpStyles()
-  attachTopbar()
 
   let themes: Theme[] = []
   let questions: DenkpartnerQuestion[] = []
