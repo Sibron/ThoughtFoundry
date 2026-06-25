@@ -92,7 +92,8 @@ Deno.serve(async (req: Request) => {
       apiKey, model,
       system,
       messages: [{ role: 'user', content: userPrompt }],
-      maxTokens: 2000
+      maxTokens: 2000,
+      operation: 'gap-analysis'
     })
   } catch (err) {
     return jsonResponse({ error: err instanceof Error ? err.message : 'AI call failed' }, 502)

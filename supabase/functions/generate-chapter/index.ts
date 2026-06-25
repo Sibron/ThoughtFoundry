@@ -95,7 +95,8 @@ Deno.serve(async (req: Request) => {
       apiKey, model,
       system,
       messages: [{ role: 'user', content: userPrompt }],
-      maxTokens: 2048
+      maxTokens: 2048,
+      operation: 'generate-chapter'
     })
   } catch (err) {
     return jsonResponse({ error: err instanceof Error ? err.message : 'AI call failed' }, 502)
