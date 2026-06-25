@@ -98,7 +98,8 @@ Deno.serve(async (req: Request) => {
       apiKey, model,
       system,
       messages: [{ role: 'user', content: userPrompt }],
-      maxTokens: 1200
+      maxTokens: 1200,
+      operation: 'detect-clusters'
     })
   } catch (err) {
     return jsonResponse({ error: err instanceof Error ? err.message : 'AI call failed' }, 502)

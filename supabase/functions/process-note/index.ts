@@ -116,7 +116,8 @@ Deno.serve(async (req: Request) => {
       model,
       system,
       messages: [{ role: 'user', content: userPrompt }],
-      maxTokens: 1024
+      maxTokens: 1024,
+      operation: 'process-note'
     })
   } catch (err) {
     return jsonResponse({ error: err instanceof Error ? err.message : 'AI call failed' }, 502)

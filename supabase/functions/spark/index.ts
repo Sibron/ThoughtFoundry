@@ -96,7 +96,8 @@ Deno.serve(async (req: Request) => {
       apiKey, model,
       system,
       messages: [{ role: 'user', content: userPrompt }],
-      maxTokens: 1500
+      maxTokens: 1500,
+      operation: 'spark'
     })
   } catch (err) {
     return jsonResponse({ error: err instanceof Error ? err.message : 'AI call failed' }, 502)
