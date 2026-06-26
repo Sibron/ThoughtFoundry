@@ -1,23 +1,23 @@
-// Batch sibling of embed-note: embeds the next batch of notes that still need a
-// Voyage embedding, in ONE Voyage call (the API accepts an array). Drives a
-// resumable client backfill loop. Only active when VOYAGE_API_KEY is set.
+// Embeds the next batch of notes that still need an embedding, using the Supabase
+// Edge Runtime built-in model (gte-small, 384-dim). No external provider, no API
+// key, no per-token cost. Drives a resumable client backfill loop.
 
 import { corsHeaders, jsonResponse } from '../_shared/cors.ts'
 import { getUserClient, requireUserId } from '../_shared/supabase.ts'
+
+// Supabase.ai is provided by the edge runtime and isn't part of Deno's types.
+// deno-lint-ignore no-explicit-any
+declare const Supabase: any
 
 interface BatchRequest {
   batchSize?: number
 }
 
-const VOYAGE_MODEL = 'voyage-3-large' // 1024-dim
-const VOYAGE_INPUT_PRICE_PER_M = 0.18 // USD per million tokens (approx)
+const EMBED_MODEL = 'gte-small' // 384-dim, runs in-runtime
 
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
   if (req.method !== 'POST')   return jsonResponse({ error: 'Method not allowed' }, 405)
-
-  const voyageKey = Deno.env.get('VOYAGE_API_KEY')
-  if (!voyageKey) return jsonResponse({ error: 'VOYAGE_API_KEY not configured' }, 501)
 
   let body: BatchRequest
   try { body = await req.json() } catch { body = {} }
@@ -39,54 +39,40 @@ Deno.serve(async (req: Request) => {
     return jsonResponse({ done: true, embedded: 0, remaining: 0, costUsd: 0 })
   }
 
-  const inputs = notes.map(n => (n.mini_notes ? `${n.content}\n\n${n.mini_notes}` : n.content))
-
-  const voyageRes = await fetch('https://api.voyageai.com/v1/embeddings', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${voyageKey}`,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({ input: inputs, model: VOYAGE_MODEL, input_type: 'document' })
-  })
-
-  if (!voyageRes.ok) {
-    return jsonResponse({ error: `Voyage ${voyageRes.status}: ${await voyageRes.text()}` }, 502)
-  }
-
-  const voyageData = await voyageRes.json()
-  const data = (voyageData.data ?? []) as { embedding: number[]; index: number }[]
-  // Voyage returns results in input order, but map by reported index defensively.
-  const byIndex = new Map<number, number[]>()
-  for (const d of data) byIndex.set(d.index, d.embedding)
+  const session = new Supabase.ai.Session(EMBED_MODEL)
 
   let embedded = 0
-  for (let i = 0; i < notes.length; i++) {
-    const emb = byIndex.get(i) ?? data[i]?.embedding
-    if (!emb) continue
+  for (const n of notes) {
+    const text = n.mini_notes ? `${n.content}\n\n${n.mini_notes}` : n.content
+    let emb: number[]
+    try {
+      emb = await session.run(text, { mean_pool: true, normalize: true }) as number[]
+    } catch {
+      continue
+    }
+    if (!Array.isArray(emb) || emb.length === 0) continue
     // The stamp_embedded_at trigger sets embedded_at = now() on this write.
     const { error: updErr } = await supabase
       .from('notes')
       .update({ embedding: emb as unknown as string })
-      .eq('id', notes[i].id)
+      .eq('id', n.id)
     if (!updErr) embedded++
   }
 
-  const tokens: number = voyageData.usage?.total_tokens ?? 0
-  const costUsd = (tokens * VOYAGE_INPUT_PRICE_PER_M) / 1_000_000
-  if (tokens > 0) {
+  // Free + local, but log a zero-cost row per non-empty batch for traceability.
+  if (embedded > 0) {
     await supabase.from('ai_usage').insert({
       user_id: userId,
-      model: VOYAGE_MODEL,
+      model: EMBED_MODEL,
       operation: 'embed-notes-batch',
-      input_tokens: tokens,
+      input_tokens: 0,
       output_tokens: 0,
-      cost_usd: costUsd
+      cost_usd: 0
     })
   }
 
   const { data: remainingCount } = await supabase.rpc('count_notes_needing_embedding')
   const remaining = typeof remainingCount === 'number' ? remainingCount : 0
 
-  return jsonResponse({ done: remaining === 0, embedded, remaining, costUsd })
+  return jsonResponse({ done: remaining === 0, embedded, remaining, costUsd: 0 })
 })
