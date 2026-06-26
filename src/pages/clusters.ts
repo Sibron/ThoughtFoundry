@@ -1,5 +1,6 @@
 import { detectClusters, type Cluster } from '../lib/ai'
 import { getCostStatus, formatUsd, type CostStatus } from '../lib/cost'
+import { startAiThinking, AI_PHASES } from '../lib/ai-thinking'
 import { renderTopbar, attachTopbar } from '../lib/nav'
 import { insertNote, fetchNotesByIds } from '../lib/notes'
 import { createLink } from '../lib/links'
@@ -44,7 +45,8 @@ export async function mountClusters(root: HTMLElement): Promise<void> {
   async function onRun(): Promise<void> {
     const btn = document.getElementById('clusters-run') as HTMLButtonElement
     btn.disabled = true
-    btn.textContent = 'Analyseren…'
+    btn.textContent = 'AI denkt na…'
+    const stopThinking = startAiThinking(btn, AI_PHASES.clusters)
 
     try {
       const result = await detectClusters()
@@ -86,6 +88,7 @@ export async function mountClusters(root: HTMLElement): Promise<void> {
     } catch (err) {
       showToast(`Detectie mislukt: ${errMsg(err)}`)
     } finally {
+      stopThinking()
       btn.disabled = false
       btn.textContent = 'Clusters detecteren'
     }

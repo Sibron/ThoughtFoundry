@@ -4,6 +4,7 @@ import { fetchChapters, saveChapter, deleteChapter, type Chapter } from '../lib/
 import { fetchBooks, createBook, updateBook, deleteBook, type Book } from '../lib/books'
 import { generateChapter, type ChapterPlan } from '../lib/ai'
 import { getCostStatus, formatUsd } from '../lib/cost'
+import { startAiThinking, AI_PHASES } from '../lib/ai-thinking'
 import { renderTopbar, attachTopbar, isAiEnabled } from '../lib/nav'
 import { SECTIONS } from '../lib/sections'
 import { mountProjects } from './projects'
@@ -445,6 +446,7 @@ export async function mountBook(root: HTMLElement): Promise<void> {
     const btn = document.getElementById('generate-btn') as HTMLButtonElement
     btn.disabled = true
     btn.textContent = 'AI denkt na…'
+    const stopThinking = startAiThinking(btn, AI_PHASES.book)
 
     try {
       const { plan, usage } = await generateChapter({
@@ -455,6 +457,7 @@ export async function mountBook(root: HTMLElement): Promise<void> {
     } catch (err) {
       showToast(`Mislukt: ${errMsg(err)}`)
     } finally {
+      stopThinking()
       btn.disabled = false
       btn.textContent = 'Genereer hoofdstuk'
     }
