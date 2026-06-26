@@ -367,19 +367,26 @@ export async function renderSettings(app: HTMLElement): Promise<void> {
 
     let embedded = 0
     let note = ''
-    try {
-      // Resumable loop: each call embeds the next batch and reports what's left.
-      for (;;) {
-        if (embedStop) { note = 'gestopt'; break }
-        const r = await embedNotesBatch(50)
+    let consecutiveFails = 0
+    // Resumable + resilient loop. gte-small inference slowly grows the edge
+    // worker's memory; after a while a call hits WORKER_LIMIT (HTTP 546), which
+    // recycles the worker. The backfill skips already-embedded notes, so on an
+    // error we briefly wait for a fresh worker and resume instead of giving up.
+    for (;;) {
+      if (embedStop) { note = 'gestopt'; break }
+      try {
+        const r = await embedNotesBatch(5)
         embedded += r.embedded
         statusEl.textContent = `Geëmbed: ${embedded}${r.remaining ? `, nog ${r.remaining} te gaan` : ''}`
         if (r.done) break
-        // Guard against a stuck cursor (a batch that embeds nothing yet isn't done).
-        if (r.embedded === 0) { note = 'kon deze batch niet embedden — is embed-notes-batch gedeployed?'; break }
+        consecutiveFails = r.embedded > 0 ? 0 : consecutiveFails + 1
+        if (consecutiveFails >= 5) { note = 'geen voortgang meer — probeer later opnieuw'; break }
+      } catch (err) {
+        consecutiveFails++
+        if (consecutiveFails >= 8) { note = `gestopt na herhaalde serverfouten: ${errMsg(err)}`; break }
+        statusEl.textContent = `Geëmbed: ${embedded} — serverlimiet, even pauzeren en hervatten…`
+        await new Promise(res => setTimeout(res, 1500))
       }
-    } catch (err) {
-      note = errMsg(err)
     }
 
     statusEl.textContent = `Klaar: ${embedded} nota's geëmbed${note ? ` — ${note}` : ''}`
