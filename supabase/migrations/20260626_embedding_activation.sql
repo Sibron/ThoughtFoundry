@@ -1,7 +1,44 @@
--- Embedding activation: bookkeeping to (re)generate Voyage embeddings in cheap,
--- resumable batches. The embedding column, the ivfflat index and match_notes()
--- already exist (see schema.sql) — this migration only adds the staleness stamp
--- and the cursor/count RPCs the backfill loop needs. Idempotent.
+-- Embedding activation: switch the embedding column to the dimension produced by
+-- the Supabase Edge built-in model (gte-small = 384-dim), and add the bookkeeping
+-- to (re)generate embeddings in cheap, resumable batches. No external provider,
+-- no API key, no per-token cost. Idempotent.
+
+-- gte-small outputs 384 dims; the base schema created embedding as vector(1024).
+-- No embeddings have been generated yet, so dropping + re-adding the column is
+-- lossless. Recreate the cosine index and the match_notes RPC at the new size.
+drop index if exists public.notes_embedding_idx;
+
+do $$
+begin
+  if exists (select 1 from information_schema.columns
+             where table_schema = 'public' and table_name = 'notes' and column_name = 'embedding') then
+    alter table public.notes drop column embedding;
+  end if;
+end $$;
+
+alter table public.notes add column embedding vector(384);
+
+create index if not exists notes_embedding_idx
+  on public.notes using ivfflat (embedding vector_cosine_ops) with (lists = 100);
+
+-- Function arg typmods aren't part of the signature, so this replaces the
+-- existing match_notes cleanly (kept consistent at 384 even though the app uses
+-- note_neighbors instead).
+create or replace function public.match_notes(
+  query_embedding vector(384),
+  match_count int default 5,
+  exclude_id uuid default null
+)
+returns table (id uuid, content text, similarity float)
+language sql stable as $$
+  select n.id, n.content, 1 - (n.embedding <=> query_embedding) as similarity
+  from public.notes n
+  where n.user_id = auth.uid()
+    and n.embedding is not null
+    and (exclude_id is null or n.id <> exclude_id)
+  order by n.embedding <=> query_embedding
+  limit match_count
+$$;
 
 -- When the stored embedding was last (re)generated.
 --   embedded_at IS NULL              => never embedded

@@ -1,29 +1,53 @@
 # Deploy: semantische deep-linking (dashboard-route, geen CLI)
 
-Volgorde: **secret → migraties → functions → backfill**. Alles is additief en
-veilig; zonder `VOYAGE_API_KEY` valt de app netjes terug op de bestaande lexicale
-methode.
-
----
-
-## Stap 0 — Voyage-secret zetten
-
-1. Maak een API-key op https://www.voyageai.com (gratis tier volstaat voor één gebruiker).
-2. Dashboard → project **ThoughtFoundry** → **Edge Functions** → **Secrets** (of **Project Settings → Edge Functions**).
-3. Voeg toe: naam `VOYAGE_API_KEY`, waarde = je key. Opslaan.
-
-> Dit is een server-secret, géén `VITE_`-variabele. `ANTHROPIC_API_KEY` staat er al.
+Volgorde: **migraties → functions → backfill**. Geen externe embedding-dienst en
+geen API-key nodig — embeddings draaien lokaal in de Supabase Edge Runtime
+(`gte-small`, 384-dim). Alles is additief; zonder embeddings valt de app netjes
+terug op de bestaande lexicale methode.
 
 ---
 
 ## Stap 1 — Migraties draaien (SQL Editor)
 
-Dashboard → **SQL Editor** → **New query** → plak onderstaande twee blokken (mogen
-samen in één run) → **Run**. Idempotent — herhalen kan geen kwaad.
+Dashboard → project **ThoughtFoundry** → **SQL Editor** → **New query** → plak
+onderstaande twee blokken (mogen samen in één run) → **Run**. Idempotent.
 
-### 1a — embedding-activatie
+### 1a — embedding-activatie (incl. dimensie 384)
 
 ```sql
+-- gte-small geeft 384-dim; de basis-schema maakte embedding als vector(1024).
+-- Er zijn nog geen embeddings, dus droppen + opnieuw aanmaken is verliesvrij.
+drop index if exists public.notes_embedding_idx;
+
+do $$
+begin
+  if exists (select 1 from information_schema.columns
+             where table_schema = 'public' and table_name = 'notes' and column_name = 'embedding') then
+    alter table public.notes drop column embedding;
+  end if;
+end $$;
+
+alter table public.notes add column embedding vector(384);
+
+create index if not exists notes_embedding_idx
+  on public.notes using ivfflat (embedding vector_cosine_ops) with (lists = 100);
+
+create or replace function public.match_notes(
+  query_embedding vector(384),
+  match_count int default 5,
+  exclude_id uuid default null
+)
+returns table (id uuid, content text, similarity float)
+language sql stable as $$
+  select n.id, n.content, 1 - (n.embedding <=> query_embedding) as similarity
+  from public.notes n
+  where n.user_id = auth.uid()
+    and n.embedding is not null
+    and (exclude_id is null or n.id <> exclude_id)
+  order by n.embedding <=> query_embedding
+  limit match_count
+$$;
+
 alter table public.notes add column if not exists embedded_at timestamptz;
 
 create or replace function public.stamp_embedded_at()
@@ -59,6 +83,9 @@ returns int language sql stable as $$
     and (n.embedding is null or n.embedded_at is null or n.embedded_at < n.updated_at)
 $$;
 ```
+
+> Mocht het struikelen op `is distinct from` (zeer oude pgvector zonder `=`-operator):
+> vervang de `if`-regel in `stamp_embedded_at` door `if new.embedding is not null then`.
 
 ### 1b — semantische link-RPC's
 
@@ -120,27 +147,33 @@ language sql stable as $$
 $$;
 ```
 
-> Als 1a faalt op `is distinct from` (zeer oude pgvector zonder `=`-operator):
-> vervang de `if`-regel in `stamp_embedded_at` door
-> `if new.embedding is not null then` — dan stamp je bij elke embedding-write
-> (staleness-detectie via content-edit vervalt dan, maar backfill werkt gewoon).
+> **Band ijken voor gte-small:** de defaults `0.55–0.82` waren voor een ander model.
+> gte-small geeft vaak hogere baseline-similariteit; als de voorgestelde bruggen te
+> "obvious" zijn, verhoog de band (bv. `0.70–0.92`). Te ver-gezocht? Verlaag hem.
+> Je kunt dit los testen: `select * from public.semantic_bridges(0.70, 0.92, 10);`
 
 ---
 
 ## Stap 2 — Edge functions deployen (dashboard-editor)
 
-Voor elke functie: **Edge Functions** → **Create a function** (of bestaande
-openen) → naam exact zoals hieronder → plak de volledige `index.ts` → **Deploy**.
-De helpers zijn ingebakken, dus je hebt de `_shared`-map niet nodig.
+**Edge Functions** → **Create a function** (of bestaande openen) → naam exact zoals
+hieronder → plak de volledige `index.ts` → **Deploy**. Helpers zijn ingebakken, dus
+de `_shared`-map is niet nodig.
 
+- `embed-note` → **bestaand, vervangen** (nu gte-small)
 - `embed-notes-batch` → **nieuw**
 - `enrich-links` → **nieuw**
 - `process-note` → **bestaand, vervangen**
 
-### 2a — `embed-notes-batch` → index.ts
+> `embed-note` en `embed-notes-batch` gebruiken `Supabase.ai` (ingebouwd in de edge
+> runtime). Geen import, geen key. Werkt op de gehoste Supabase-runtime.
+
+### 2a — `embed-note` → index.ts (vervangt de bestaande)
 
 ```ts
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2'
+// deno-lint-ignore no-explicit-any
+declare const Supabase: any
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -162,14 +195,64 @@ async function requireUserId(client: SupabaseClient): Promise<string> {
   return data.user.id
 }
 
-const VOYAGE_MODEL = 'voyage-3-large'
-const VOYAGE_INPUT_PRICE_PER_M = 0.18
+const EMBED_MODEL = 'gte-small'
 
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
   if (req.method !== 'POST')   return jsonResponse({ error: 'Method not allowed' }, 405)
-  const voyageKey = Deno.env.get('VOYAGE_API_KEY')
-  if (!voyageKey) return jsonResponse({ error: 'VOYAGE_API_KEY not configured' }, 501)
+  let body: { noteId: string }
+  try { body = await req.json() } catch { return jsonResponse({ error: 'Invalid JSON' }, 400) }
+  if (!body.noteId) return jsonResponse({ error: 'noteId required' }, 400)
+  const supabase = getUserClient(req)
+  let userId: string
+  try { userId = await requireUserId(supabase) } catch { return jsonResponse({ error: 'Unauthorized' }, 401) }
+  const { data: note, error: noteErr } = await supabase.from('notes').select('id, content, mini_notes').eq('id', body.noteId).single()
+  if (noteErr || !note) return jsonResponse({ error: 'Note not found' }, 404)
+  const text = note.mini_notes ? `${note.content}\n\n${note.mini_notes}` : note.content
+  const session = new Supabase.ai.Session(EMBED_MODEL)
+  let embedding: number[]
+  try { embedding = await session.run(text, { mean_pool: true, normalize: true }) as number[] }
+  catch (err) { return jsonResponse({ error: `Embedding failed: ${err instanceof Error ? err.message : String(err)}` }, 502) }
+  if (!Array.isArray(embedding) || embedding.length === 0) return jsonResponse({ error: 'No embedding produced' }, 502)
+  const { error: updateErr } = await supabase.from('notes').update({ embedding: embedding as unknown as string }).eq('id', body.noteId)
+  if (updateErr) return jsonResponse({ error: updateErr.message }, 500)
+  await supabase.from('ai_usage').insert({ user_id: userId, model: EMBED_MODEL, operation: 'embed-note', input_tokens: 0, output_tokens: 0, cost_usd: 0 })
+  return jsonResponse({ ok: true, dimensions: embedding.length, costUsd: 0 })
+})
+```
+
+### 2b — `embed-notes-batch` → index.ts (nieuw)
+
+```ts
+import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2'
+// deno-lint-ignore no-explicit-any
+declare const Supabase: any
+
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS'
+}
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+}
+// deno-lint-ignore no-explicit-any
+function getUserClient(req: Request): SupabaseClient<any, 'public', any> {
+  return createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_ANON_KEY')!, {
+    global: { headers: { Authorization: req.headers.get('Authorization') ?? '' } }
+  })
+}
+async function requireUserId(client: SupabaseClient): Promise<string> {
+  const { data, error } = await client.auth.getUser()
+  if (error || !data.user) throw new Error('Unauthorized')
+  return data.user.id
+}
+
+const EMBED_MODEL = 'gte-small'
+
+Deno.serve(async (req: Request) => {
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
+  if (req.method !== 'POST')   return jsonResponse({ error: 'Method not allowed' }, 405)
   let body: { batchSize?: number }
   try { body = await req.json() } catch { body = {} }
   const batchSize = Math.min(Math.max(body.batchSize ?? 50, 1), 100)
@@ -180,36 +263,26 @@ Deno.serve(async (req: Request) => {
   if (rpcErr) return jsonResponse({ error: rpcErr.message }, 500)
   const notes = (rows ?? []) as { id: string; content: string; mini_notes: string | null }[]
   if (notes.length === 0) return jsonResponse({ done: true, embedded: 0, remaining: 0, costUsd: 0 })
-  const inputs = notes.map(n => (n.mini_notes ? `${n.content}\n\n${n.mini_notes}` : n.content))
-  const voyageRes = await fetch('https://api.voyageai.com/v1/embeddings', {
-    method: 'POST',
-    headers: { 'Authorization': `Bearer ${voyageKey}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ input: inputs, model: VOYAGE_MODEL, input_type: 'document' })
-  })
-  if (!voyageRes.ok) return jsonResponse({ error: `Voyage ${voyageRes.status}: ${await voyageRes.text()}` }, 502)
-  const voyageData = await voyageRes.json()
-  const data = (voyageData.data ?? []) as { embedding: number[]; index: number }[]
-  const byIndex = new Map<number, number[]>()
-  for (const d of data) byIndex.set(d.index, d.embedding)
+  const session = new Supabase.ai.Session(EMBED_MODEL)
   let embedded = 0
-  for (let i = 0; i < notes.length; i++) {
-    const emb = byIndex.get(i) ?? data[i]?.embedding
-    if (!emb) continue
-    const { error: updErr } = await supabase.from('notes').update({ embedding: emb as unknown as string }).eq('id', notes[i].id)
+  for (const n of notes) {
+    const text = n.mini_notes ? `${n.content}\n\n${n.mini_notes}` : n.content
+    let emb: number[]
+    try { emb = await session.run(text, { mean_pool: true, normalize: true }) as number[] } catch { continue }
+    if (!Array.isArray(emb) || emb.length === 0) continue
+    const { error: updErr } = await supabase.from('notes').update({ embedding: emb as unknown as string }).eq('id', n.id)
     if (!updErr) embedded++
   }
-  const tokens: number = voyageData.usage?.total_tokens ?? 0
-  const costUsd = (tokens * VOYAGE_INPUT_PRICE_PER_M) / 1_000_000
-  if (tokens > 0) {
-    await supabase.from('ai_usage').insert({ user_id: userId, model: VOYAGE_MODEL, operation: 'embed-notes-batch', input_tokens: tokens, output_tokens: 0, cost_usd: costUsd })
+  if (embedded > 0) {
+    await supabase.from('ai_usage').insert({ user_id: userId, model: EMBED_MODEL, operation: 'embed-notes-batch', input_tokens: 0, output_tokens: 0, cost_usd: 0 })
   }
   const { data: remainingCount } = await supabase.rpc('count_notes_needing_embedding')
   const remaining = typeof remainingCount === 'number' ? remainingCount : 0
-  return jsonResponse({ done: remaining === 0, embedded, remaining, costUsd })
+  return jsonResponse({ done: remaining === 0, embedded, remaining, costUsd: 0 })
 })
 ```
 
-### 2b — `enrich-links` → index.ts
+### 2c — `enrich-links` → index.ts (nieuw)
 
 ```ts
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2'
@@ -331,7 +404,7 @@ Deno.serve(async (req: Request) => {
 })
 ```
 
-### 2c — `process-note` → index.ts (vervangt de bestaande)
+### 2d — `process-note` → index.ts (vervangt de bestaande)
 
 ```ts
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2'
@@ -489,8 +562,8 @@ Deno.serve(async (req: Request) => {
 ## Stap 3 — Backfill draaien
 
 In de app: **Instellingen** → "Semantische verbindingen activeren" → **Embeddings
-genereren**. De knop loopt batch-voor-batch tot alles geëmbed is (hervatbaar).
-AI moet daarvoor aanstaan (toggle bovenaan Instellingen).
+genereren**. De knop loopt batch-voor-batch tot alles geëmbed is (hervatbaar,
+gratis). AI moet aanstaan (toggle bovenaan Instellingen) zodat de sectie zichtbaar is.
 
 ---
 
@@ -506,12 +579,12 @@ from public.notes;
 select * from public.note_neighbors(
   (select id from public.notes where embedding is not null limit 1), 5);
 
--- Niet-voor-de-hand-liggende bruggen
+-- Niet-voor-de-hand-liggende bruggen (band evt. ijken, zie 1b)
 select * from public.semantic_bridges(0.55, 0.82, 10);
 
--- Embedding-kosten deze maand (verwacht: enkele centen)
+-- Embedding-activiteit deze maand (kosten $0 — lokaal model)
 select operation, count(*), round(sum(cost_usd)::numeric, 4) as usd
-from public.ai_usage where operation in ('embed-notes-batch','enrich-links')
+from public.ai_usage where operation in ('embed-note','embed-notes-batch','enrich-links')
 group by operation;
 ```
 

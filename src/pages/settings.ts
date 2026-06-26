@@ -144,7 +144,7 @@ export async function renderSettings(app: HTMLElement): Promise<void> {
 
     <section class="settings-section">
       <h2>Semantische verbindingen activeren</h2>
-      <p class="muted">Geeft elke nota eenmalig een betekenis-vingerafdruk (embedding via Voyage). Daarna vindt de app verwante nota's — ook met ander woordgebruik — gratis, zonder AI-tokens. Kost een paar cent eenmalig en is hervatbaar. Vereist <code>VOYAGE_API_KEY</code> in Supabase.</p>
+      <p class="muted">Geeft elke nota eenmalig een betekenis-vingerafdruk (embedding, lokaal in Supabase — gratis, geen externe dienst, geen AI-tokens). Daarna vindt de app verwante nota's, ook met ander woordgebruik. Hervatbaar.</p>
       <p id="embed-status" class="muted"></p>
       <div style="display:flex;gap:var(--s-2);flex-wrap:wrap">
         <button class="btn btn-primary" id="embed-start">Embeddings genereren</button>
@@ -366,7 +366,6 @@ export async function renderSettings(app: HTMLElement): Promise<void> {
     stopBtn?.removeAttribute('hidden')
 
     let embedded = 0
-    let spent = 0
     let note = ''
     try {
       // Resumable loop: each call embeds the next batch and reports what's left.
@@ -374,17 +373,16 @@ export async function renderSettings(app: HTMLElement): Promise<void> {
         if (embedStop) { note = 'gestopt'; break }
         const r = await embedNotesBatch(50)
         embedded += r.embedded
-        spent += r.costUsd
-        statusEl.textContent = `Geëmbed: ${embedded}${r.remaining ? `, nog ${r.remaining} te gaan` : ''} — ${formatUsd(spent)}`
+        statusEl.textContent = `Geëmbed: ${embedded}${r.remaining ? `, nog ${r.remaining} te gaan` : ''}`
         if (r.done) break
         // Guard against a stuck cursor (a batch that embeds nothing yet isn't done).
-        if (r.embedded === 0) { note = 'kon deze batch niet embedden — controleer VOYAGE_API_KEY'; break }
+        if (r.embedded === 0) { note = 'kon deze batch niet embedden — is embed-notes-batch gedeployed?'; break }
       }
     } catch (err) {
       note = errMsg(err)
     }
 
-    statusEl.textContent = `Klaar: ${embedded} nota's geëmbed — ${formatUsd(spent)}${note ? ` — ${note}` : ''}`
+    statusEl.textContent = `Klaar: ${embedded} nota's geëmbed${note ? ` — ${note}` : ''}`
     startBtn.disabled = false
     startBtn.textContent = 'Embeddings genereren'
     stopBtn?.setAttribute('hidden', '')
