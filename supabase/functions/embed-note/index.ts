@@ -16,6 +16,11 @@ interface EmbedRequest {
 
 const EMBED_MODEL = 'gte-small' // 384-dim, runs in-runtime
 
+// Load the model ONCE at module scope (reused across invocations). Creating it
+// per-request reloads the model into the request's budget and can trip the
+// CPU/memory limit (HTTP 546).
+const session = new Supabase.ai.Session(EMBED_MODEL)
+
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
   if (req.method !== 'POST')   return jsonResponse({ error: 'Method not allowed' }, 405)
@@ -40,7 +45,6 @@ Deno.serve(async (req: Request) => {
 
   const text = note.mini_notes ? `${note.content}\n\n${note.mini_notes}` : note.content
 
-  const session = new Supabase.ai.Session(EMBED_MODEL)
   let embedding: number[]
   try {
     embedding = await session.run(text, { mean_pool: true, normalize: true }) as number[]

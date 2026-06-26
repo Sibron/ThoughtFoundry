@@ -9,19 +9,25 @@ import { getUserClient, requireUserId } from '../_shared/supabase.ts'
 // deno-lint-ignore no-explicit-any
 declare const Supabase: any
 
-interface BatchRequest {
-  batchSize?: number
-}
-
 const EMBED_MODEL = 'gte-small' // 384-dim, runs in-runtime
+
+// Create the model session ONCE at module scope: the model loads on worker boot
+// and is reused across invocations. Creating it per-request reloads the model
+// into the request's resource budget and trips the CPU/memory limit (HTTP 546).
+const session = new Supabase.ai.Session(EMBED_MODEL)
+
+// gte-small inference is CPU-heavy. Keep each invocation tiny so we stay well
+// under the edge-function CPU/wall-clock limit (especially on the free plan).
+// The client loops until `done`, so total throughput is unaffected.
+const MAX_PER_CALL = 5
 
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
   if (req.method !== 'POST')   return jsonResponse({ error: 'Method not allowed' }, 405)
 
-  let body: BatchRequest
+  let body: { batchSize?: number }
   try { body = await req.json() } catch { body = {} }
-  const batchSize = Math.min(Math.max(body.batchSize ?? 50, 1), 100)
+  const batchSize = Math.min(Math.max(body.batchSize ?? MAX_PER_CALL, 1), MAX_PER_CALL)
 
   const supabase = getUserClient(req)
 
@@ -29,7 +35,7 @@ Deno.serve(async (req: Request) => {
   try { userId = await requireUserId(supabase) }
   catch { return jsonResponse({ error: 'Unauthorized' }, 401) }
 
-  // Pull the next batch of notes needing (re)embedding (RLS-scoped).
+  // Pull the next small batch of notes needing (re)embedding (RLS-scoped).
   const { data: rows, error: rpcErr } = await supabase
     .rpc('notes_needing_embedding', { batch_size: batchSize })
   if (rpcErr) return jsonResponse({ error: rpcErr.message }, 500)
@@ -38,8 +44,6 @@ Deno.serve(async (req: Request) => {
   if (notes.length === 0) {
     return jsonResponse({ done: true, embedded: 0, remaining: 0, costUsd: 0 })
   }
-
-  const session = new Supabase.ai.Session(EMBED_MODEL)
 
   let embedded = 0
   for (const n of notes) {
