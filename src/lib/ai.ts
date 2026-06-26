@@ -2,7 +2,7 @@ import { supabase } from './supabase'
 import { getPersona } from './persona'
 import { updateNote, fetchNoteById } from './notes'
 import { addThemesForNote } from './themes'
-import { createLink } from './links'
+import { createLink, type LinkType } from './links'
 
 export interface NoteSuggestion {
   title: string
@@ -51,6 +51,17 @@ export async function embedNote(noteId: string): Promise<{ ok: true; dimensions:
 }
 
 /**
+ * Embed the next batch of notes that still need a Voyage embedding. Drives the
+ * resumable backfill loop in Settings — each call re-queries the cursor, so the
+ * run resumes after a refresh. Returns `done` when nothing is left.
+ */
+export async function embedNotesBatch(
+  batchSize = 50
+): Promise<{ done: boolean; embedded: number; remaining: number; costUsd: number }> {
+  return invoke('embed-notes-batch', { batchSize })
+}
+
+/**
  * Re-run one note through the real process-note AI and apply the result in place
  * (auto-accept), so notes that were bulk-imported with a heuristic title/summary
  * become genuinely AI-processed — equivalent to a natively processed note.
@@ -91,7 +102,31 @@ export async function reprocessNote(noteId: string): Promise<AIUsage> {
     }
   }
 
+  // Keep the semantic substrate current: embed the freshly processed note so it
+  // becomes findable by note_neighbors / semantic_bridges. Best-effort — a Voyage
+  // failure (e.g. no key) must never break reprocessing.
+  void embedNote(noteId).catch(() => {})
+
   return usage
+}
+
+export interface EnrichedLink {
+  a_id: string
+  b_id: string
+  keep: boolean
+  type: LinkType
+  reason: string
+}
+
+/**
+ * Type + justify a batch of pre-filtered candidate pairs in ONE Haiku call.
+ * The model only sees the handful of pairs you pass (never the whole corpus),
+ * so this stays cheap. Nothing is persisted — the caller reviews and links.
+ */
+export async function enrichLinks(
+  pairs: { aId: string; bId: string }[]
+): Promise<{ links: EnrichedLink[]; usage: AIUsage }> {
+  return invoke('enrich-links', { pairs })
 }
 
 export async function generateChapter(input: {
