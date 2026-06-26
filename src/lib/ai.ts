@@ -1,5 +1,8 @@
 import { supabase } from './supabase'
 import { getPersona } from './persona'
+import { updateNote, fetchNoteById } from './notes'
+import { addThemesForNote } from './themes'
+import { createLink } from './links'
 
 export interface NoteSuggestion {
   title: string
@@ -45,6 +48,50 @@ export async function processNote(
 
 export async function embedNote(noteId: string): Promise<{ ok: true; dimensions: number; costUsd: number }> {
   return invoke('embed-note', { noteId })
+}
+
+/**
+ * Re-run one note through the real process-note AI and apply the result in place
+ * (auto-accept), so notes that were bulk-imported with a heuristic title/summary
+ * become genuinely AI-processed — equivalent to a natively processed note.
+ *
+ * Non-destructive by design: overwrites only the AI-derived text fields
+ * (title/summary/section) and stamps processed_at; merges tags with the existing
+ * ones; adds AI-matched themes and related-note links additively (never removes
+ * curated import links); and leaves content / note_type / core_idea / use_for /
+ * source_* untouched. New theme suggestions are intentionally skipped in batch.
+ */
+export async function reprocessNote(noteId: string): Promise<AIUsage> {
+  const [{ suggestion, usage }, current] = await Promise.all([
+    processNote(noteId, 'claude-haiku-4-5'),
+    fetchNoteById(noteId),
+  ])
+
+  const mergedTags = [...new Set([...(current?.tags ?? []), ...(suggestion.tags ?? [])])].slice(0, 5)
+
+  await updateNote(noteId, {
+    ai_title: suggestion.title || null,
+    ai_summary: suggestion.summary || null,
+    section: suggestion.section || null,
+    tags: mergedTags,
+    processed_at: new Date().toISOString(),
+  })
+
+  // matched_theme_ids are already validated against the user's existing themes
+  // by the edge function — add them on top of the curated links.
+  if (suggestion.matched_theme_ids?.length) {
+    await addThemesForNote(noteId, suggestion.matched_theme_ids)
+  }
+
+  for (const targetId of suggestion.related_note_ids ?? []) {
+    try {
+      await createLink({ sourceId: noteId, targetId, type: 'related', reason: 'AI-herverwerking' })
+    } catch {
+      // self-link guard or duplicate — safe to ignore
+    }
+  }
+
+  return usage
 }
 
 export async function generateChapter(input: {
