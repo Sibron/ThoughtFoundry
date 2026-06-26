@@ -1,22 +1,24 @@
-// Phase 2 (optional): generate a vector embedding for a note via Voyage AI.
-// Only active when VOYAGE_API_KEY is set and pgvector is installed.
+// Generate a vector embedding for a single note using the Supabase Edge Runtime
+// built-in model (gte-small, 384-dim). No external provider, no API key, no cost.
+// Called fire-and-forget after a note is processed/accepted so it becomes
+// findable by note_neighbors / semantic_bridges.
 
 import { corsHeaders, jsonResponse } from '../_shared/cors.ts'
 import { getUserClient, requireUserId } from '../_shared/supabase.ts'
+
+// Supabase.ai is provided by the edge runtime and isn't part of Deno's types.
+// deno-lint-ignore no-explicit-any
+declare const Supabase: any
 
 interface EmbedRequest {
   noteId: string
 }
 
-const VOYAGE_MODEL = 'voyage-3-large' // 1024-dim
-const VOYAGE_INPUT_PRICE_PER_M = 0.18 // USD per million tokens (approx)
+const EMBED_MODEL = 'gte-small' // 384-dim, runs in-runtime
 
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
   if (req.method !== 'POST')   return jsonResponse({ error: 'Method not allowed' }, 405)
-
-  const voyageKey = Deno.env.get('VOYAGE_API_KEY')
-  if (!voyageKey) return jsonResponse({ error: 'VOYAGE_API_KEY not configured' }, 501)
 
   let body: EmbedRequest
   try { body = await req.json() } catch { return jsonResponse({ error: 'Invalid JSON' }, 400) }
@@ -38,27 +40,18 @@ Deno.serve(async (req: Request) => {
 
   const text = note.mini_notes ? `${note.content}\n\n${note.mini_notes}` : note.content
 
-  const voyageRes = await fetch('https://api.voyageai.com/v1/embeddings', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${voyageKey}`,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({ input: [text], model: VOYAGE_MODEL, input_type: 'document' })
-  })
-
-  if (!voyageRes.ok) {
-    return jsonResponse({ error: `Voyage ${voyageRes.status}: ${await voyageRes.text()}` }, 502)
+  const session = new Supabase.ai.Session(EMBED_MODEL)
+  let embedding: number[]
+  try {
+    embedding = await session.run(text, { mean_pool: true, normalize: true }) as number[]
+  } catch (err) {
+    return jsonResponse({ error: `Embedding failed: ${err instanceof Error ? err.message : String(err)}` }, 502)
+  }
+  if (!Array.isArray(embedding) || embedding.length === 0) {
+    return jsonResponse({ error: 'No embedding produced' }, 502)
   }
 
-  const voyageData = await voyageRes.json()
-  const embedding: number[] = voyageData.data?.[0]?.embedding
-  if (!embedding) return jsonResponse({ error: 'Voyage returned no embedding' }, 502)
-
-  const tokens: number = voyageData.usage?.total_tokens ?? 0
-  const costUsd = (tokens * VOYAGE_INPUT_PRICE_PER_M) / 1_000_000
-
-  // Persist embedding (RLS guarantees ownership)
+  // Persist embedding (RLS guarantees ownership; trigger stamps embedded_at).
   const { error: updateErr } = await supabase
     .from('notes')
     .update({ embedding: embedding as unknown as string })
@@ -68,12 +61,12 @@ Deno.serve(async (req: Request) => {
 
   await supabase.from('ai_usage').insert({
     user_id: userId,
-    model: VOYAGE_MODEL,
+    model: EMBED_MODEL,
     operation: 'embed-note',
-    input_tokens: tokens,
+    input_tokens: 0,
     output_tokens: 0,
-    cost_usd: costUsd
+    cost_usd: 0
   })
 
-  return jsonResponse({ ok: true, dimensions: embedding.length, costUsd })
+  return jsonResponse({ ok: true, dimensions: embedding.length, costUsd: 0 })
 })
