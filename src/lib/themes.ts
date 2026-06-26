@@ -98,3 +98,21 @@ export async function setThemesForNote(noteId: string, themeIds: string[]): Prom
   const { error: insErr } = await supabase.from('note_themes').insert(rows)
   if (insErr) throw insErr
 }
+
+/**
+ * Additive counterpart to `setThemesForNote`: adds links without removing any
+ * existing ones. Used by batch re-processing so AI-matched themes are added on
+ * top of the curated import links instead of replacing them.
+ */
+export async function addThemesForNote(noteId: string, themeIds: string[]): Promise<void> {
+  if (themeIds.length === 0) return
+  const { data: userData } = await supabase.auth.getUser()
+  const userId = userData.user?.id
+  if (!userId) throw new Error('Niet aangemeld')
+
+  const rows = themeIds.map(theme_id => ({ note_id: noteId, theme_id, user_id: userId }))
+  const { error } = await supabase
+    .from('note_themes')
+    .upsert(rows, { onConflict: 'note_id,theme_id', ignoreDuplicates: true })
+  if (error) throw error
+}

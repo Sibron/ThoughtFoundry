@@ -6,7 +6,8 @@ import { getMonthlyCap, setMonthlyCap, getCostStatus, formatUsd } from '../lib/c
 import { fetchRecentUsage, summarize, type UsageRow } from '../lib/usage'
 import { buildExport, downloadJson, importFromJson, type ExportPayload } from '../lib/exporter'
 import { getInstallPrompt, clearInstallPrompt } from '../lib/pwa'
-import { countByStatus } from '../lib/notes'
+import { countByStatus, fetchNoteIdsNeedingReprocess } from '../lib/notes'
+import { reprocessNote } from '../lib/ai'
 import { getPersona, setPersona, getDefaultPersona } from '../lib/persona'
 import { fetchThemes, updateTheme, type Theme } from '../lib/themes'
 import { getDensity, setDensity, getMotion, setMotion, getTheme, setTheme, getFocusMode, setFocusMode, type Theme as DisplayTheme } from '../lib/display'
@@ -129,6 +130,18 @@ export async function renderSettings(app: HTMLElement): Promise<void> {
         <button class="btn btn-ghost" id="persona-reset">Herstel standaard</button>
       </div>
     </section>
+
+    ${isAiEnabled() ? `
+    <section class="settings-section">
+      <h2>Oude notities AI-verwerken</h2>
+      <p class="muted">Uit Notion geïmporteerde notities kregen destijds een eenvoudige titel en samenvatting. Laat de AI ze opnieuw verwerken zodat ze gelijkwaardig zijn aan native verwerkte notities. Bestaande thema-koppelingen blijven behouden; titel, samenvatting en sectie worden overschreven.</p>
+      <p id="reprocess-status" class="muted"></p>
+      <div style="display:flex;gap:var(--s-2);flex-wrap:wrap">
+        <button class="btn btn-primary" id="reprocess-start">Start AI-herverwerking</button>
+        <button class="btn btn-ghost" id="reprocess-stop" hidden>Stop</button>
+      </div>
+    </section>
+    ` : ''}
 
     <section class="settings-section">
       <h2>Nota-overzicht</h2>
@@ -273,6 +286,61 @@ export async function renderSettings(app: HTMLElement): Promise<void> {
     ta.value = getDefaultPersona()
     setPersona(getDefaultPersona())
     showToast('Standaard hersteld')
+  })
+
+  let reprocessStop = false
+  document.getElementById('reprocess-start')?.addEventListener('click', async () => {
+    const startBtn = document.getElementById('reprocess-start') as HTMLButtonElement | null
+    const stopBtn = document.getElementById('reprocess-stop') as HTMLButtonElement | null
+    const statusEl = document.getElementById('reprocess-status')
+    if (!startBtn || !statusEl) return
+
+    let ids: string[]
+    try {
+      ids = await fetchNoteIdsNeedingReprocess()
+    } catch (err) {
+      showToast(`Laden mislukt: ${errMsg(err)}`)
+      return
+    }
+    if (ids.length === 0) {
+      statusEl.textContent = 'Alle notities zijn al door de AI verwerkt — niets te doen.'
+      return
+    }
+    if (!confirm(`${ids.length} oude notitie${ids.length === 1 ? '' : 's'} worden opnieuw door de AI verwerkt. Titels en samenvattingen worden overschreven. Doorgaan?`)) return
+
+    reprocessStop = false
+    startBtn.disabled = true
+    startBtn.textContent = 'Bezig…'
+    stopBtn?.removeAttribute('hidden')
+
+    let done = 0
+    let failed = 0
+    let spent = 0
+    let note = ''
+    for (const id of ids) {
+      if (reprocessStop) { note = 'gestopt'; break }
+      const cost = await getCostStatus().catch(() => null)
+      if (cost?.block) { note = 'maandbudget bereikt — verhoog de cap om door te gaan'; break }
+      try {
+        const usage = await reprocessNote(id)
+        spent += usage.costUsd
+        done++
+      } catch (err) {
+        failed++
+        console.warn('AI-herverwerking mislukt voor', id, err)
+      }
+      statusEl.textContent = `Verwerkt: ${done}/${ids.length}${failed ? ` (${failed} mislukt)` : ''} — ${formatUsd(spent)}`
+    }
+
+    statusEl.textContent =
+      `Klaar: ${done}/${ids.length} verwerkt${failed ? `, ${failed} mislukt (volgende run pakt ze opnieuw op)` : ''} — ${formatUsd(spent)}${note ? ` — ${note}` : ''}`
+    startBtn.disabled = false
+    startBtn.textContent = 'Start AI-herverwerking'
+    stopBtn?.setAttribute('hidden', '')
+  })
+
+  document.getElementById('reprocess-stop')?.addEventListener('click', () => {
+    reprocessStop = true
   })
 
   document.getElementById('cap-save')?.addEventListener('click', () => {
