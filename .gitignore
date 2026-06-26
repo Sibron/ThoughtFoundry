@@ -3,3 +3,6 @@ dist
 .env
 .env.local
 .env.*.local
+
+# Generated Readwise import (personal highlights) — regenerate with scripts/migrate-readwise.ts
+scripts/readwise-export.json
