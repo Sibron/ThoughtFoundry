@@ -155,6 +155,25 @@ export async function fetchConnectedNoteIds(): Promise<Set<string>> {
   return set
 }
 
+/**
+ * IDs of processed notes that were never run through the real AI pipeline —
+ * the Notion import set `processed_at = created_at` (and a heuristic title/
+ * summary), whereas native processing stamps `processed_at` at the moment of
+ * processing. Re-processing a note updates `processed_at`, so this set shrinks
+ * as the batch progresses and the run is naturally resumable.
+ */
+export async function fetchNoteIdsNeedingReprocess(): Promise<string[]> {
+  const { data, error } = await supabase
+    .from('notes')
+    .select('id, processed_at, created_at')
+    .eq('status', 'verwerkt')
+    .order('created_at', { ascending: true })
+  if (error) throw error
+  return (data ?? [])
+    .filter((n: { processed_at: string | null; created_at: string }) => n.processed_at === n.created_at)
+    .map((n: { id: string }) => n.id)
+}
+
 export async function fetchNotesByIds(ids: string[]): Promise<Note[]> {
   if (ids.length === 0) return []
   const { data, error } = await supabase.from('notes').select('*').in('id', ids)
