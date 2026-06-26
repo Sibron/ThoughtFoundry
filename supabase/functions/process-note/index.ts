@@ -90,20 +90,31 @@ Deno.serve(async (req: Request) => {
   try { userId = await requireUserId(supabase) }
   catch { return jsonResponse({ error: 'Unauthorized' }, 401) }
 
-  // Load the note + the user's themes + recent context notes (for similarity).
-  const [{ data: noteData, error: noteErr }, { data: themesData }, { data: contextData }] = await Promise.all([
+  // Load the note + the user's themes.
+  const [{ data: noteData, error: noteErr }, { data: themesData }] = await Promise.all([
     supabase.from('notes').select('id, content, mini_notes').eq('id', body.noteId).single(),
-    supabase.from('themes').select('id, name, description, is_sensitive'),
-    supabase.from('notes').select('id, content, ai_title')
-      .neq('id', body.noteId)
-      .order('created_at', { ascending: false })
-      .limit(80)
+    supabase.from('themes').select('id, name, description, is_sensitive')
   ])
 
   if (noteErr || !noteData) return jsonResponse({ error: 'Note not found' }, 404)
   const note = noteData as NoteRow
   const themes = (themesData ?? []) as ThemeRow[]
-  const contextNotes = (contextData ?? []) as { id: string; content: string; ai_title: string | null }[]
+
+  // Context for related_note_ids: prefer SEMANTIC neighbours (embeddings) — both
+  // cheaper (≈12 snippets vs 80) and more relevant than recency. Falls back to
+  // recent notes when this note isn't embedded yet (e.g. a fresh inbox capture).
+  let contextNotes: { id: string; content: string; ai_title: string | null }[] = []
+  const { data: neighborData } = await supabase.rpc('note_neighbors', { source: body.noteId, match_count: 12 })
+  if (neighborData && (neighborData as unknown[]).length > 0) {
+    contextNotes = (neighborData as { id: string; ai_title: string | null; content: string }[])
+      .map(n => ({ id: n.id, content: n.content, ai_title: n.ai_title }))
+  } else {
+    const { data: recentData } = await supabase.from('notes').select('id, content, ai_title')
+      .neq('id', body.noteId)
+      .order('created_at', { ascending: false })
+      .limit(80)
+    contextNotes = (recentData ?? []) as { id: string; content: string; ai_title: string | null }[]
+  }
 
   const userPrompt = buildUserPrompt(note, themes, contextNotes)
 

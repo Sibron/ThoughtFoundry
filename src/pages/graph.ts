@@ -1,7 +1,12 @@
 import { fetchNotes, type Note } from '../lib/notes'
 import { fetchThemes, fetchAllNoteThemes, type Theme } from '../lib/themes'
-import { fetchLinks, createLink, deleteLink, LINK_TYPE_LABELS, type NoteLink } from '../lib/links'
-import { renderTopbar, attachTopbar } from '../lib/nav'
+import { fetchLinks, createLink, deleteLink, LINK_TYPE_LABELS, type LinkType, type NoteLink } from '../lib/links'
+import { fetchSemanticBridges, type BridgePair } from '../lib/semantic'
+import { pairKey } from '../lib/similarity'
+import { enrichLinks } from '../lib/ai'
+import { getCostStatus } from '../lib/cost'
+import { startAiThinking, AI_PHASES } from '../lib/ai-thinking'
+import { renderTopbar, attachTopbar, isAiEnabled } from '../lib/nav'
 
 interface GraphNode {
   id: string
@@ -49,6 +54,7 @@ export async function mountGraph(root: HTMLElement): Promise<void> {
           <input type="checkbox" id="graph-theme-edges" />
           Toon thema-verbanden
         </label>
+        <button class="btn btn-ghost graph-suggest-btn" id="graph-suggest">Verbindingen voorstellen</button>
         <span class="graph-stats" id="graph-stats"></span>
       </header>
       <div class="graph-shell">
@@ -119,6 +125,10 @@ export async function mountGraph(root: HTMLElement): Promise<void> {
   let edges: GraphEdge[] = []
   let svg: SVGSVGElement | null = null
   let usingTemporalFallback = false
+  // Candidate (not-yet-created) links surfaced by semantic_bridges, drawn dashed.
+  let suggestedEdges: { a: string; b: string }[] = []
+
+  document.getElementById('graph-suggest')?.addEventListener('click', suggestBridges)
 
   rebuild()
 
@@ -243,6 +253,22 @@ export async function mountGraph(root: HTMLElement): Promise<void> {
           line.appendChild(title)
         }
       }
+      svg!.appendChild(line)
+    })
+
+    // Suggested (candidate) links — dashed, drawn under the nodes.
+    suggestedEdges.forEach(e => {
+      const a = nodes.find(n => n.id === e.a)
+      const b = nodes.find(n => n.id === e.b)
+      if (!a || !b) return
+      const line = document.createElementNS('http://www.w3.org/2000/svg', 'line')
+      line.setAttribute('x1', String(a.x))
+      line.setAttribute('y1', String(a.y))
+      line.setAttribute('x2', String(b.x))
+      line.setAttribute('y2', String(b.y))
+      line.setAttribute('class', 'graph-edge graph-edge-suggested')
+      line.dataset['src'] = e.a
+      line.dataset['tgt'] = e.b
       svg!.appendChild(line)
     })
 
@@ -388,6 +414,119 @@ export async function mountGraph(root: HTMLElement): Promise<void> {
         showToast(`Mislukt: ${errMsg(err)}`)
       }
     })
+  }
+
+  function noteLabel(noteId: string): string {
+    const n = notes.find(x => x.id === noteId)
+    return n ? (n.ai_title ?? n.content.slice(0, 50)) : noteId
+  }
+
+  // Surface semantically-related-but-unlinked pairs (no shared theme) as dashed
+  // candidate edges + a batch-accept panel. Zero AI tokens (pure pgvector).
+  async function suggestBridges(): Promise<void> {
+    const btn = document.getElementById('graph-suggest') as HTMLButtonElement | null
+    if (!btn) return
+    btn.disabled = true
+    btn.textContent = 'Zoeken…'
+    try {
+      const bridges = await fetchSemanticBridges({ max: 24 })
+      if (bridges.length === 0) {
+        showToast("Geen nieuwe verbanden gevonden (of nog geen embeddings — zie Instellingen).")
+        return
+      }
+      suggestedEdges = bridges.map(b => ({ a: b.a_id, b: b.b_id }))
+      renderSvg()
+      renderSuggestionsPanel(bridges)
+    } catch (err) {
+      showToast(`Mislukt: ${errMsg(err)}`)
+    } finally {
+      btn.disabled = false
+      btn.textContent = 'Verbindingen voorstellen'
+    }
+  }
+
+  function typeOptsFor(selected: string): string {
+    return Object.entries(LINK_TYPE_LABELS)
+      .map(([k, v]) => `<option value="${k}"${k === selected ? ' selected' : ''}>${escHtml(v)}</option>`)
+      .join('')
+  }
+
+  // Optional `enrichment`: AI-chosen type/reason/keep per pair (keyed by pairKey).
+  function renderSuggestionsPanel(
+    bridges: BridgePair[],
+    enrichment?: Map<string, { keep: boolean; type: LinkType; reason: string }>
+  ): void {
+    const aside = document.getElementById('graph-sidebar')!
+    aside.innerHTML = `
+      <h3 class="sidebar-title">Voorgestelde verbindingen (${bridges.length})</h3>
+      <p class="muted">Semantisch verwante nota's die nog niet gelinkt zijn en geen thema delen. Vink aan wat klopt en koppel in één keer.</p>
+      <ul class="sugg-bridge-list">
+        ${bridges.map((b, i) => {
+          const enr = enrichment?.get(pairKey(b.a_id, b.b_id))
+          const checked = enr ? (enr.keep ? 'checked' : '') : 'checked'
+          return `
+          <li class="sugg-bridge-row">
+            <label class="sugg-bridge-check">
+              <input type="checkbox" class="bridge-check" data-idx="${i}" ${checked} />
+              <span>${escHtml(noteLabel(b.a_id))} <span class="muted">↔</span> ${escHtml(noteLabel(b.b_id))} <span class="muted">(${(b.similarity * 100).toFixed(0)}%)</span></span>
+            </label>
+            <select class="bridge-type" data-idx="${i}">${typeOptsFor(enr?.type ?? 'related')}</select>
+            ${enr?.reason ? `<span class="sugg-bridge-reason">${escHtml(enr.reason)}</span>` : ''}
+          </li>`
+        }).join('')}
+      </ul>
+      <div class="sugg-bridge-actions">
+        <button class="btn btn-primary" id="bridge-accept">Koppel geselecteerde</button>
+        ${isAiEnabled() && !enrichment ? '<button class="btn btn-ghost" id="bridge-enrich">AI verfijnt type &amp; reden</button>' : ''}
+      </div>
+    `
+    document.getElementById('bridge-accept')?.addEventListener('click', () => acceptBridges(bridges))
+    document.getElementById('bridge-enrich')?.addEventListener('click', () => enrichSuggestions(bridges))
+  }
+
+  // One batched Haiku call types + justifies the surfaced pairs; the result is
+  // pre-filled into the panel and STILL human-approved before any link is made.
+  async function enrichSuggestions(bridges: BridgePair[]): Promise<void> {
+    const btn = document.getElementById('bridge-enrich') as HTMLButtonElement | null
+    if (!btn) return
+    const cost = await getCostStatus().catch(() => null)
+    if (cost?.block) { showToast('Maandbudget bereikt — verhoog de cap in Instellingen.'); return }
+    btn.disabled = true
+    const stop = startAiThinking(btn, AI_PHASES.clusters)
+    try {
+      const { links: enriched } = await enrichLinks(bridges.map(b => ({ aId: b.a_id, bId: b.b_id })))
+      const map = new Map<string, { keep: boolean; type: LinkType; reason: string }>()
+      for (const e of enriched) map.set(pairKey(e.a_id, e.b_id), { keep: e.keep, type: e.type, reason: e.reason })
+      stop()
+      renderSuggestionsPanel(bridges, map)
+    } catch (err) {
+      stop()
+      showToast(`AI mislukt: ${errMsg(err)}`)
+      const again = document.getElementById('bridge-enrich') as HTMLButtonElement | null
+      if (again) again.disabled = false
+    }
+  }
+
+  async function acceptBridges(bridges: BridgePair[]): Promise<void> {
+    const checks = Array.from(document.querySelectorAll<HTMLInputElement>('.bridge-check:checked'))
+    if (checks.length === 0) { showToast('Niets geselecteerd'); return }
+    const btn = document.getElementById('bridge-accept') as HTMLButtonElement | null
+    if (btn) { btn.disabled = true; btn.textContent = 'Koppelen…' }
+    let created = 0
+    for (const c of checks) {
+      const idx = Number(c.dataset['idx'])
+      const b = bridges[idx]
+      if (!b) continue
+      const type = (document.querySelector<HTMLSelectElement>(`.bridge-type[data-idx="${idx}"]`)?.value ?? 'related') as LinkType
+      try {
+        const link = await createLink({ sourceId: b.a_id, targetId: b.b_id, type, reason: 'Semantische brug' })
+        if (!links.some(l => l.id === link.id)) links.push(link)
+        created++
+      } catch { /* duplicate / self-link — ignore */ }
+    }
+    suggestedEdges = []
+    rebuild()
+    showToast(`${created} verbinding${created === 1 ? '' : 'en'} gelegd`)
   }
 }
 
@@ -549,6 +688,48 @@ function injectGraphStyles(): void {
       stroke: var(--accent);
       stroke-width: 1.5;
     }
+    .graph-edge-suggested {
+      stroke: var(--accent);
+      stroke-width: 1.5;
+      stroke-dasharray: 4 3;
+      stroke-opacity: 0.75;
+    }
+    .graph-suggest-btn { width: auto; }
+    .sugg-bridge-list {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: var(--s-2);
+      margin: var(--s-2) 0;
+    }
+    .sugg-bridge-row {
+      display: flex;
+      flex-direction: column;
+      gap: var(--s-1);
+      padding: var(--s-2);
+      background: var(--bg);
+      border-radius: var(--r-sm);
+      font-size: var(--fs-sm);
+    }
+    .sugg-bridge-check {
+      display: flex;
+      gap: var(--s-2);
+      align-items: flex-start;
+      cursor: pointer;
+    }
+    .sugg-bridge-check input { margin-top: 3px; flex-shrink: 0; }
+    .sugg-bridge-row .bridge-type { width: 100%; }
+    .sugg-bridge-reason {
+      font-size: var(--fs-sm);
+      color: var(--text-muted);
+      font-style: italic;
+    }
+    .sugg-bridge-actions {
+      display: flex;
+      gap: var(--s-2);
+      flex-wrap: wrap;
+    }
+    .sugg-bridge-actions .btn { width: auto; }
     .graph-node {
       cursor: pointer;
     }

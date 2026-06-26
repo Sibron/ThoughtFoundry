@@ -30,6 +30,7 @@ import {
 import { fetchSources, type Source } from '../lib/sources'
 import { SECTIONS } from '../lib/sections'
 import { rankBySimilarity } from '../lib/similarity'
+import { fetchNeighbors } from '../lib/semantic'
 import { processNote } from '../lib/ai'
 import { renderTopbar, attachTopbar, isAiEnabled } from '../lib/nav'
 import { navigateTo } from '../router'
@@ -241,30 +242,49 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
     void loadSuggestedLinks()
   }
 
-  // ── Suggested links (lexical, no AI) ──────────────────────────────────────--
-  // Always-on counterpart to the AI suggestions: surfaces notes that share
-  // words/tags with this one so you can connect them in one tap.
+  // ── Suggested links ───────────────────────────────────────────────────────--
+  // Always-on counterpart to the AI suggestions. Prefers SEMANTIC neighbours
+  // (embeddings) — these catch conceptually related notes that share no words —
+  // and falls back to lexical word/tag overlap when there are no embeddings yet.
   async function loadSuggestedLinks(): Promise<void> {
     const box = document.getElementById('suggested-links')
     if (!box) return
-    let pool: Note[] = []
-    try { pool = await fetchNotes(0, 300) } catch { return }
     const linkedSet = new Set(links.flatMap(l => [l.source_id, l.target_id]))
-    const candidates = pool.filter(n => n.id !== id && !linkedSet.has(n.id))
-    const ranked = rankBySimilarity(current, candidates, 5)
+
+    let ranked: { id: string; label: string }[] = []
+    let semantic = false
+    try {
+      const neighbors = await fetchNeighbors(id, 8)
+      const filtered = neighbors.filter(n => n.id !== id && !linkedSet.has(n.id)).slice(0, 5)
+      if (filtered.length > 0) {
+        semantic = true
+        ranked = filtered.map(n => ({ id: n.id, label: n.ai_title ?? n.content.slice(0, 60) }))
+      }
+    } catch { /* no embeddings / RPC error — fall back to lexical */ }
+
+    if (ranked.length === 0) {
+      let pool: Note[] = []
+      try { pool = await fetchNotes(0, 300) } catch { return }
+      const candidates = pool.filter(n => n.id !== id && !linkedSet.has(n.id))
+      ranked = rankBySimilarity(current, candidates, 5)
+        .map(({ note }) => ({ id: note.id, label: note.ai_title ?? note.content.slice(0, 60) }))
+    }
     if (ranked.length === 0) { box.innerHTML = ''; return }
 
-    ranked.forEach(({ note }) => labelMap.set(note.id, note.ai_title ?? note.content.slice(0, 60)))
+    ranked.forEach(r => labelMap.set(r.id, r.label))
     const typeOpts = Object.entries(LINK_TYPE_LABELS)
       .map(([k, v]) => `<option value="${k}"${k === 'related' ? ' selected' : ''}>${escHtml(v)}</option>`)
       .join('')
+    const heading = semantic
+      ? 'Misschien verwant (semantisch):'
+      : 'Misschien verwant (op basis van woorden &amp; tags):'
     box.innerHTML = `
-      <div class="ai-sugg-label">Misschien verwant (op basis van woorden &amp; tags):</div>
-      ${ranked.map(({ note }) => `
-        <div class="ai-sugg-row" data-rid="${note.id}">
-          <span class="sugg-link-label">${escHtml(labelMap.get(note.id) ?? note.id)}</span>
-          <select class="sugg-link-type" data-for="${note.id}">${typeOpts}</select>
-          <button class="btn btn-ghost btn-sm sugg-link-add" data-for="${note.id}">Koppel</button>
+      <div class="ai-sugg-label">${heading}</div>
+      ${ranked.map(r => `
+        <div class="ai-sugg-row" data-rid="${r.id}">
+          <span class="sugg-link-label">${escHtml(r.label)}</span>
+          <select class="sugg-link-type" data-for="${r.id}">${typeOpts}</select>
+          <button class="btn btn-ghost btn-sm sugg-link-add" data-for="${r.id}">Koppel</button>
         </div>`).join('')}
     `
     box.querySelectorAll<HTMLButtonElement>('.sugg-link-add').forEach(btn => {
