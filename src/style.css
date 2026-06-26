@@ -710,3 +710,56 @@ textarea:focus {
   font-size: var(--fs-sm);
   margin-top: var(--s-2);
 }
+
+/* ── AI Thinking indicator ── */
+.ai-thinking {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin-top: var(--s-2);
+  padding: var(--s-2) var(--s-3);
+  background: var(--color-accent-soft);
+  border: 1px solid var(--color-border);
+  border-radius: var(--r-md);
+  font-size: var(--fs-sm);
+  color: var(--color-accent-onsoft);
+  flex-wrap: wrap;
+}
+
+.ai-thinking-dots {
+  display: inline-flex;
+  gap: 3px;
+  align-items: center;
+}
+
+.ai-thinking-dots span {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  animation: ai-dot-pulse 1.4s ease-in-out infinite;
+}
+
+.ai-thinking-dots span:nth-child(2) { animation-delay: 0.2s; }
+.ai-thinking-dots span:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes ai-dot-pulse {
+  0%, 80%, 100% { opacity: 0.25; transform: scale(0.8); }
+  40%            { opacity: 1;    transform: scale(1);   }
+}
+
+.ai-thinking-phase {
+  flex: 1;
+  min-width: 0;
+}
+
+.ai-thinking-nudge {
+  width: 100%;
+  font-size: var(--fs-xs);
+  color: var(--color-text-muted);
+  margin-top: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ai-thinking-dots span { animation: none; opacity: 0.6; }
+}
