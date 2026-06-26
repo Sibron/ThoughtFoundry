@@ -9,6 +9,7 @@ import { createLink, LINK_TYPE_LABELS, type LinkType } from '../lib/links'
 import { SECTIONS } from '../lib/sections'
 import { processNote, type NoteSuggestion } from '../lib/ai'
 import { getCostStatus, getMonthlyCap, setMonthlyCap, formatUsd, type CostStatus } from '../lib/cost'
+import { startAiThinking, AI_PHASES } from '../lib/ai-thinking'
 import { renderTopbar, attachTopbar } from '../lib/nav'
 import { navigateTo } from '../router'
 
@@ -171,7 +172,8 @@ export async function renderProcess(app: HTMLElement): Promise<void> {
 
     const btn = document.getElementById('run-ai') as HTMLButtonElement
     btn.disabled = true
-    btn.textContent = 'Bezig…'
+    btn.textContent = 'AI denkt na…'
+    const stopThinking = startAiThinking(btn, AI_PHASES.process)
     try {
       const { suggestion, usage } = await processNote(note.id, 'claude-haiku-4-5')
       currentSuggestion = suggestion
@@ -184,6 +186,8 @@ export async function renderProcess(app: HTMLElement): Promise<void> {
       showToast(`AI mislukt: ${errMsg(err)}`)
       btn.disabled = false
       btn.textContent = 'Opnieuw proberen'
+    } finally {
+      stopThinking()
     }
   }
 

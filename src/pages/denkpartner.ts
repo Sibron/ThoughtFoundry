@@ -2,6 +2,7 @@ import { runDenkpartner, type DenkpartnerQuestion } from '../lib/ai'
 import { fetchThemes, type Theme } from '../lib/themes'
 import { getCostStatus, formatUsd, type CostStatus } from '../lib/cost'
 import { insertNote } from '../lib/notes'
+import { startAiThinking, AI_PHASES } from '../lib/ai-thinking'
 import { renderTopbar, attachTopbar } from '../lib/nav'
 
 export async function renderDenkpartner(app: HTMLElement): Promise<void> {
@@ -91,7 +92,8 @@ export async function mountDenkpartner(root: HTMLElement): Promise<void> {
 
     const btn = document.getElementById('dp-run') as HTMLButtonElement
     btn.disabled = true
-    btn.textContent = 'Bezig…'
+    btn.textContent = 'AI denkt na…'
+    const stopThinking = startAiThinking(btn, AI_PHASES.denkpartner)
 
     try {
       const result = await runDenkpartner({ scope, tag: scope === 'tag' ? tag : undefined, themeId: scope === 'theme' ? themeId : undefined })
@@ -109,6 +111,7 @@ export async function mountDenkpartner(root: HTMLElement): Promise<void> {
     } catch (err) {
       showToast(`Denkpartner mislukt: ${errMsg(err)}`)
     } finally {
+      stopThinking()
       btn.disabled = false
       btn.textContent = 'Vragen genereren'
     }

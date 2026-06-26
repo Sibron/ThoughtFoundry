@@ -1,5 +1,6 @@
 import { runSpark } from '../lib/ai'
 import { getCostStatus, formatUsd, type CostStatus } from '../lib/cost'
+import { startAiThinking, AI_PHASES } from '../lib/ai-thinking'
 import { renderTopbar, attachTopbar } from '../lib/nav'
 
 const OUTPUT_TYPES = [
@@ -95,7 +96,8 @@ export async function mountSpark(root: HTMLElement): Promise<void> {
 
     const btn = document.getElementById('spark-run') as HTMLButtonElement
     btn.disabled = true
-    btn.textContent = 'Bezig…'
+    btn.textContent = 'AI denkt na…'
+    const stopThinking = startAiThinking(btn, AI_PHASES.spark)
 
     try {
       const result = await runSpark({ query, outputType })
@@ -120,6 +122,7 @@ export async function mountSpark(root: HTMLElement): Promise<void> {
     } catch (err) {
       showToast(`Spark mislukt: ${errMsg(err)}`)
     } finally {
+      stopThinking()
       btn.disabled = false
       btn.textContent = 'Spark starten'
     }
