@@ -2,6 +2,7 @@ import { navigateTo } from '../router'
 import { signOut } from './auth'
 import { getTheme, setTheme, getFocusMode, setFocusMode, type Theme } from './display'
 import { saveUserSetting, resetSettingsCache } from './user-settings'
+import { clearCache } from './cache'
 
 // ── AI feature flag ───────────────────────────────────────────────────────
 // AI (process / graph / book generation) is OFF by default. The core
@@ -104,6 +105,7 @@ export function attachTopbar(): void {
 
       if (nav === 'logout') {
         resetSettingsCache()
+        await clearCache()
         await signOut()
         navigateTo('/login')
         return

@@ -1,5 +1,6 @@
 import { signOut } from '../lib/auth'
 import { supabase, clearSupabaseConfig } from '../lib/supabase'
+import { clearCache } from '../lib/cache'
 import { renderTopbar, attachTopbar, isAiEnabled, setAiEnabled } from '../lib/nav'
 import { navigateTo } from '../router'
 import { getMonthlyCap, setMonthlyCap, getCostStatus, formatUsd } from '../lib/cost'
@@ -244,12 +245,14 @@ export async function renderSettings(app: HTMLElement): Promise<void> {
   `
 
   document.getElementById('settings-logout')?.addEventListener('click', async () => {
+    await clearCache()
     await signOut()
     navigateTo('/login')
   })
 
-  document.getElementById('settings-reset-config')?.addEventListener('click', () => {
+  document.getElementById('settings-reset-config')?.addEventListener('click', async () => {
     if (!confirm('Hiermee verwijder je de opgeslagen Supabase-verbinding uit deze browser. Je wordt daarna naar het setup-scherm gestuurd. Doorgaan?')) return
+    await clearCache()
     clearSupabaseConfig()
     location.reload()
   })

@@ -1,6 +1,7 @@
-import { fetchNotes, getNoteTitle, type Note } from '../lib/notes'
-import { fetchThemes, fetchAllNoteThemes, type Theme } from '../lib/themes'
-import { fetchLinks, createLink, deleteLink, LINK_TYPE_LABELS, type LinkType, type NoteLink } from '../lib/links'
+import { getNoteTitle, type Note } from '../lib/notes'
+import { type Theme } from '../lib/themes'
+import { createLink, deleteLink, LINK_TYPE_LABELS, type LinkType, type NoteLink } from '../lib/links'
+import { loadGraphSnapshot, type GraphSnapshot } from '../lib/snapshots'
 import { fetchSemanticBridges, type BridgePair } from '../lib/semantic'
 import { pairKey } from '../lib/similarity'
 import { enrichLinks } from '../lib/ai'
@@ -86,14 +87,13 @@ export async function mountGraph(root: HTMLElement): Promise<void> {
   let themes: Theme[] = []
   let noteThemes: { note_id: string; theme_id: string }[] = []
   let links: NoteLink[] = []
+  // Set once the user starts working the view, so a background cache refresh
+  // updates the data silently instead of relaying-out the graph under them.
+  let interacted = false
 
   try {
-    [notes, themes, noteThemes, links] = await Promise.all([
-      fetchNotes(0, 500),
-      fetchThemes(),
-      fetchAllNoteThemes(),
-      fetchLinks()
-    ])
+    const snap = await loadGraphSnapshot(applyFreshSnapshot)
+    notes = snap.notes; themes = snap.themes; noteThemes = snap.noteThemes; links = snap.links
   } catch (err) {
     const wrap = document.getElementById('graph-canvas-wrap')!
     wrap.innerHTML = `
@@ -107,12 +107,31 @@ export async function mountGraph(root: HTMLElement): Promise<void> {
   }
 
   const themeSelect = document.getElementById('graph-theme-filter') as HTMLSelectElement
-  themes.forEach(t => {
-    const opt = document.createElement('option')
-    opt.value = t.id
-    opt.textContent = t.name
-    themeSelect.appendChild(opt)
-  })
+  populateThemeFilter()
+
+  // A background refresh returned data that differs from the snapshot we first
+  // rendered. Sync the dropdown always; rebuild the canvas only if the user
+  // hasn't started interacting (otherwise the cache is updated for next mount).
+  function applyFreshSnapshot(snap: GraphSnapshot): void {
+    // The refresh can land after the user has left the page — bail if the canvas
+    // is gone rather than rebuild into a detached DOM.
+    if (!document.getElementById('graph-canvas-wrap')) return
+    notes = snap.notes; themes = snap.themes; noteThemes = snap.noteThemes; links = snap.links
+    populateThemeFilter()
+    if (!interacted) rebuild()
+  }
+
+  function populateThemeFilter(): void {
+    const current = themeSelect.value
+    themeSelect.querySelectorAll('option[value]:not([value=""])').forEach(o => o.remove())
+    themes.forEach(t => {
+      const opt = document.createElement('option')
+      opt.value = t.id
+      opt.textContent = t.name
+      themeSelect.appendChild(opt)
+    })
+    if (current && themes.some(t => t.id === current)) themeSelect.value = current
+  }
 
   if (notes.length === 0) {
     document.getElementById('graph-canvas-wrap')!.innerHTML = `
@@ -128,6 +147,7 @@ export async function mountGraph(root: HTMLElement): Promise<void> {
 
   let selectedTheme = ''
   themeSelect.addEventListener('change', () => {
+    interacted = true
     selectedTheme = themeSelect.value
     rebuild()
   })
@@ -160,6 +180,7 @@ export async function mountGraph(root: HTMLElement): Promise<void> {
 
   const searchInput = document.getElementById('graph-search') as HTMLInputElement | null
   searchInput?.addEventListener('input', () => {
+    interacted = true
     searchQuery = searchInput.value.trim().toLowerCase()
     applyHighlights()
   })
@@ -269,12 +290,17 @@ export async function mountGraph(root: HTMLElement): Promise<void> {
       </marker>`
     svg.appendChild(defs)
 
+    // Index nodes/links by id so edge rendering stays O(edges) instead of
+    // O(edges · nodes) — the difference matters with the full note set loaded.
+    const nodeById = new Map(nodes.map(n => [n.id, n]))
+    const linkById = new Map(links.map(l => [l.id, l]))
+
     // Edges first (so nodes paint on top). Theme edges only when toggled on;
     // explicit links always, painted last via array order so they sit on top.
     edges.forEach(e => {
       if (e.kind === 'theme' && !showThemeEdges) return
-      const a = nodes.find(n => n.id === e.source)
-      const b = nodes.find(n => n.id === e.target)
+      const a = nodeById.get(e.source)
+      const b = nodeById.get(e.target)
       if (!a || !b) return
       const line = document.createElementNS('http://www.w3.org/2000/svg', 'line')
       line.setAttribute('x1', String(a.x))
@@ -288,7 +314,7 @@ export async function mountGraph(root: HTMLElement): Promise<void> {
       line.dataset['tgt'] = e.target
       if (e.kind === 'explicit') {
         line.setAttribute('marker-end', 'url(#arrow)')
-        const link = links.find(l => l.id === e.linkId)
+        const link = e.linkId ? linkById.get(e.linkId) : undefined
         if (link) {
           const title = document.createElementNS('http://www.w3.org/2000/svg', 'title')
           title.textContent = [LINK_TYPE_LABELS[link.type], link.reason].filter(Boolean).join(' · ')
@@ -300,8 +326,8 @@ export async function mountGraph(root: HTMLElement): Promise<void> {
 
     // Suggested (candidate) links — dashed, drawn under the nodes.
     suggestedEdges.forEach(e => {
-      const a = nodes.find(n => n.id === e.a)
-      const b = nodes.find(n => n.id === e.b)
+      const a = nodeById.get(e.a)
+      const b = nodeById.get(e.b)
       if (!a || !b) return
       const line = document.createElementNS('http://www.w3.org/2000/svg', 'line')
       line.setAttribute('x1', String(a.x))
@@ -353,6 +379,7 @@ export async function mountGraph(root: HTMLElement): Promise<void> {
 
   // Open the detail sidebar for a node and light up its ego network on canvas.
   function selectNode(n: GraphNode): void {
+    interacted = true
     focusedId = n.id
     applyHighlights()
     showSidebar(n)
@@ -368,6 +395,7 @@ export async function mountGraph(root: HTMLElement): Promise<void> {
     let lastX = 0, lastY = 0
 
     g.addEventListener('pointerdown', (e) => {
+      interacted = true
       dragging = true
       lastX = e.clientX
       lastY = e.clientY
@@ -444,6 +472,7 @@ export async function mountGraph(root: HTMLElement): Promise<void> {
   function attachViewControls(el: SVGSVGElement): void {
     el.addEventListener('wheel', (e) => {
       e.preventDefault()
+      interacted = true
       zoomAt(e.clientX, e.clientY, e.deltaY < 0 ? 1.12 : 1 / 1.12)
     }, { passive: false })
 
@@ -455,6 +484,7 @@ export async function mountGraph(root: HTMLElement): Promise<void> {
     el.addEventListener('pointerdown', (e) => {
       // Node drags stop propagation, so anything reaching here is a background gesture.
       if ((e.target as Element).closest('.graph-node')) return
+      interacted = true
       pts.set(e.pointerId, { x: e.clientX, y: e.clientY })
       panMoved = false
       if (pts.size === 2) pinchDist = pointerDistance(pts)
@@ -682,6 +712,7 @@ export async function mountGraph(root: HTMLElement): Promise<void> {
   async function suggestBridges(): Promise<void> {
     const btn = document.getElementById('graph-suggest') as HTMLButtonElement | null
     if (!btn) return
+    interacted = true
     btn.disabled = true
     btn.textContent = 'Zoeken…'
     try {
@@ -807,7 +838,23 @@ function runLayout(nodes: GraphNode[], edges: GraphEdge[], iterations: number): 
   const cx = WIDTH / 2
   const cy = HEIGHT / 2
 
-  for (let it = 0; it < iterations; it++) {
+  // Resolve edge endpoints once up front. Looking them up with `nodes.find`
+  // inside the iteration loop is O(edges · nodes · iterations) — fine for a few
+  // hundred nodes, but a multi-second freeze once the full note set (1000s of
+  // edges) loads. A Map makes the spring pass O(edges · iterations).
+  const byId = new Map(nodes.map(n => [n.id, n]))
+  const springs = edges
+    .map(e => ({ a: byId.get(e.source), b: byId.get(e.target), kind: e.kind }))
+    .filter((s): s is { a: GraphNode; b: GraphNode; kind: GraphEdge['kind'] } => !!s.a && !!s.b)
+
+  // Repulsion is O(n²) per pass, so for the full (unfiltered) graph of many
+  // hundreds of nodes, fewer passes keep the initial layout from blocking the
+  // main thread for seconds. Filtered, smaller views keep the full pass count.
+  const effectiveIterations = nodes.length <= 700
+    ? iterations
+    : Math.max(90, Math.round(iterations * 700 / nodes.length))
+
+  for (let it = 0; it < effectiveIterations; it++) {
     // Repulsion (all pairs)
     for (let i = 0; i < nodes.length; i++) {
       for (let j = i + 1; j < nodes.length; j++) {
@@ -824,14 +871,11 @@ function runLayout(nodes: GraphNode[], edges: GraphEdge[], iterations: number): 
     }
 
     // Spring attraction along edges
-    edges.forEach(e => {
-      const a = nodes.find(n => n.id === e.source)
-      const b = nodes.find(n => n.id === e.target)
-      if (!a || !b) return
+    springs.forEach(({ a, b, kind }) => {
       const dx = a.x - b.x
       const dy = a.y - b.y
       const dist = Math.sqrt(dx * dx + dy * dy) + 0.01
-      const strength = e.kind === 'explicit' ? 1.0 : 0.3
+      const strength = kind === 'explicit' ? 1.0 : 0.3
       const force = ((dist * dist) / k) * strength
       const fx = (dx / dist) * force
       const fy = (dy / dist) * force
