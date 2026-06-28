@@ -11,8 +11,8 @@ import { renderTopbar, attachTopbar, renderGuidanceBanner } from '../lib/nav'
 import { navigateTo } from '../router'
 
 const COLOR_PALETTE = [
-  '#5A8E6A', '#5B7B98', '#967165', '#896789',
-  '#A8874F', '#4D8E8A', '#A16074', '#7E766A'
+  '#4E8A5E', '#4E6E9A', '#C94A24', '#7E5E9E',
+  '#A87E3A', '#3E7E7A', '#9E4E68', '#6E6862'
 ]
 
 const SECTION_SLUGS = [
