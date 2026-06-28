@@ -1,4 +1,4 @@
-import { fetchNotes, type Note } from '../lib/notes'
+import { fetchNotes, getNoteTitle, type Note } from '../lib/notes'
 import { fetchThemes, fetchAllNoteThemes, type Theme } from '../lib/themes'
 import { fetchLinks, createLink, deleteLink, LINK_TYPE_LABELS, type LinkType, type NoteLink } from '../lib/links'
 import { fetchSemanticBridges, type BridgePair } from '../lib/semantic'
@@ -286,7 +286,7 @@ export async function mountGraph(root: HTMLElement): Promise<void> {
       c.setAttribute('stroke-width', '1.5')
       g.appendChild(c)
 
-      const label = (n.note.ai_title ?? n.note.content.slice(0, 28)).slice(0, 28)
+      const label = getNoteTitle(n.note, 28).slice(0, 28)
       const t = document.createElementNS('http://www.w3.org/2000/svg', 'text')
       t.setAttribute('x', String(n.radius + 4))
       t.setAttribute('y', '4')
@@ -344,7 +344,7 @@ export async function mountGraph(root: HTMLElement): Promise<void> {
     const explicit = edges.filter(e => e.kind === 'explicit' && (e.source === n.id || e.target === n.id))
 
     aside.innerHTML = `
-      <h3 class="sidebar-title">${escHtml(n.note.ai_title ?? n.note.content.slice(0, 80))}</h3>
+      <h3 class="sidebar-title">${escHtml(getNoteTitle(n.note, 80))}</h3>
       <div class="sidebar-meta">
         <span class="badge badge-${n.note.status}">${escHtml(n.note.status)}</span>
         <span class="muted">${escHtml(themeName)}</span>
@@ -364,7 +364,7 @@ export async function mountGraph(root: HTMLElement): Promise<void> {
           const typeLabel = link ? LINK_TYPE_LABELS[link.type] : ''
           const meta = [typeLabel, link?.reason].filter(Boolean).join(' · ')
           return `<li>
-            <span class="sidebar-link-main">${dir} ${escHtml(other.ai_title ?? other.content.slice(0, 60))}</span>
+            <span class="sidebar-link-main">${dir} ${escHtml(getNoteTitle(other, 60))}</span>
             ${meta ? `<span class="sidebar-link-meta">${escHtml(meta)}</span>` : ''}
             <button class="link-del" data-link="${e.linkId}">×</button>
           </li>`
@@ -377,7 +377,7 @@ export async function mountGraph(root: HTMLElement): Promise<void> {
           <option value="">— kies nota —</option>
           ${nodes
             .filter(o => o.id !== n.id)
-            .map(o => `<option value="${o.id}">${escHtml(o.note.ai_title ?? o.note.content.slice(0, 60))}</option>`)
+            .map(o => `<option value="${o.id}">${escHtml(getNoteTitle(o.note, 60))}</option>`)
             .join('')}
         </select>
         <input type="text" id="link-reason" placeholder="Reden (optioneel)" />
@@ -418,7 +418,7 @@ export async function mountGraph(root: HTMLElement): Promise<void> {
 
   function noteLabel(noteId: string): string {
     const n = notes.find(x => x.id === noteId)
-    return n ? (n.ai_title ?? n.content.slice(0, 50)) : noteId
+    return n ? getNoteTitle(n, 50) : noteId
   }
 
   // Surface semantically-related-but-unlinked pairs (no shared theme) as dashed

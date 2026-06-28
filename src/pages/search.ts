@@ -1,4 +1,4 @@
-import { fetchNotes, type Note } from '../lib/notes'
+import { fetchNotes, getNoteTitle, type Note } from '../lib/notes'
 import { rankByQuery } from '../lib/similarity'
 import { renderTopbar, attachTopbar } from '../lib/nav'
 import { navigateTo } from '../router'
@@ -87,7 +87,7 @@ export async function mountSearch(root: HTMLElement): Promise<void> {
       <p class="search-count">${notes.length} resultaat${notes.length === 1 ? '' : 'en'}</p>
       <ul class="search-list">
         ${notes.map(n => {
-          const title = n.ai_title ?? n.content.slice(0, 70)
+          const title = getNoteTitle(n, 70)
           const snippet = highlight(snippetAround(n.content, q), q)
           return `
             <li class="search-item" data-id="${n.id}">

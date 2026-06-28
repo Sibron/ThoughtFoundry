@@ -1,6 +1,6 @@
 import { runDenkpartner, type DenkpartnerQuestion } from '../lib/ai'
 import { fetchThemes, type Theme } from '../lib/themes'
-import { getCostStatus, formatUsd, type CostStatus } from '../lib/cost'
+import { getCostStatus, renderCostNote } from '../lib/cost'
 import { insertNote } from '../lib/notes'
 import { startAiThinking, AI_PHASES } from '../lib/ai-thinking'
 import { renderTopbar, attachTopbar } from '../lib/nav'
@@ -64,7 +64,7 @@ export async function mountDenkpartner(root: HTMLElement): Promise<void> {
 
   try {
     const cost = await getCostStatus()
-    renderCostNote(cost)
+    renderCostNote('dp-cost', cost)
   } catch { /* non-critical */ }
 
   // Scope radio logic
@@ -107,7 +107,7 @@ export async function mountDenkpartner(root: HTMLElement): Promise<void> {
       renderQuestions(questions)
 
       const freshCost = await getCostStatus()
-      renderCostNote(freshCost)
+      renderCostNote('dp-cost', freshCost)
     } catch (err) {
       showToast(`Denkpartner mislukt: ${errMsg(err)}`)
     } finally {
@@ -177,12 +177,6 @@ export async function mountDenkpartner(root: HTMLElement): Promise<void> {
 
     btn.disabled = false
     btn.textContent = 'Alle antwoorden opslaan als nota\'s'
-  }
-
-  function renderCostNote(cost: CostStatus): void {
-    const el = document.getElementById('dp-cost')
-    if (!el) return
-    el.textContent = `AI deze maand: ${formatUsd(cost.spendUsd)} / ${formatUsd(cost.capUsd)}`
   }
 }
 

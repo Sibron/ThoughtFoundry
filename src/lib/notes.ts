@@ -56,6 +56,15 @@ export interface NoteUpdate {
   section?: string | null
 }
 
+/**
+ * Display title for a note: the AI-generated title when present, otherwise a
+ * leading slice of the raw content. Centralises the `ai_title ?? content.slice`
+ * fallback repeated across the note-list views.
+ */
+export function getNoteTitle(note: { ai_title: string | null; content: string }, max = 80): string {
+  return note.ai_title ?? note.content.slice(0, max)
+}
+
 const OFFLINE_QUEUE_KEY = 'offline_queue'
 
 export async function fetchNotes(
