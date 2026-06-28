@@ -47,3 +47,14 @@ export async function getCostStatus(): Promise<CostStatus> {
 export function formatUsd(n: number): string {
   return `$${n.toFixed(n < 1 ? 3 : 2)}`
 }
+
+/**
+ * Write the shared "AI deze maand: $x / $y" line into the element with the
+ * given id. No-op when the element isn't on the page. Centralises the cost
+ * widget that the AI tool pages (spark/denkpartner/clusters) each rendered.
+ */
+export function renderCostNote(elementId: string, cost: CostStatus): void {
+  const el = document.getElementById(elementId)
+  if (!el) return
+  el.textContent = `AI deze maand: ${formatUsd(cost.spendUsd)} / ${formatUsd(cost.capUsd)}`
+}

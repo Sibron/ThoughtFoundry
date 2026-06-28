@@ -2,6 +2,7 @@ import {
   fetchNoteById,
   fetchNotes,
   fetchNotesByIds,
+  getNoteTitle,
   updateNote,
   deleteNote,
   type Note,
@@ -28,6 +29,7 @@ import {
   type NoteLink
 } from '../lib/links'
 import { fetchSources, type Source } from '../lib/sources'
+import { openLinkModal } from '../lib/link-modal'
 import { SECTIONS } from '../lib/sections'
 import { rankBySimilarity } from '../lib/similarity'
 import { fetchNeighbors } from '../lib/semantic'
@@ -87,12 +89,11 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
   if (linkedIds.length) {
     try {
       const linked = await fetchNotesByIds(linkedIds)
-      linked.forEach(n => labelMap.set(n.id, n.ai_title ?? n.content.slice(0, 60)))
+      linked.forEach(n => labelMap.set(n.id, getNoteTitle(n, 60)))
     } catch { /* best-effort */ }
   }
 
   let tagsState: string[] = [...(current.tags ?? [])]
-  let linkTargetId: string | null = null
 
   renderForm()
 
@@ -197,17 +198,7 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
         <fieldset class="field">
           <legend class="field-label">Links (Zettelkasten)</legend>
           <div class="link-list" id="link-list"></div>
-          <div class="link-add">
-            <input type="text" id="link-search" class="link-search" placeholder="Zoek nota om te koppelen…" autocomplete="off" />
-            <div class="link-suggestions" id="link-suggestions"></div>
-            <div class="link-add-row" id="link-add-row" hidden>
-              <span class="link-target-label" id="link-target-label"></span>
-              <select id="link-add-type">
-                ${Object.entries(LINK_TYPE_LABELS).map(([k, v]) => `<option value="${k}">${escHtml(v)}</option>`).join('')}
-              </select>
-              <button class="btn btn-ghost btn-sm" id="link-add-btn">Koppel</button>
-            </div>
-          </div>
+          <button class="btn btn-ghost btn-sm" type="button" id="link-add-open">+ Link toevoegen</button>
           <div class="ai-link-suggestions" id="ai-link-suggestions"></div>
           <div class="suggested-links" id="suggested-links"></div>
         </fieldset>
@@ -236,7 +227,7 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
     renderTagChips()
     renderLinkList()
     wireTagInput()
-    wireLinkSearch()
+    wireLinkAdd()
     wireActions()
     void loadRelatedNotes()
     void loadSuggestedLinks()
@@ -258,7 +249,7 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
       const filtered = neighbors.filter(n => n.id !== id && !linkedSet.has(n.id)).slice(0, 5)
       if (filtered.length > 0) {
         semantic = true
-        ranked = filtered.map(n => ({ id: n.id, label: n.ai_title ?? n.content.slice(0, 60) }))
+        ranked = filtered.map(n => ({ id: n.id, label: getNoteTitle(n, 60) }))
       }
     } catch { /* no embeddings / RPC error — fall back to lexical */ }
 
@@ -267,7 +258,7 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
       try { pool = await fetchNotes(0, 300) } catch { return }
       const candidates = pool.filter(n => n.id !== id && !linkedSet.has(n.id))
       ranked = rankBySimilarity(current, candidates, 5)
-        .map(({ note }) => ({ id: note.id, label: note.ai_title ?? note.content.slice(0, 60) }))
+        .map(({ note }) => ({ id: note.id, label: getNoteTitle(note, 60) }))
     }
     if (ranked.length === 0) { box.innerHTML = ''; return }
 
@@ -324,7 +315,7 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
       }
       const relNotes = await fetchNotesByIds(relatedList)
       el.innerHTML = relNotes.map(n =>
-        `<button class="related-note-card" data-id="${n.id}">${escHtml(n.ai_title ?? n.content.slice(0, 80))}</button>`
+        `<button class="related-note-card" data-id="${n.id}">${escHtml(getNoteTitle(n, 80))}</button>`
       ).join('')
       el.querySelectorAll<HTMLButtonElement>('.related-note-card').forEach(btn => {
         btn.addEventListener('click', () => navigateTo(`/note?id=${btn.dataset['id']}`))
@@ -417,53 +408,22 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
     })
   }
 
-  function wireLinkSearch(): void {
-    const search = document.getElementById('link-search') as HTMLInputElement
-    const sugg = document.getElementById('link-suggestions')!
-    const addRow = document.getElementById('link-add-row') as HTMLDivElement
-    const targetLabel = document.getElementById('link-target-label')!
-    let debounce: ReturnType<typeof setTimeout> | null = null
-
-    search.addEventListener('input', () => {
-      if (debounce) clearTimeout(debounce)
-      debounce = setTimeout(async () => {
-        const q = search.value.trim()
-        if (!q) { sugg.innerHTML = ''; return }
-        // Search server-side so every note is reachable (not just the first page).
-        let found: Note[] = []
-        try { found = await fetchNotes(0, 20, undefined, q) } catch { found = [] }
-        const linkedSet = new Set(links.flatMap(l => [l.source_id, l.target_id]))
-        const matches = found
-          .filter(n => n.id !== id && !linkedSet.has(n.id))
-          .slice(0, 6)
-        sugg.innerHTML = matches.length
-          ? matches.map(n => `<button class="link-suggestion" data-id="${n.id}">${escHtml((n.ai_title ?? n.content).slice(0, 80))}</button>`).join('')
-          : '<span class="muted">Geen resultaten</span>'
-        sugg.querySelectorAll<HTMLButtonElement>('.link-suggestion').forEach(b => {
-          b.addEventListener('click', () => {
-            linkTargetId = b.dataset['id']!
-            targetLabel.textContent = b.textContent
-            addRow.hidden = false
-            sugg.innerHTML = ''
-            search.value = ''
-          })
-        })
-      }, 200)
-    })
-
-    document.getElementById('link-add-btn')?.addEventListener('click', async () => {
-      const targetId = linkTargetId
-      if (!targetId) return
-      const type = (document.getElementById('link-add-type') as HTMLSelectElement).value as LinkType
-      try {
-        const link = await createLink({ sourceId: id, targetId, type })
-        links.push(link)
-        if (!labelMap.has(targetId)) labelMap.set(targetId, targetLabel.textContent ?? targetId)
-        linkTargetId = null
-        addRow.hidden = true
-        renderLinkList()
-        showToast('Gekoppeld')
-      } catch (err) { showToast(`Mislukt: ${errMsg(err)}`) }
+  function wireLinkAdd(): void {
+    document.getElementById('link-add-open')?.addEventListener('click', () => {
+      const linkedSet = new Set<string>([id, ...links.flatMap(l => [l.source_id, l.target_id])])
+      openLinkModal({
+        sourceId: id,
+        sourceLabel: getNoteTitle(current, 60),
+        excludeIds: [...linkedSet],
+        onLinked: (link, targetLabel) => {
+          if (!links.some(l => l.id === link.id)) links.push(link)
+          const otherId = link.source_id === id ? link.target_id : link.source_id
+          labelMap.set(otherId, targetLabel || labelMap.get(otherId) || otherId)
+          renderLinkList()
+          showToast('Gekoppeld')
+          void loadSuggestedLinks()
+        }
+      })
     })
   }
 
@@ -477,7 +437,7 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
 
     try {
       const notes = await fetchNotesByIds(candidates)
-      notes.forEach(n => labelMap.set(n.id, n.ai_title ?? n.content.slice(0, 60)))
+      notes.forEach(n => labelMap.set(n.id, getNoteTitle(n, 60)))
     } catch { /* fall back to ids */ }
 
     const typeOpts = Object.entries(LINK_TYPE_LABELS)
@@ -722,16 +682,6 @@ function injectNoteStyles(): void {
     .link-label { flex: 1; min-width: 0; font-size: var(--fs-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .link-type { width: auto; font-size: var(--fs-sm); }
     .link-del { background: none; border: 1px solid var(--border); border-radius: var(--r-sm); cursor: pointer; color: var(--danger); padding: 2px 8px; }
-    .link-add { display: flex; flex-direction: column; gap: var(--s-1); margin-top: var(--s-1); }
-    .link-search { font-size: var(--fs-sm); }
-    .link-suggestions { display: flex; flex-direction: column; gap: 2px; }
-    .link-suggestion {
-      background: var(--bg); border: 1px solid var(--border); border-radius: var(--r-sm);
-      padding: var(--s-1) var(--s-2); font-size: var(--fs-sm); cursor: pointer; text-align: left;
-    }
-    .link-suggestion:hover { background: var(--surface); }
-    .link-add-row { display: flex; align-items: center; gap: var(--s-2); flex-wrap: wrap; }
-    .link-target-label { flex: 1; min-width: 0; font-size: var(--fs-sm); font-weight: 500; }
     .ai-link-suggestions:empty, .ai-theme-suggestions:empty { display: none; }
     .ai-link-suggestions {
       display: flex; flex-direction: column; gap: var(--s-1);

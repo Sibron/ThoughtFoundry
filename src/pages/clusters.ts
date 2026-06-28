@@ -1,8 +1,8 @@
 import { detectClusters, type Cluster } from '../lib/ai'
-import { getCostStatus, formatUsd, type CostStatus } from '../lib/cost'
+import { getCostStatus, renderCostNote } from '../lib/cost'
 import { startAiThinking, AI_PHASES } from '../lib/ai-thinking'
 import { renderTopbar, attachTopbar } from '../lib/nav'
-import { insertNote, fetchNotesByIds } from '../lib/notes'
+import { insertNote, fetchNotesByIds, getNoteTitle } from '../lib/notes'
 import { createLink } from '../lib/links'
 
 export async function renderClusters(app: HTMLElement): Promise<void> {
@@ -37,7 +37,7 @@ export async function mountClusters(root: HTMLElement): Promise<void> {
 
   try {
     const cost = await getCostStatus()
-    renderCostNote(cost)
+    renderCostNote('clusters-cost', cost)
   } catch { /* non-critical */ }
 
   document.getElementById('clusters-run')?.addEventListener('click', onRun)
@@ -74,7 +74,7 @@ export async function mountClusters(root: HTMLElement): Promise<void> {
       const allIds = result.clusters.flatMap(c => c.note_ids)
       if (allIds.length > 0) {
         fetchNotesByIds(allIds).then(notes => {
-          const titleMap = new Map(notes.map(n => [n.id, n.ai_title ?? n.content.slice(0, 60)]))
+          const titleMap = new Map(notes.map(n => [n.id, getNoteTitle(n, 60)]))
           document.querySelectorAll<HTMLSpanElement>('.cluster-pill[data-id]').forEach(pill => {
             const title = titleMap.get(pill.dataset['id']!)
             if (title) pill.textContent = title + (title.length === 60 ? '…' : '')
@@ -84,7 +84,7 @@ export async function mountClusters(root: HTMLElement): Promise<void> {
       }
 
       const freshCost = await getCostStatus()
-      renderCostNote(freshCost)
+      renderCostNote('clusters-cost', freshCost)
     } catch (err) {
       showToast(`Detectie mislukt: ${errMsg(err)}`)
     } finally {
@@ -145,12 +145,6 @@ export async function mountClusters(root: HTMLElement): Promise<void> {
       btn.disabled = false
       btn.textContent = 'Aanmaken als nota'
     }
-  }
-
-  function renderCostNote(cost: CostStatus): void {
-    const el = document.getElementById('clusters-cost')
-    if (!el) return
-    el.textContent = `AI deze maand: ${formatUsd(cost.spendUsd)} / ${formatUsd(cost.capUsd)}`
   }
 }
 
