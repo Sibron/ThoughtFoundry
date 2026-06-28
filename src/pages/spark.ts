@@ -1,5 +1,5 @@
 import { runSpark } from '../lib/ai'
-import { getCostStatus, formatUsd, type CostStatus } from '../lib/cost'
+import { getCostStatus, formatUsd, renderCostNote } from '../lib/cost'
 import { startAiThinking, AI_PHASES } from '../lib/ai-thinking'
 import { renderTopbar, attachTopbar } from '../lib/nav'
 
@@ -78,7 +78,7 @@ export async function mountSpark(root: HTMLElement): Promise<void> {
   // Show current cost
   try {
     const cost = await getCostStatus()
-    renderCostNote(cost)
+    renderCostNote('spark-cost', cost)
   } catch { /* non-critical */ }
 
   document.getElementById('spark-run')?.addEventListener('click', onRun)
@@ -118,7 +118,7 @@ export async function mountSpark(root: HTMLElement): Promise<void> {
 
       // refresh cost
       const freshCost = await getCostStatus()
-      renderCostNote(freshCost)
+      renderCostNote('spark-cost', freshCost)
     } catch (err) {
       showToast(`Spark mislukt: ${errMsg(err)}`)
     } finally {
@@ -132,12 +132,6 @@ export async function mountSpark(root: HTMLElement): Promise<void> {
     const text = document.getElementById('result-body')?.innerText ?? ''
     navigator.clipboard.writeText(text).then(() => showToast('Gekopieerd')).catch(() => showToast('Kopiëren mislukt'))
   })
-
-  function renderCostNote(cost: CostStatus): void {
-    const el = document.getElementById('spark-cost')
-    if (!el) return
-    el.textContent = `AI deze maand: ${formatUsd(cost.spendUsd)} / ${formatUsd(cost.capUsd)}`
-  }
 }
 
 function showToast(msg: string): void {
