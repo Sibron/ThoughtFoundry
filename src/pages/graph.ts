@@ -1,6 +1,7 @@
-import { fetchAllNotes, getNoteTitle, type Note } from '../lib/notes'
-import { fetchThemes, fetchAllNoteThemes, type Theme } from '../lib/themes'
-import { fetchLinks, createLink, deleteLink, LINK_TYPE_LABELS, type LinkType, type NoteLink } from '../lib/links'
+import { getNoteTitle, type Note } from '../lib/notes'
+import { type Theme } from '../lib/themes'
+import { createLink, deleteLink, LINK_TYPE_LABELS, type LinkType, type NoteLink } from '../lib/links'
+import { loadGraphSnapshot, type GraphSnapshot } from '../lib/snapshots'
 import { fetchSemanticBridges, type BridgePair } from '../lib/semantic'
 import { pairKey } from '../lib/similarity'
 import { enrichLinks } from '../lib/ai'
@@ -86,14 +87,13 @@ export async function mountGraph(root: HTMLElement): Promise<void> {
   let themes: Theme[] = []
   let noteThemes: { note_id: string; theme_id: string }[] = []
   let links: NoteLink[] = []
+  // Set once the user starts working the view, so a background cache refresh
+  // updates the data silently instead of relaying-out the graph under them.
+  let interacted = false
 
   try {
-    [notes, themes, noteThemes, links] = await Promise.all([
-      fetchAllNotes(),
-      fetchThemes(),
-      fetchAllNoteThemes(),
-      fetchLinks()
-    ])
+    const snap = await loadGraphSnapshot(applyFreshSnapshot)
+    notes = snap.notes; themes = snap.themes; noteThemes = snap.noteThemes; links = snap.links
   } catch (err) {
     const wrap = document.getElementById('graph-canvas-wrap')!
     wrap.innerHTML = `
@@ -107,12 +107,31 @@ export async function mountGraph(root: HTMLElement): Promise<void> {
   }
 
   const themeSelect = document.getElementById('graph-theme-filter') as HTMLSelectElement
-  themes.forEach(t => {
-    const opt = document.createElement('option')
-    opt.value = t.id
-    opt.textContent = t.name
-    themeSelect.appendChild(opt)
-  })
+  populateThemeFilter()
+
+  // A background refresh returned data that differs from the snapshot we first
+  // rendered. Sync the dropdown always; rebuild the canvas only if the user
+  // hasn't started interacting (otherwise the cache is updated for next mount).
+  function applyFreshSnapshot(snap: GraphSnapshot): void {
+    // The refresh can land after the user has left the page — bail if the canvas
+    // is gone rather than rebuild into a detached DOM.
+    if (!document.getElementById('graph-canvas-wrap')) return
+    notes = snap.notes; themes = snap.themes; noteThemes = snap.noteThemes; links = snap.links
+    populateThemeFilter()
+    if (!interacted) rebuild()
+  }
+
+  function populateThemeFilter(): void {
+    const current = themeSelect.value
+    themeSelect.querySelectorAll('option[value]:not([value=""])').forEach(o => o.remove())
+    themes.forEach(t => {
+      const opt = document.createElement('option')
+      opt.value = t.id
+      opt.textContent = t.name
+      themeSelect.appendChild(opt)
+    })
+    if (current && themes.some(t => t.id === current)) themeSelect.value = current
+  }
 
   if (notes.length === 0) {
     document.getElementById('graph-canvas-wrap')!.innerHTML = `
@@ -128,6 +147,7 @@ export async function mountGraph(root: HTMLElement): Promise<void> {
 
   let selectedTheme = ''
   themeSelect.addEventListener('change', () => {
+    interacted = true
     selectedTheme = themeSelect.value
     rebuild()
   })
@@ -160,6 +180,7 @@ export async function mountGraph(root: HTMLElement): Promise<void> {
 
   const searchInput = document.getElementById('graph-search') as HTMLInputElement | null
   searchInput?.addEventListener('input', () => {
+    interacted = true
     searchQuery = searchInput.value.trim().toLowerCase()
     applyHighlights()
   })
@@ -358,6 +379,7 @@ export async function mountGraph(root: HTMLElement): Promise<void> {
 
   // Open the detail sidebar for a node and light up its ego network on canvas.
   function selectNode(n: GraphNode): void {
+    interacted = true
     focusedId = n.id
     applyHighlights()
     showSidebar(n)
@@ -373,6 +395,7 @@ export async function mountGraph(root: HTMLElement): Promise<void> {
     let lastX = 0, lastY = 0
 
     g.addEventListener('pointerdown', (e) => {
+      interacted = true
       dragging = true
       lastX = e.clientX
       lastY = e.clientY
@@ -449,6 +472,7 @@ export async function mountGraph(root: HTMLElement): Promise<void> {
   function attachViewControls(el: SVGSVGElement): void {
     el.addEventListener('wheel', (e) => {
       e.preventDefault()
+      interacted = true
       zoomAt(e.clientX, e.clientY, e.deltaY < 0 ? 1.12 : 1 / 1.12)
     }, { passive: false })
 
@@ -460,6 +484,7 @@ export async function mountGraph(root: HTMLElement): Promise<void> {
     el.addEventListener('pointerdown', (e) => {
       // Node drags stop propagation, so anything reaching here is a background gesture.
       if ((e.target as Element).closest('.graph-node')) return
+      interacted = true
       pts.set(e.pointerId, { x: e.clientX, y: e.clientY })
       panMoved = false
       if (pts.size === 2) pinchDist = pointerDistance(pts)
@@ -687,6 +712,7 @@ export async function mountGraph(root: HTMLElement): Promise<void> {
   async function suggestBridges(): Promise<void> {
     const btn = document.getElementById('graph-suggest') as HTMLButtonElement | null
     if (!btn) return
+    interacted = true
     btn.disabled = true
     btn.textContent = 'Zoeken…'
     try {

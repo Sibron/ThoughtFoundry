@@ -24,7 +24,7 @@ export interface NoteLink {
 export async function fetchLinks(): Promise<NoteLink[]> {
   // Paged so the graph never silently drops links past the 1000-row default.
   return fetchAllRows<NoteLink>((from, to) =>
-    supabase.from('note_links').select('*').range(from, to)
+    supabase.from('note_links').select('*').order('id', { ascending: true }).range(from, to)
   )
 }
 

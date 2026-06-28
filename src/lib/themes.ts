@@ -81,7 +81,8 @@ export async function fetchAllNoteThemes(): Promise<{ note_id: string; theme_id:
   // Paged: a user can easily have >1000 note↔theme links (the default cap),
   // and truncating them undercounts themes and hides notes from the graph.
   return fetchAllRows<{ note_id: string; theme_id: string }>((from, to) =>
-    supabase.from('note_themes').select('note_id, theme_id').range(from, to)
+    supabase.from('note_themes').select('note_id, theme_id')
+      .order('note_id', { ascending: true }).order('theme_id', { ascending: true }).range(from, to)
   )
 }
 

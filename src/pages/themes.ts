@@ -1,12 +1,10 @@
 import {
-  fetchThemes,
   createTheme,
   updateTheme,
   deleteTheme,
-  fetchAllNoteThemes,
   type Theme
 } from '../lib/themes'
-import { fetchNotesSections } from '../lib/notes'
+import { loadThemesSnapshot, type ThemesSnapshot } from '../lib/snapshots'
 import { renderTopbar, attachTopbar, renderGuidanceBanner } from '../lib/nav'
 import { navigateTo } from '../router'
 
@@ -54,29 +52,40 @@ export async function mountThemes(root: HTMLElement): Promise<void> {
   let counts: Record<string, number> = {}
   let sectionsByTheme: Map<string, Set<string>> = new Map()
 
-  try {
-    const [noteThemes, noteSections] = await Promise.all([
-      fetchAllNoteThemes(),
-      fetchNotesSections(),
-    ])
-    themes = await fetchThemes()
-
-    counts = noteThemes.reduce<Record<string, number>>((acc, nt) => {
+  function recompute(snap: ThemesSnapshot): void {
+    themes = snap.themes
+    counts = snap.noteThemes.reduce<Record<string, number>>((acc, nt) => {
       acc[nt.theme_id] = (acc[nt.theme_id] ?? 0) + 1
       return acc
     }, {})
 
     // Build map: themeId → Set of sections present in that theme's notes
     const sectionByNoteId = new Map<string, string>()
-    for (const ns of noteSections) {
+    for (const ns of snap.noteSections) {
       if (ns.section) sectionByNoteId.set(ns.id, ns.section)
     }
-    for (const nt of noteThemes) {
+    sectionsByTheme = new Map()
+    for (const nt of snap.noteThemes) {
       const sec = sectionByNoteId.get(nt.note_id)
       if (!sec) continue
       if (!sectionsByTheme.has(nt.theme_id)) sectionsByTheme.set(nt.theme_id, new Set())
       sectionsByTheme.get(nt.theme_id)!.add(sec)
     }
+  }
+
+  // A background cache refresh returned newer counts/sections — repaint just the
+  // list and its header count, leaving the "new theme" form (and any text the
+  // user is typing into it) untouched.
+  function onFresh(snap: ThemesSnapshot): void {
+    recompute(snap)
+    if (!document.getElementById('themes-list')) return
+    renderList()
+    const total = document.querySelector('.themes-section-header h2')
+    if (total) total.textContent = `Alle thema's (${themes.length})`
+  }
+
+  try {
+    recompute(await loadThemesSnapshot(onFresh))
   } catch (err) {
     document.getElementById('themes-body')!.innerHTML =
       `<div class="themes-error">Laden mislukt: ${escHtml(errMsg(err))}</div>`

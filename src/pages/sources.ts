@@ -1,5 +1,6 @@
-import { fetchSources, createSource, updateSource, deleteSource, SOURCE_TYPES, SOURCE_TYPE_ORDER, type Source, type SourceInsert, type SourceType } from '../lib/sources'
-import { fetchAllNotes, type Note } from '../lib/notes'
+import { createSource, updateSource, deleteSource, SOURCE_TYPES, SOURCE_TYPE_ORDER, type Source, type SourceInsert, type SourceType } from '../lib/sources'
+import { type Note } from '../lib/notes'
+import { loadSourcesSnapshot } from '../lib/snapshots'
 import { renderTopbar, attachTopbar } from '../lib/nav'
 import { createCrudList, injectCrudStyles, showToast, esc, errMsg, type CrudListConfig } from '../lib/crud-list'
 
@@ -30,8 +31,15 @@ async function reload(): Promise<void> {
   const body = document.getElementById('src-body') as HTMLDivElement
   body.innerHTML = '<div class="crud-loading">Laden…</div>'
   try {
-    const [sources, allNotes] = await Promise.all([fetchSources(), fetchAllNotes()])
-    mount(body, sources, allNotes)
+    const snap = await loadSourcesSnapshot(fresh => {
+      const b = document.getElementById('src-body') as HTMLDivElement | null
+      if (!b) return
+      // A background refresh arrived. Don't yank away an open form or detail view
+      // the user might be editing; the cache is updated for the next render.
+      if (b.querySelector('#crud-form') || b.querySelector('.crud-detail')) return
+      mount(b, fresh.sources, fresh.notes)
+    })
+    mount(body, snap.sources, snap.notes)
   } catch (err) {
     body.innerHTML = `<div class="crud-loading">Laden mislukt: ${esc(errMsg(err))}</div>`
   }

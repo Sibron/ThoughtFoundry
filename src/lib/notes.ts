@@ -67,6 +67,16 @@ export function getNoteTitle(note: { ai_title: string | null; content: string },
 
 const OFFLINE_QUEUE_KEY = 'offline_queue'
 
+// Every note column EXCEPT `embedding`. That column is a vector(1024) used only
+// by server-side semantic search — no client view reads it — yet `select('*')`
+// drags it along, where it accounts for ~60% of the notes payload (≈10 KB/row
+// over the wire). Listing columns explicitly keeps every note fetch lean and the
+// local cache small.
+const NOTE_COLUMNS =
+  'id, user_id, content, mini_notes, status, note_type, core_idea, use_for, ' +
+  'source_id, tags, source_url, source_title, source_author, ai_summary, ' +
+  'ai_title, processed_at, section, created_at, updated_at'
+
 export async function fetchNotes(
   page = 0,
   pageSize = 50,
@@ -74,7 +84,8 @@ export async function fetchNotes(
   search?: string,
   noteType?: NoteType
 ): Promise<Note[]> {
-  let q = supabase.from('notes').select('*').order('created_at', { ascending: false })
+  let q = supabase.from('notes').select(NOTE_COLUMNS)
+    .order('created_at', { ascending: false }).order('id', { ascending: true })
   if (status) q = q.eq('status', status)
   if (noteType) q = q.eq('note_type', noteType)
   if (search && search.trim()) {
@@ -90,7 +101,9 @@ export async function fetchNotes(
   }
   const { data, error } = await q.range(page * pageSize, (page + 1) * pageSize - 1)
   if (error) throw error
-  return (data ?? []) as Note[]
+  // `data` is typed loosely because the column list is a runtime string, not a
+  // literal supabase-js can parse — route the cast through `unknown`.
+  return (data ?? []) as unknown as Note[]
 }
 
 /**
@@ -102,14 +115,18 @@ export async function fetchNotes(
  */
 export async function fetchAllNotes(status?: NoteStatus): Promise<Note[]> {
   return fetchAllRows<Note>((from, to) => {
-    let q = supabase.from('notes').select('*').order('created_at', { ascending: false })
+    // `id` tiebreaker keeps offset paging deterministic when many notes share a
+    // created_at (e.g. a bulk import) — otherwise pages can skip/duplicate rows
+    // and the cached snapshot churns between identical fetches.
+    let q = supabase.from('notes').select(NOTE_COLUMNS)
+      .order('created_at', { ascending: false }).order('id', { ascending: true })
     if (status) q = q.eq('status', status)
     return q.range(from, to)
   })
 }
 
 export async function fetchNoteById(id: string): Promise<Note | null> {
-  const { data, error } = await supabase.from('notes').select('*').eq('id', id).maybeSingle()
+  const { data, error } = await supabase.from('notes').select(NOTE_COLUMNS).eq('id', id).maybeSingle()
   if (error) throw error
   return (data ?? null) as Note | null
 }
@@ -169,10 +186,11 @@ export async function fetchConnectedNoteIds(): Promise<Set<string>> {
   // read would mislabel genuinely-connected notes as orphans.
   const [links, themeRows] = await Promise.all([
     fetchAllRows<{ source_id: string; target_id: string }>((from, to) =>
-      supabase.from('note_links').select('source_id, target_id').range(from, to)
+      supabase.from('note_links').select('source_id, target_id').order('id', { ascending: true }).range(from, to)
     ),
     fetchAllRows<{ note_id: string }>((from, to) =>
-      supabase.from('note_themes').select('note_id').range(from, to)
+      supabase.from('note_themes').select('note_id')
+        .order('note_id', { ascending: true }).order('theme_id', { ascending: true }).range(from, to)
     )
   ])
   const set = new Set<string>()
@@ -204,16 +222,16 @@ export async function fetchNoteIdsNeedingReprocess(): Promise<string[]> {
 
 export async function fetchNotesByIds(ids: string[]): Promise<Note[]> {
   if (ids.length === 0) return []
-  const { data, error } = await supabase.from('notes').select('*').in('id', ids)
+  const { data, error } = await supabase.from('notes').select(NOTE_COLUMNS).in('id', ids)
   if (error) throw error
-  return (data ?? []) as Note[]
+  return (data ?? []) as unknown as Note[]
 }
 
 export async function fetchNotesSections(): Promise<{ id: string; section: string | null }[]> {
   // Paged so the themes overview's section bars reflect every note, not the
   // first 1000 the default cap would return.
   return fetchAllRows<{ id: string; section: string | null }>((from, to) =>
-    supabase.from('notes').select('id, section').range(from, to)
+    supabase.from('notes').select('id, section').order('id', { ascending: true }).range(from, to)
   )
 }
 
