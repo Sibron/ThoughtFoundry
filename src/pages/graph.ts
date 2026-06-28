@@ -7,6 +7,7 @@ import { enrichLinks } from '../lib/ai'
 import { getCostStatus } from '../lib/cost'
 import { startAiThinking, AI_PHASES } from '../lib/ai-thinking'
 import { renderTopbar, attachTopbar, isAiEnabled } from '../lib/nav'
+import { navigateTo } from '../router'
 
 interface GraphNode {
   id: string
@@ -44,25 +45,36 @@ export async function mountGraph(root: HTMLElement): Promise<void> {
   root.innerHTML = `
     <div class="graph-body">
       <header class="graph-header">
-        <label class="graph-filter">
-          Filter thema:
-          <select id="graph-theme-filter">
-            <option value="">Alle</option>
-          </select>
-        </label>
-        <label class="graph-filter graph-toggle">
-          <input type="checkbox" id="graph-theme-edges" />
-          Toon thema-verbanden
-        </label>
-        <button class="btn btn-ghost graph-suggest-btn" id="graph-suggest">Verbindingen voorstellen</button>
-        <span class="graph-stats" id="graph-stats"></span>
+        <div class="graph-controls">
+          <label class="graph-filter">
+            Filter thema:
+            <select id="graph-theme-filter">
+              <option value="">Alle</option>
+            </select>
+          </label>
+          <input type="search" id="graph-search" class="graph-search" placeholder="Zoek nota…" aria-label="Zoek een nota in de graaf" />
+          <label class="graph-filter graph-toggle">
+            <input type="checkbox" id="graph-theme-edges" />
+            Toon thema-verbanden
+          </label>
+          <button class="btn btn-ghost graph-suggest-btn" id="graph-suggest">Verbindingen voorstellen</button>
+          <button class="btn btn-ghost graph-reset-btn" id="graph-reset" title="Beeld herstellen" aria-label="Beeld herstellen">Reset beeld</button>
+        </div>
+        <div class="graph-meta-row">
+          <span class="graph-legend" aria-hidden="true">
+            <span class="legend-item"><span class="legend-swatch legend-theme"></span>Thema</span>
+            <span class="legend-item"><span class="legend-swatch legend-explicit"></span>Link</span>
+            <span class="legend-item"><span class="legend-swatch legend-suggested"></span>Voorstel</span>
+          </span>
+          <span class="graph-stats" id="graph-stats"></span>
+        </div>
       </header>
       <div class="graph-shell">
         <div class="graph-canvas-wrap" id="graph-canvas-wrap">
           <div class="graph-loading">Laden…</div>
         </div>
         <aside class="graph-sidebar" id="graph-sidebar">
-          <p class="muted">Klik op een knoop om details te zien. Sleep om te verplaatsen.</p>
+          <p class="muted">Klik op een knoop voor details — de verbindingen lichten op. Sleep een knoop om te verplaatsen, scroll of knijp om te zoomen, sleep de achtergrond om te pannen.</p>
         </aside>
       </div>
     </div>
@@ -83,8 +95,14 @@ export async function mountGraph(root: HTMLElement): Promise<void> {
       fetchLinks()
     ])
   } catch (err) {
-    document.getElementById('graph-canvas-wrap')!.innerHTML =
-      `<div class="graph-error">Laden mislukt: ${escHtml(errMsg(err))}</div>`
+    const wrap = document.getElementById('graph-canvas-wrap')!
+    wrap.innerHTML = `
+      <div class="graph-error">
+        <p>Laden mislukt: ${escHtml(errMsg(err))}</p>
+        <button class="btn btn-primary" id="graph-retry">Opnieuw proberen</button>
+      </div>
+    `
+    document.getElementById('graph-retry')?.addEventListener('click', () => { mountGraph(root) })
     return
   }
 
@@ -101,8 +119,10 @@ export async function mountGraph(root: HTMLElement): Promise<void> {
       <div class="graph-empty">
         <h2>Nog geen nota's</h2>
         <p>Capture eerst wat ideeën, verwerk ze, en kom dan terug om de graaf te zien.</p>
+        <button class="btn btn-primary" id="graph-empty-capture">Naar Vangbak</button>
       </div>
     `
+    document.getElementById('graph-empty-capture')?.addEventListener('click', () => navigateTo('/capture'))
     return
   }
 
@@ -128,7 +148,26 @@ export async function mountGraph(root: HTMLElement): Promise<void> {
   // Candidate (not-yet-created) links surfaced by semantic_bridges, drawn dashed.
   let suggestedEdges: { a: string; b: string }[] = []
 
+  // View transform driving the SVG viewBox: scale > 1 zooms in, x/y pan.
+  const view = { x: 0, y: 0, scale: 1 }
+  // The currently selected node — its ego network is highlighted, the rest dim.
+  let focusedId: string | null = null
+  // Live search query — matching nodes stay lit, the rest dim.
+  let searchQuery = ''
+
   document.getElementById('graph-suggest')?.addEventListener('click', suggestBridges)
+  document.getElementById('graph-reset')?.addEventListener('click', resetView)
+
+  const searchInput = document.getElementById('graph-search') as HTMLInputElement | null
+  searchInput?.addEventListener('input', () => {
+    searchQuery = searchInput.value.trim().toLowerCase()
+    applyHighlights()
+  })
+  searchInput?.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' || !searchQuery) return
+    const match = nodes.find(n => nodeMatchesQuery(n, searchQuery))
+    if (match) { focusedId = match.id; centerOnNode(match); applyHighlights(); showSidebar(match) }
+  })
 
   rebuild()
 
@@ -215,9 +254,12 @@ export async function mountGraph(root: HTMLElement): Promise<void> {
     const wrap = document.getElementById('graph-canvas-wrap')!
     wrap.innerHTML = ''
     svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
-    svg.setAttribute('viewBox', `0 0 ${WIDTH} ${HEIGHT}`)
     svg.setAttribute('class', 'graph-svg')
+    svg.setAttribute('role', 'application')
+    svg.setAttribute('aria-label', 'Kennisgraaf van je nota’s. Sleep een knoop om te verplaatsen, scroll om te zoomen.')
+    applyView()
     wrap.appendChild(svg)
+    attachViewControls(svg)
 
     // Arrowhead marker for explicit (typed) links so direction reads at a glance.
     const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs')
@@ -277,6 +319,9 @@ export async function mountGraph(root: HTMLElement): Promise<void> {
       const g = document.createElementNS('http://www.w3.org/2000/svg', 'g')
       g.setAttribute('class', 'graph-node')
       g.setAttribute('transform', `translate(${n.x}, ${n.y})`)
+      g.setAttribute('role', 'button')
+      g.setAttribute('tabindex', '0')
+      g.setAttribute('aria-label', getNoteTitle(n.note, 80))
       g.dataset['id'] = n.id
 
       const c = document.createElementNS('http://www.w3.org/2000/svg', 'circle')
@@ -294,10 +339,28 @@ export async function mountGraph(root: HTMLElement): Promise<void> {
       t.textContent = label
       g.appendChild(t)
 
-      g.addEventListener('click', () => showSidebar(n))
+      g.addEventListener('click', () => selectNode(n))
+      g.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectNode(n) }
+        else if (e.key === 'Escape') { clearFocus() }
+      })
       attachDrag(g, n)
       svg!.appendChild(g)
     })
+
+    applyHighlights()
+  }
+
+  // Open the detail sidebar for a node and light up its ego network on canvas.
+  function selectNode(n: GraphNode): void {
+    focusedId = n.id
+    applyHighlights()
+    showSidebar(n)
+  }
+
+  function clearFocus(): void {
+    focusedId = null
+    applyHighlights()
   }
 
   function attachDrag(g: SVGGElement, n: GraphNode): void {
@@ -309,14 +372,19 @@ export async function mountGraph(root: HTMLElement): Promise<void> {
       lastX = e.clientX
       lastY = e.clientY
       g.setPointerCapture(e.pointerId)
+      g.classList.add('is-dragging')
+      // Keep the background pan/pinch handlers from also reacting to this pointer.
+      e.stopPropagation()
       e.preventDefault()
     })
     g.addEventListener('pointermove', (e) => {
       if (!dragging || !svg) return
       const rect = svg.getBoundingClientRect()
-      const scale = WIDTH / rect.width
-      const dx = (e.clientX - lastX) * scale
-      const dy = (e.clientY - lastY) * scale
+      // Convert client pixels to SVG user units using the CURRENT viewBox width
+      // (WIDTH / scale) so dragging stays 1:1 with the cursor at any zoom level.
+      const f = (WIDTH / view.scale) / rect.width
+      const dx = (e.clientX - lastX) * f
+      const dy = (e.clientY - lastY) * f
       lastX = e.clientX
       lastY = e.clientY
       n.x += dx
@@ -334,8 +402,175 @@ export async function mountGraph(root: HTMLElement): Promise<void> {
         }
       })
     })
-    g.addEventListener('pointerup', () => { dragging = false })
-    g.addEventListener('pointercancel', () => { dragging = false })
+    g.addEventListener('pointerup', () => { dragging = false; g.classList.remove('is-dragging') })
+    g.addEventListener('pointercancel', () => { dragging = false; g.classList.remove('is-dragging') })
+  }
+
+  // ── View transform: zoom (wheel/pinch) + pan (background drag) ─────────────
+
+  function applyView(): void {
+    if (!svg) return
+    const vbW = WIDTH / view.scale
+    const vbH = HEIGHT / view.scale
+    svg.setAttribute('viewBox', `${view.x} ${view.y} ${vbW} ${vbH}`)
+  }
+
+  function resetView(): void {
+    view.x = 0; view.y = 0; view.scale = 1
+    applyView()
+  }
+
+  const MIN_SCALE = 0.3
+  const MAX_SCALE = 4
+
+  // Zoom so the SVG point under (clientX, clientY) stays fixed on screen.
+  function zoomAt(clientX: number, clientY: number, factor: number): void {
+    if (!svg) return
+    const rect = svg.getBoundingClientRect()
+    const next = Math.max(MIN_SCALE, Math.min(MAX_SCALE, view.scale * factor))
+    if (next === view.scale) return
+    const vbW = WIDTH / view.scale
+    const vbH = HEIGHT / view.scale
+    const px = (clientX - rect.left) / rect.width
+    const py = (clientY - rect.top) / rect.height
+    const ux = view.x + px * vbW
+    const uy = view.y + py * vbH
+    view.scale = next
+    view.x = ux - px * (WIDTH / next)
+    view.y = uy - py * (HEIGHT / next)
+    applyView()
+  }
+
+  function attachViewControls(el: SVGSVGElement): void {
+    el.addEventListener('wheel', (e) => {
+      e.preventDefault()
+      zoomAt(e.clientX, e.clientY, e.deltaY < 0 ? 1.12 : 1 / 1.12)
+    }, { passive: false })
+
+    // Track active pointers for background pan (1 pointer) and pinch (2 pointers).
+    const pts = new Map<number, { x: number; y: number }>()
+    let pinchDist = 0
+    let panMoved = false
+
+    el.addEventListener('pointerdown', (e) => {
+      // Node drags stop propagation, so anything reaching here is a background gesture.
+      if ((e.target as Element).closest('.graph-node')) return
+      pts.set(e.pointerId, { x: e.clientX, y: e.clientY })
+      panMoved = false
+      if (pts.size === 2) pinchDist = pointerDistance(pts)
+      el.setPointerCapture(e.pointerId)
+    })
+
+    el.addEventListener('pointermove', (e) => {
+      if (!pts.has(e.pointerId)) return
+      const prev = pts.get(e.pointerId)!
+      const dxClient = e.clientX - prev.x
+      const dyClient = e.clientY - prev.y
+      pts.set(e.pointerId, { x: e.clientX, y: e.clientY })
+
+      if (pts.size === 2) {
+        const dist = pointerDistance(pts)
+        if (pinchDist > 0) {
+          const mid = pointerMidpoint(pts)
+          zoomAt(mid.x, mid.y, dist / pinchDist)
+        }
+        pinchDist = dist
+        return
+      }
+
+      // Single-pointer background drag = pan.
+      const rect = el.getBoundingClientRect()
+      const vbW = WIDTH / view.scale
+      const vbH = HEIGHT / view.scale
+      view.x -= dxClient * (vbW / rect.width)
+      view.y -= dyClient * (vbH / rect.height)
+      if (Math.abs(dxClient) + Math.abs(dyClient) > 1) panMoved = true
+      applyView()
+    })
+
+    const endPointer = (e: PointerEvent) => {
+      if (!pts.has(e.pointerId)) return
+      pts.delete(e.pointerId)
+      if (pts.size < 2) pinchDist = 0
+      // A background click that didn't pan clears the current focus.
+      if (pts.size === 0 && !panMoved && !(e.target as Element).closest('.graph-node')) {
+        clearFocus()
+      }
+    }
+    el.addEventListener('pointerup', endPointer)
+    el.addEventListener('pointercancel', endPointer)
+  }
+
+  // ── Focus / search highlighting ───────────────────────────────────────────
+
+  function nodeMatchesQuery(n: GraphNode, q: string): boolean {
+    if (!q) return false
+    return getNoteTitle(n.note, 200).toLowerCase().includes(q)
+      || (n.note.content ?? '').toLowerCase().includes(q)
+  }
+
+  function neighborsOf(id: string): Set<string> {
+    const set = new Set<string>([id])
+    edges.forEach(e => {
+      if (e.source === id) set.add(e.target)
+      if (e.target === id) set.add(e.source)
+    })
+    suggestedEdges.forEach(e => {
+      if (e.a === id) set.add(e.b)
+      if (e.b === id) set.add(e.a)
+    })
+    return set
+  }
+
+  // Toggle dim/focus/match classes; CSS does the actual fading. Re-run after every
+  // renderSvg (the SVG is rebuilt from scratch) and on focus/search changes.
+  function applyHighlights(): void {
+    if (!svg) return
+    const nodeEls = svg.querySelectorAll<SVGGElement>('.graph-node')
+    const lineEls = svg.querySelectorAll<SVGLineElement>('line.graph-edge')
+
+    // An active search wins over click-focus for what stays lit.
+    if (searchQuery) {
+      const matches = new Set(nodes.filter(n => nodeMatchesQuery(n, searchQuery)).map(n => n.id))
+      nodeEls.forEach(el => {
+        const id = el.dataset['id']!
+        el.classList.toggle('is-match', matches.has(id))
+        el.classList.toggle('is-dimmed', !matches.has(id))
+        el.classList.remove('is-focused')
+      })
+      lineEls.forEach(el => {
+        const lit = matches.has(el.dataset['src']!) && matches.has(el.dataset['tgt']!)
+        el.classList.toggle('is-dimmed', !lit)
+        el.classList.remove('is-focused')
+      })
+      return
+    }
+
+    if (focusedId && nodes.some(n => n.id === focusedId)) {
+      const near = neighborsOf(focusedId)
+      nodeEls.forEach(el => {
+        const id = el.dataset['id']!
+        el.classList.toggle('is-focused', id === focusedId)
+        el.classList.toggle('is-dimmed', !near.has(id))
+        el.classList.remove('is-match')
+      })
+      lineEls.forEach(el => {
+        const touches = el.dataset['src'] === focusedId || el.dataset['tgt'] === focusedId
+        el.classList.toggle('is-focused', touches)
+        el.classList.toggle('is-dimmed', !touches)
+      })
+      return
+    }
+
+    nodeEls.forEach(el => el.classList.remove('is-dimmed', 'is-focused', 'is-match'))
+    lineEls.forEach(el => el.classList.remove('is-dimmed', 'is-focused'))
+  }
+
+  // Pan the view so the node sits in the middle of the canvas (zoom unchanged).
+  function centerOnNode(n: GraphNode): void {
+    view.x = n.x - (WIDTH / view.scale) / 2
+    view.y = n.y - (HEIGHT / view.scale) / 2
+    applyView()
   }
 
   async function showSidebar(n: GraphNode): Promise<void> {
@@ -389,12 +624,33 @@ export async function mountGraph(root: HTMLElement): Promise<void> {
       btn.addEventListener('click', async () => {
         const linkId = btn.dataset['link']
         if (!linkId) return
-        if (!confirm('Link verwijderen?')) return
+        const removed = links.find(l => l.id === linkId)
         try {
           await deleteLink(linkId)
           links = links.filter(l => l.id !== linkId)
           rebuild()
-          showToast('Link verwijderd')
+          showSidebar(n)
+          if (removed) {
+            // Non-blocking undo instead of a native confirm() before the fact.
+            showUndoToast('Link verwijderd', async () => {
+              try {
+                const restored = await createLink({
+                  sourceId: removed.source_id,
+                  targetId: removed.target_id,
+                  type: removed.type,
+                  reason: removed.reason ?? undefined
+                })
+                if (!links.some(l => l.id === restored.id)) links.push(restored)
+                rebuild()
+                showSidebar(n)
+                showToast('Hersteld')
+              } catch (err) {
+                showToast(`Herstellen mislukt: ${errMsg(err)}`)
+              }
+            })
+          } else {
+            showToast('Link verwijderd')
+          }
         } catch (err) {
           showToast(`Mislukt: ${errMsg(err)}`)
         }
@@ -431,7 +687,7 @@ export async function mountGraph(root: HTMLElement): Promise<void> {
     try {
       const bridges = await fetchSemanticBridges({ max: 24 })
       if (bridges.length === 0) {
-        showToast("Geen nieuwe verbanden gevonden (of nog geen embeddings — zie Instellingen).")
+        renderNoBridges()
         return
       }
       suggestedEdges = bridges.map(b => ({ a: b.a_id, b: b.b_id }))
@@ -443,6 +699,18 @@ export async function mountGraph(root: HTMLElement): Promise<void> {
       btn.disabled = false
       btn.textContent = 'Verbindingen voorstellen'
     }
+  }
+
+  // Shown when semantic_bridges returns nothing — usually because embeddings
+  // haven't been generated yet. Give a real path to Settings instead of a toast.
+  function renderNoBridges(): void {
+    const aside = document.getElementById('graph-sidebar')!
+    aside.innerHTML = `
+      <h3 class="sidebar-title">Geen voorstellen</h3>
+      <p class="muted">Er zijn geen nieuwe semantische verbanden gevonden. Dit kan ook betekenen dat je nota's nog geen embeddings hebben — die maken slimme suggesties mogelijk.</p>
+      <button class="btn btn-ghost" data-nav="settings" id="bridge-settings">Naar Instellingen</button>
+    `
+    document.getElementById('bridge-settings')?.addEventListener('click', () => navigateTo('/settings'))
   }
 
   function typeOptsFor(selected: string): string {
@@ -602,6 +870,37 @@ function showToast(msg: string): void {
   setTimeout(() => toast.classList.remove('show'), 2500)
 }
 
+// A toast that offers a single undo action for a few seconds before fading.
+function showUndoToast(msg: string, onUndo: () => void): void {
+  const toast = document.getElementById('toast') as HTMLDivElement | null
+  if (!toast) return
+  toast.innerHTML = `<span>${escHtml(msg)}</span><button type="button" class="toast-undo">Ongedaan maken</button>`
+  toast.classList.add('show')
+  let done = false
+  const hide = () => {
+    if (done) return
+    done = true
+    toast.classList.remove('show')
+    setTimeout(() => { toast.textContent = '' }, 200)
+  }
+  const timer = setTimeout(hide, 6000)
+  toast.querySelector<HTMLButtonElement>('.toast-undo')?.addEventListener('click', () => {
+    clearTimeout(timer)
+    hide()
+    onUndo()
+  })
+}
+
+function pointerDistance(pts: Map<number, { x: number; y: number }>): number {
+  const [a, b] = Array.from(pts.values())
+  return Math.hypot(a.x - b.x, a.y - b.y)
+}
+
+function pointerMidpoint(pts: Map<number, { x: number; y: number }>): { x: number; y: number } {
+  const [a, b] = Array.from(pts.values())
+  return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }
+}
+
 function escHtml(str: string): string {
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 }
@@ -628,11 +927,50 @@ function injectGraphStyles(): void {
     }
     .graph-header {
       display: flex;
-      justify-content: space-between;
+      flex-direction: column;
+      gap: var(--s-2);
+    }
+    .graph-controls {
+      display: flex;
       gap: var(--s-3);
       align-items: center;
       flex-wrap: wrap;
     }
+    .graph-meta-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: var(--s-3);
+      flex-wrap: wrap;
+    }
+    .graph-search {
+      padding: var(--s-2) var(--s-3);
+      border: 1px solid var(--border);
+      border-radius: var(--r-sm);
+      background: var(--surface);
+      color: var(--text);
+      font-size: var(--fs-sm);
+      min-width: 160px;
+    }
+    .graph-reset-btn { width: auto; }
+    .graph-legend {
+      display: flex;
+      gap: var(--s-3);
+      flex-wrap: wrap;
+      font-size: var(--fs-sm);
+      color: var(--text-muted);
+    }
+    .legend-item { display: inline-flex; align-items: center; gap: var(--s-1); }
+    .legend-swatch {
+      width: 18px;
+      height: 0;
+      border-top-width: 2px;
+      border-top-style: solid;
+      display: inline-block;
+    }
+    .legend-theme { border-top-color: var(--border); border-top-width: 1px; }
+    .legend-explicit { border-top-color: var(--accent); }
+    .legend-suggested { border-top-style: dashed; border-top-color: var(--accent); }
     .graph-filter {
       display: inline-flex;
       align-items: center;
@@ -676,7 +1014,10 @@ function injectGraphStyles(): void {
       height: 100%;
       min-height: 480px;
       display: block;
+      cursor: grab;
+      touch-action: none;
     }
+    .graph-svg:active { cursor: grabbing; }
     .graph-edge {
       stroke-opacity: 0.5;
     }
@@ -797,6 +1138,41 @@ function injectGraphStyles(): void {
       color: var(--text-muted);
     }
     .graph-empty h2 { margin-bottom: var(--s-3); color: var(--text); }
+    .graph-error { display: flex; flex-direction: column; align-items: center; gap: var(--s-3); }
+    .graph-empty { display: flex; flex-direction: column; align-items: center; gap: var(--s-2); }
+    .graph-error .btn,
+    .graph-empty .btn { width: auto; }
+
+    /* Focus / search highlighting — fade everything that isn't relevant. */
+    .graph-node, .graph-edge { transition: opacity 0.15s ease; }
+    .graph-node.is-dimmed, .graph-edge.is-dimmed { opacity: 0.12; }
+    .graph-node.is-focused circle { stroke: var(--text); stroke-width: 2.5; }
+    .graph-node.is-match circle { stroke: var(--accent); stroke-width: 2.5; }
+    .graph-edge.is-focused { stroke-opacity: 0.9; }
+
+    /* Drag affordance + keyboard focus ring. */
+    .graph-node.is-dragging circle {
+      stroke: var(--accent);
+      stroke-width: 2.5;
+      filter: drop-shadow(0 2px 4px rgba(0,0,0,0.35));
+    }
+    .graph-node:focus { outline: none; }
+    .graph-node:focus-visible circle {
+      stroke: var(--accent);
+      stroke-width: 3;
+    }
+
+    /* Undo toast action button. */
+    .toast .toast-undo {
+      margin-left: var(--s-3);
+      background: none;
+      border: none;
+      color: var(--accent);
+      font: inherit;
+      font-weight: 600;
+      cursor: pointer;
+      text-decoration: underline;
+    }
   `
   document.head.appendChild(style)
 }
