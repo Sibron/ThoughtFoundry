@@ -1,6 +1,7 @@
 import { insertNote, queueOfflineNote, flushOfflineQueue, offlineQueueSize, fetchNotes, fetchRandomNote, fetchOnThisDay, type NoteInsert, type Note } from '../lib/notes'
 import { fetchSources, type Source } from '../lib/sources'
-import { fetchLinks, createLink } from '../lib/links'
+import { fetchLinks } from '../lib/links'
+import { openLinkModal } from '../lib/link-modal'
 import { fetchAllNoteThemes } from '../lib/themes'
 import { findSurprisingPair, pairKey, type SurprisingPair } from '../lib/similarity'
 import { renderTopbar, attachTopbar, renderGuidanceBanner } from '../lib/nav'
@@ -372,25 +373,22 @@ export async function renderCapture(app: HTMLElement): Promise<void> {
   document.getElementById('btn-connect')?.addEventListener('click', showSurprisingPair)
   document.getElementById('btn-pair-next')?.addEventListener('click', showSurprisingPair)
   document.getElementById('btn-pair-close')?.addEventListener('click', () => { pairPanel.hidden = true })
-  document.getElementById('btn-pair-link')?.addEventListener('click', async (e) => {
+  document.getElementById('btn-pair-link')?.addEventListener('click', () => {
     if (!currentPair || !pairData) return
-    const btn = e.currentTarget as HTMLButtonElement
-    btn.disabled = true
-    try {
-      await createLink({
-        sourceId: currentPair.a.id,
-        targetId: currentPair.b.id,
-        type: 'related',
-        reason: 'Verrassende verbinding'
-      })
-      pairData.linkedPairs.add(pairKey(currentPair.a.id, currentPair.b.id))
-      showToast('Gekoppeld')
-      await showSurprisingPair() // roll the next bridge
-    } catch {
-      showToast('Koppelen mislukt')
-    } finally {
-      btn.disabled = false
-    }
+    const pair = currentPair
+    const data = pairData
+    openLinkModal({
+      sourceId: pair.a.id,
+      sourceLabel: pairPreview(pair.a as Note),
+      target: { id: pair.b.id, label: pairPreview(pair.b as Note) },
+      defaultType: 'related',
+      defaultReason: 'Verrassende verbinding',
+      onLinked: () => {
+        data.linkedPairs.add(pairKey(pair.a.id, pair.b.id))
+        showToast('Gekoppeld')
+        void showSurprisingPair() // roll the next bridge
+      }
+    })
   })
 
   // Online/offline indicator + auto-flush on reconnect
