@@ -94,14 +94,18 @@ export async function fetchNotes(
 }
 
 /**
- * Every note, paged past the 1000-row default. The graph needs the complete set
- * — a fixed cap (e.g. the most recent 500) silently hides older notes, so a
- * theme filter could match notes that were never loaded and render nothing.
+ * Every note (optionally of one status), paged past the 1000-row default. Views
+ * that group the full set by theme or source — the graph, the chapter workbench,
+ * the sources overview — need this: a fixed cap (e.g. the most recent 500)
+ * silently hides older notes, so a theme/source filter could match notes that
+ * were never loaded and render nothing or an undercount.
  */
-export async function fetchAllNotes(): Promise<Note[]> {
-  return fetchAllRows<Note>((from, to) =>
-    supabase.from('notes').select('*').order('created_at', { ascending: false }).range(from, to)
-  )
+export async function fetchAllNotes(status?: NoteStatus): Promise<Note[]> {
+  return fetchAllRows<Note>((from, to) => {
+    let q = supabase.from('notes').select('*').order('created_at', { ascending: false })
+    if (status) q = q.eq('status', status)
+    return q.range(from, to)
+  })
 }
 
 export async function fetchNoteById(id: string): Promise<Note | null> {

@@ -1,4 +1,4 @@
-import { fetchNotes, type Note } from '../lib/notes'
+import { fetchAllNotes, type Note } from '../lib/notes'
 import { fetchThemes, fetchAllNoteThemes, type Theme } from '../lib/themes'
 import { fetchChapters, saveChapter, deleteChapter, type Chapter } from '../lib/chapters'
 import { fetchBooks, createBook, updateBook, deleteBook, type Book } from '../lib/books'
@@ -37,7 +37,7 @@ export async function mountBook(root: HTMLElement): Promise<void> {
 
   try {
     [notes, themes, noteThemes, chapters, books] = await Promise.all([
-      fetchNotes(0, 500, 'verwerkt'),
+      fetchAllNotes('verwerkt'),
       fetchThemes(),
       fetchAllNoteThemes(),
       fetchChapters(),

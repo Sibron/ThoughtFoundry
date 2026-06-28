@@ -1,5 +1,5 @@
 import { fetchSources, createSource, updateSource, deleteSource, SOURCE_TYPES, SOURCE_TYPE_ORDER, type Source, type SourceInsert, type SourceType } from '../lib/sources'
-import { fetchNotes, type Note } from '../lib/notes'
+import { fetchAllNotes, type Note } from '../lib/notes'
 import { renderTopbar, attachTopbar } from '../lib/nav'
 import { createCrudList, injectCrudStyles, showToast, esc, errMsg, type CrudListConfig } from '../lib/crud-list'
 
@@ -30,7 +30,7 @@ async function reload(): Promise<void> {
   const body = document.getElementById('src-body') as HTMLDivElement
   body.innerHTML = '<div class="crud-loading">Laden…</div>'
   try {
-    const [sources, allNotes] = await Promise.all([fetchSources(), fetchNotes(0, 500)])
+    const [sources, allNotes] = await Promise.all([fetchSources(), fetchAllNotes()])
     mount(body, sources, allNotes)
   } catch (err) {
     body.innerHTML = `<div class="crud-loading">Laden mislukt: ${esc(errMsg(err))}</div>`
