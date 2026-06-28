@@ -6,6 +6,7 @@ import { isAiEnabled, renderAiDisabled } from './lib/nav'
 import { applyDisplayPrefs } from './lib/display'
 import { loadUserSettings } from './lib/user-settings'
 import { consumeSharedContent } from './lib/share'
+import { warmSnapshots } from './lib/snapshots'
 import { createRouter, navigateTo } from './router'
 import { renderSetup } from './pages/setup'
 import { renderLogin } from './pages/login'
@@ -35,11 +36,17 @@ applyDisplayPrefs()
 // shared text into the capture draft and redirect to /capture.
 consumeSharedContent()
 
+// Warm the on-device snapshot cache once per session (after the first authed
+// route), so the first visit to a heavy page — graph, themes, sources — renders
+// from cache instead of waiting on the network.
+let warmedThisSession = false
+
 async function guard(handler: (app: HTMLElement) => void | Promise<void>): Promise<void> {
   const session = await getSession()
   if (!session) { navigateTo('/login'); return }
   await loadUserSettings()
   applyDisplayPrefs()
+  if (!warmedThisSession) { warmedThisSession = true; warmSnapshots() }
   await handler(app)
 }
 
