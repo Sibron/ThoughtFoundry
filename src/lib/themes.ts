@@ -1,4 +1,4 @@
-import { supabase } from './supabase'
+import { supabase, fetchAllRows } from './supabase'
 
 export interface Theme {
   id: string
@@ -78,9 +78,11 @@ export async function fetchThemesForNote(noteId: string): Promise<string[]> {
 }
 
 export async function fetchAllNoteThemes(): Promise<{ note_id: string; theme_id: string }[]> {
-  const { data, error } = await supabase.from('note_themes').select('note_id, theme_id')
-  if (error) throw error
-  return (data ?? []) as { note_id: string; theme_id: string }[]
+  // Paged: a user can easily have >1000 note↔theme links (the default cap),
+  // and truncating them undercounts themes and hides notes from the graph.
+  return fetchAllRows<{ note_id: string; theme_id: string }>((from, to) =>
+    supabase.from('note_themes').select('note_id, theme_id').range(from, to)
+  )
 }
 
 export async function setThemesForNote(noteId: string, themeIds: string[]): Promise<void> {

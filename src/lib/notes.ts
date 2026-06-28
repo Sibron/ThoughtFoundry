@@ -1,4 +1,4 @@
-import { supabase } from './supabase'
+import { supabase, fetchAllRows } from './supabase'
 
 export type NoteStatus = 'inbox' | 'verwerkt' | 'archief'
 export type NoteType = 'fleeting' | 'question' | 'literature' | 'permanent' | 'reflection' | 'framework'
@@ -93,6 +93,17 @@ export async function fetchNotes(
   return (data ?? []) as Note[]
 }
 
+/**
+ * Every note, paged past the 1000-row default. The graph needs the complete set
+ * — a fixed cap (e.g. the most recent 500) silently hides older notes, so a
+ * theme filter could match notes that were never loaded and render nothing.
+ */
+export async function fetchAllNotes(): Promise<Note[]> {
+  return fetchAllRows<Note>((from, to) =>
+    supabase.from('notes').select('*').order('created_at', { ascending: false }).range(from, to)
+  )
+}
+
 export async function fetchNoteById(id: string): Promise<Note | null> {
   const { data, error } = await supabase.from('notes').select('*').eq('id', id).maybeSingle()
   if (error) throw error
@@ -150,17 +161,21 @@ export async function bulkUpdateStatus(ids: string[], status: NoteStatus): Promi
  * (over non-archived notes) is the orphan pile worth surfacing for connection.
  */
 export async function fetchConnectedNoteIds(): Promise<Set<string>> {
-  const [linksRes, themesRes] = await Promise.all([
-    supabase.from('note_links').select('source_id, target_id'),
-    supabase.from('note_themes').select('note_id')
+  // Paged: both tables routinely exceed the 1000-row default, and a truncated
+  // read would mislabel genuinely-connected notes as orphans.
+  const [links, themeRows] = await Promise.all([
+    fetchAllRows<{ source_id: string; target_id: string }>((from, to) =>
+      supabase.from('note_links').select('source_id, target_id').range(from, to)
+    ),
+    fetchAllRows<{ note_id: string }>((from, to) =>
+      supabase.from('note_themes').select('note_id').range(from, to)
+    )
   ])
-  if (linksRes.error) throw linksRes.error
-  if (themesRes.error) throw themesRes.error
   const set = new Set<string>()
-  for (const l of (linksRes.data ?? []) as { source_id: string; target_id: string }[]) {
+  for (const l of links) {
     set.add(l.source_id); set.add(l.target_id)
   }
-  for (const t of (themesRes.data ?? []) as { note_id: string }[]) set.add(t.note_id)
+  for (const t of themeRows) set.add(t.note_id)
   return set
 }
 
@@ -191,9 +206,11 @@ export async function fetchNotesByIds(ids: string[]): Promise<Note[]> {
 }
 
 export async function fetchNotesSections(): Promise<{ id: string; section: string | null }[]> {
-  const { data, error } = await supabase.from('notes').select('id, section')
-  if (error) throw error
-  return (data ?? []) as { id: string; section: string | null }[]
+  // Paged so the themes overview's section bars reflect every note, not the
+  // first 1000 the default cap would return.
+  return fetchAllRows<{ id: string; section: string | null }>((from, to) =>
+    supabase.from('notes').select('id, section').range(from, to)
+  )
 }
 
 export async function fetchNotesByTheme(themeId: string): Promise<{ id: string; ai_title: string | null; section: string | null }[]> {
