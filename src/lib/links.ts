@@ -1,4 +1,4 @@
-import { supabase } from './supabase'
+import { supabase, fetchAllRows } from './supabase'
 
 export type LinkType = 'builds_on' | 'contradicts' | 'example_of' | 'contrasts' | 'applies_to' | 'related'
 
@@ -22,9 +22,10 @@ export interface NoteLink {
 }
 
 export async function fetchLinks(): Promise<NoteLink[]> {
-  const { data, error } = await supabase.from('note_links').select('*')
-  if (error) throw error
-  return (data ?? []) as NoteLink[]
+  // Paged so the graph never silently drops links past the 1000-row default.
+  return fetchAllRows<NoteLink>((from, to) =>
+    supabase.from('note_links').select('*').range(from, to)
+  )
 }
 
 export async function fetchLinksForNote(noteId: string): Promise<NoteLink[]> {

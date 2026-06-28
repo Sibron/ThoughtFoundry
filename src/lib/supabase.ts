@@ -29,6 +29,31 @@ export const supabase = createClient(
   supabaseAnonKey || 'placeholder'
 )
 
+/**
+ * Fetch every row of a query, transparently paging past PostgREST's default
+ * 1000-row ceiling. Supabase caps any un-ranged `.select()` at 1000 rows
+ * silently — which quietly truncates "fetch all" reads (note_themes, links,
+ * the full note set) once a user's data grows past that, making notes vanish
+ * from views that join across those sets (e.g. the graph). Pass a builder that
+ * applies `.range(from, to)`; this keeps requesting pages until one comes back
+ * short, which only happens at the true end of the table.
+ */
+export async function fetchAllRows<T>(
+  page: (from: number, to: number) => PromiseLike<{ data: unknown[] | null; error: unknown }>
+): Promise<T[]> {
+  const PAGE_SIZE = 1000
+  const all: T[] = []
+  for (let i = 0; ; i++) {
+    const from = i * PAGE_SIZE
+    const { data, error } = await page(from, from + PAGE_SIZE - 1)
+    if (error) throw error
+    const rows = (data ?? []) as T[]
+    all.push(...rows)
+    if (rows.length < PAGE_SIZE) break
+  }
+  return all
+}
+
 /** Persist user-supplied credentials and reload so the client picks them up. */
 export function saveSupabaseConfig(url: string, anonKey: string): void {
   localStorage.setItem(STORAGE_URL_KEY, url.trim())
