@@ -1,76 +1,36 @@
 # ThoughtFoundry - Master Build Playbook
 
-## 0) Live Execution Checklist (Update Every Session)
+## 0) Status (2026-07)
 
-Use this block as the session dashboard. Every Claude session starts here first.
+The original Fase A–E execution arc is **complete and exceeded**: capture MVP,
+AI processing, graph, book generation, and curation/export are all live, plus
+work that grew beyond the original five phases — the Zettelkasten model (typed
+links, sources, note types), the Denktools layer (Spark, Denkpartner,
+Clusters), semantic linking on free gte-small embeddings (note_neighbors,
+semantic_bridges), book projects with gap-analysis, and the 13→6 nav
+consolidation (see `CONSOLIDATION-AUDIT.md`).
 
-### Global status
-- [ ] Fase A complete
-- [ ] Fase B complete
-- [ ] Fase C complete
-- [ ] Fase D complete
-- [ ] Fase E complete
+### Current arc: "Van notitie-app naar doel-instrument"
 
-### Current focus
-- `Current fase:` [ ] A  [ ] B  [ ] C  [ ] D  [ ] E
-- `Current step:`
-- `Current PR/branch:`
-- `Blockers:` none
-- `Next action (single line):`
+Goal: make ThoughtFoundry a real instrument for reaching goals — book projects
+as the goal spine, richer connection discovery, an in-app writing studio, and
+lower daily friction. One shippable commit per milestone.
 
-### Fase A checklist
-- [ ] Supabase project configured
-- [ ] Schema applied (`supabase/schema.sql`)
-- [ ] Auth user created
-- [ ] `.env` configured locally
-- [ ] Local app boots (`npm run dev`)
-- [ ] Login tested (wrong + right)
-- [ ] Capture save works (button + Ctrl/Cmd+Enter)
-- [ ] Inbox CRUD verified
-- [ ] Deploy secrets configured
-- [ ] Production deploy successful
-- [ ] PWA install verified on Android
-- [ ] Offline queue + sync verified
-
-### Fase B checklist
-- [ ] >= 30 production notes captured
-- [ ] >= 7 friction entries logged
-- [ ] >= 3 usage contexts covered
-- [ ] No code changes made during this fase
-
-### Fase C checklist
-- [ ] Friction entries classified (S/E)
-- [ ] Critical capture bugs identified (max 5)
-- [ ] GitHub issues created with `phase-1-fix`
-- [ ] Fix PRs opened one-by-one
-- [ ] Fixes verified locally and in production
-- [ ] All `phase-1-fix` issues closed
-
-### Fase D checklist
-- [ ] Structural processing needs extracted from friction
-- [ ] Phase 2 spec fields fully updated in this file
-- [ ] Spec reviewed for internal consistency
-- [ ] Spec is implementation-ready without guesswork
-
-### Fase E checklist
-- [ ] `/process` one-note workflow works
-- [ ] AI suggestions fetched via edge function
-- [ ] Suggestions editable before accept
-- [ ] Accept persists status + `processed_at`
-- [ ] Themes/links persistence verified
-- [ ] Cost tracker and 80% warning verified
-- [ ] 100% cap confirm behavior verified
-- [ ] >= 80% accept-without-edit quality reached
-
-### Session handoff log (append newest on top)
-- `YYYY-MM-DD | Session # | Fase | Done this session | Next step | Owner`
-- `2026-06-17 | S008 | Phase B | Zettelkasten features: typed note links, periodic review banner, Spark page+edge, Denkpartner page+edge, Clusters page+edge, Sources library, JSON import | Deploy edge functions via Supabase MCP | Claude`
-- `2026-06-17 | S007 | Phase B | Task 6: "Toon een oude nota" random note button in capture footer (non-modal panel) | Deploy edge function update + review PDF artifact for feature inspiration | Claude`
-- `2026-06-17 | S006 | Phase B | Task 5: debounced client-side duplicate hint in capture, zero API cost | Task 6 random note button | Claude`
-- `2026-06-17 | S005 | Phase B | Task 4: section field in process-note edge function + renderSuggestion select + acceptSuggestion persistence | Task 5 duplicate hint | Claude`
-- `2026-06-17 | S004 | Phase B | Task 3: per-theme note count + 5-segment section progress bar on themes overview | Task 4 section suggestion | Claude`
-- `2026-06-17 | S003 | Phase B | Task 2: replaced all confirm() in process.ts with archive undo toast + inline cost cap disable | Task 3 theme progress | Claude`
-- `2026-06-17 | S002 | Phase B | Task 1: schema migration (notes.section, themes.parent_id), applied to live DB, TS interfaces updated | Task 2 remove modals | Claude`
+| # | Milestone | Status |
+|---|-----------|--------|
+| M0 | Vestige & docs cleanup (stale embedding-era leftovers, schema drift) | in progress |
+| M1 | Foundations: server-side budget cap, gap-analysis via invoke, indexes/RLS | |
+| M2 | Shared AI-action component (model choice + cost estimate everywhere) | |
+| M3 | Semantic core: embed-text fn, matchNotes client, semantic Spark, embed-on-capture | |
+| M4 | Global search (topbar overlay) + semantic mode + route redirects | |
+| M5 | Project↔note wiring + context-aware back-nav | |
+| M6 | "Vandaag" dashboard home: projects-as-goals, momentum, weekoverzicht | |
+| M7 | Verbindingen review queue (4th inbox view) + dismissals | |
+| M8 | Graaf overhaul: theme hubs, degree sizing, LOD labels, filters, focus deep-link | |
+| M9 | Schrijfstudio 1: chapter_sections schema + editor + verwante gedachten | |
+| M10 | Schrijfstudio 2: write-section AI (draft/rewrite/tighten/continue) + revisions | |
+| M11 | Eén boekpijplijn: project tabs + prose-first manuscript export | |
+| M12 | Consistency sweep: undo-toast deletes, helper dedup | |
 
 ---
 
@@ -144,7 +104,7 @@ Success criteria:
 - Supabase Auth (email/password)
 - Supabase Edge Functions
 - Claude models (Haiku for fast processing, Sonnet for deeper generation)
-- Optional embeddings via Voyage + pgvector
+- Free embeddings via the Supabase Edge runtime's built-in gte-small model + pgvector
 - Static deploy via GitHub Actions + FTP
 
 ### Key paths
@@ -160,7 +120,6 @@ Build/client:
 
 Server/edge:
 - `ANTHROPIC_API_KEY` (required)
-- `VOYAGE_API_KEY` (optional)
 
 Deploy:
 - `FTP_SERVER`
@@ -364,7 +323,7 @@ Manual trigger in `/process` only. Never auto-run on capture save.
 ### Model choice
 - `process-note`: `claude-haiku-4-5`
 - `generate-chapter`: `claude-sonnet-4-6`
-- `embed-note` optional: `voyage-3-large`
+- `embed-note` / `embed-notes-batch`: `gte-small` (built into the Edge runtime, free, 384 dims)
 
 ### Cost cap
 - Default cap: $5/month
@@ -375,7 +334,7 @@ Manual trigger in `/process` only. Never auto-run on capture save.
 ### Data model changes
 - `notes.ai_title` text
 - `notes.processed_at` timestamptz
-- `notes.embedding` vector(1024) optional
+- `notes.embedding` vector(384) — gte-small, see `migrations/20260626_embedding_activation.sql`
 - `themes`, `note_themes`, `note_links`, `ai_usage`, `chapters`
 
 ### UI

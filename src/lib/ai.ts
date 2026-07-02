@@ -51,9 +51,9 @@ export async function embedNote(noteId: string): Promise<{ ok: true; dimensions:
 }
 
 /**
- * Embed the next batch of notes that still need a Voyage embedding. Drives the
- * resumable backfill loop in Settings — each call re-queries the cursor, so the
- * run resumes after a refresh. Returns `done` when nothing is left.
+ * Embed the next batch of notes that still need a gte-small embedding. Drives
+ * the resumable backfill loop in Settings — each call re-queries the cursor, so
+ * the run resumes after a refresh. Returns `done` when nothing is left.
  */
 export async function embedNotesBatch(
   batchSize = 50
@@ -103,8 +103,8 @@ export async function reprocessNote(noteId: string): Promise<AIUsage> {
   }
 
   // Keep the semantic substrate current: embed the freshly processed note so it
-  // becomes findable by note_neighbors / semantic_bridges. Best-effort — a Voyage
-  // failure (e.g. no key) must never break reprocessing.
+  // becomes findable by note_neighbors / semantic_bridges. Best-effort — an
+  // embedding failure must never break reprocessing.
   void embedNote(noteId).catch(() => {})
 
   return usage

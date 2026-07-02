@@ -2,6 +2,11 @@
 -- Run this in Supabase SQL Editor.
 -- Phase 2+ extras (themes, note_links, embeddings, ai_usage) are additive
 -- and can be applied later without breaking Phase 1.
+--
+-- NOTE: the dated files in supabase/migrations/ are the source of truth for
+-- anything added or changed after this snapshot (semantic RPCs, user_settings,
+-- goals-era tables). On a fresh install, run this file first, then every
+-- migration in date order.
 
 -- ── Extensions ──────────────────────────────────────────────────────────────
 create extension if not exists "pgcrypto";
@@ -48,7 +53,8 @@ alter table public.notes add column if not exists source_id uuid;
 do $$
 begin
   if exists (select 1 from pg_extension where extname = 'vector') then
-    execute 'alter table public.notes add column if not exists embedding vector(1024)';
+    -- 384 dims = the Supabase Edge runtime's built-in gte-small model (free).
+    execute 'alter table public.notes add column if not exists embedding vector(384)';
   end if;
 end $$;
 
@@ -227,7 +233,7 @@ end $$;
 -- Returns the N notes most similar to a given query embedding (excluding self).
 -- Safe to call even without pgvector — it just returns nothing.
 create or replace function public.match_notes(
-  query_embedding vector(1024),
+  query_embedding vector(384),
   match_count int default 5,
   exclude_id uuid default null
 )
