@@ -12,7 +12,9 @@ import {
 import { fetchNotesByIds, getNoteTitle, type Note } from '../lib/notes'
 import { embedText, matchNotes, hasEmbeddings } from '../lib/semantic'
 import { renderMarkdownHtml, countWords } from '../lib/markdown'
-import { renderTopbar, attachTopbar } from '../lib/nav'
+import { writeSection, type WriteSectionMode } from '../lib/ai'
+import { createAiAction } from '../lib/ai-action'
+import { renderTopbar, attachTopbar, isAiEnabled } from '../lib/nav'
 import { showToast, esc, errMsg } from '../lib/crud-list'
 import { navigateTo, navigateBack } from '../router'
 
@@ -150,7 +152,129 @@ export async function renderStudio(app: HTMLElement): Promise<void> {
     `
 
     wireEditor(s)
+    mountAiHelp(s)
     void loadAttachedNotes(s)
+  }
+
+  // ── AI-hulp: draft / rewrite / tighten / continue — always a proposal ──────
+
+  function mountAiHelp(s: SectionRow): void {
+    const host = document.getElementById('studio-ai-host')
+    if (!host || !isAiEnabled()) return
+
+    host.innerHTML = `
+      <div class="studio-ai">
+        <div class="studio-ai-row">
+          <select id="studio-ai-mode" aria-label="AI-hulp modus">
+            <option value="draft">Schrijf deze sectie (uit je nota's)</option>
+            <option value="continue">Schrijf verder</option>
+            <option value="rewrite">Herschrijf selectie/tekst</option>
+            <option value="tighten">Maak strakker</option>
+          </select>
+          <input type="text" id="studio-ai-instruction" placeholder="Aanwijzing (optioneel), bv. 'zakelijker'" />
+        </div>
+        <div id="studio-ai-action"></div>
+        <div id="studio-ai-proposal" hidden></div>
+      </div>
+    `
+
+    const modeEl = host.querySelector<HTMLSelectElement>('#studio-ai-mode')!
+    const instructionEl = host.querySelector<HTMLInputElement>('#studio-ai-instruction')!
+
+    const selectionNow = (): string => {
+      const ta = document.getElementById('sec-content') as HTMLTextAreaElement | null
+      if (!ta) return ''
+      return ta.value.slice(ta.selectionStart, ta.selectionEnd).trim()
+    }
+
+    const action = createAiAction(host.querySelector<HTMLElement>('#studio-ai-action')!, {
+      label: 'AI-hulp uitvoeren',
+      defaultModel: 'claude-sonnet-4-6',
+      expectedOutputTokens: 900,
+      estimateInputChars: () => s.note_ids.length * 400 + (s.content_md?.length ?? 0) + 800,
+      phases: ['Nota\'s doornemen…', 'Toon vangen…', 'Proza schrijven…', 'Bijschaven…'],
+      beforeRun: () => {
+        flushSave()
+        const mode = modeEl.value as WriteSectionMode
+        if (mode === 'draft' && s.note_ids.length === 0) {
+          showToast('Koppel eerst gedachten aan deze sectie (drawer hieronder)'); return false
+        }
+        if (mode === 'continue' && !s.content_md?.trim()) {
+          showToast('Er is nog geen tekst om op verder te schrijven'); return false
+        }
+        if ((mode === 'rewrite' || mode === 'tighten') && !s.content_md?.trim()) {
+          showToast('Er is nog geen tekst om te bewerken'); return false
+        }
+        return true
+      },
+      run: async (model, overrideCap) => {
+        const mode = modeEl.value as WriteSectionMode
+        const selection = (mode === 'rewrite' || mode === 'tighten') ? selectionNow() : ''
+        const { text, usage } = await writeSection({
+          sectionId: s.id,
+          mode,
+          selection: selection || undefined,
+          currentText: s.content_md ?? undefined,
+          instruction: instructionEl.value.trim() || undefined,
+          model, overrideCap
+        })
+        showProposal(s, mode, selection, text)
+        return usage
+      },
+    })
+    modeEl.addEventListener('change', () => action.refreshEstimate())
+  }
+
+  function showProposal(s: SectionRow, mode: WriteSectionMode, selection: string, text: string): void {
+    const panel = document.getElementById('studio-ai-proposal')
+    if (!panel) return
+
+    const replacesSelection = (mode === 'rewrite' || mode === 'tighten') && !!selection
+    const actions: { key: string; label: string }[] = []
+    if (mode === 'draft' || mode === 'rewrite' || mode === 'tighten') {
+      actions.push({ key: 'replace', label: replacesSelection ? 'Vervang selectie' : 'Vervang sectietekst' })
+    }
+    if (mode === 'draft' || mode === 'continue') {
+      actions.push({ key: 'append', label: 'Voeg toe onderaan' })
+    }
+    actions.push({ key: 'cancel', label: 'Annuleer' })
+
+    panel.hidden = false
+    panel.innerHTML = `
+      <div class="studio-proposal">
+        <div class="studio-proposal-head">Voorstel van AI — jij beslist</div>
+        <div class="studio-proposal-body">${renderMarkdownHtml(text)}</div>
+        <div class="studio-proposal-actions">
+          ${actions.map(a => `<button class="btn ${a.key === 'cancel' ? 'btn-ghost' : 'btn-primary'} btn-sm" data-proposal="${a.key}">${esc(a.label)}</button>`).join('')}
+        </div>
+      </div>
+    `
+    panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+
+    panel.querySelectorAll<HTMLButtonElement>('[data-proposal]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const act = btn.dataset['proposal']
+        if (act === 'cancel') { panel.hidden = true; panel.innerHTML = ''; return }
+        try {
+          // ALWAYS snapshot the pre-AI text so the change is undoable.
+          if (s.content_md?.trim()) await saveRevision(s.id, s.content_md, 'voor AI-wijziging')
+
+          if (act === 'append') {
+            s.content_md = [s.content_md?.trimEnd(), text].filter(Boolean).join('\n\n')
+          } else if (replacesSelection && s.content_md) {
+            s.content_md = s.content_md.replace(selection, text)
+          } else {
+            s.content_md = text
+          }
+          await updateSection(s.id, { content_md: s.content_md })
+          previewMode = false
+          renderEditor()
+          showToast('Toegepast — vorige versie staat onder Versies')
+        } catch (err) {
+          showToast(`Toepassen mislukt: ${errMsg(err)}`)
+        }
+      })
+    })
   }
 
   function wireEditor(s: SectionRow): void {
@@ -477,6 +601,20 @@ function injectStudioStyles(): void {
     .studio-rev { display: flex; gap: var(--s-2); align-items: center; justify-content: space-between; font-size: var(--fs-sm); }
     .studio-rev-meta { color: var(--text-muted); }
     .studio-rev .btn { width: auto; }
+    .studio-ai { display: flex; flex-direction: column; gap: var(--s-2); border-top: 1px solid var(--border); padding-top: var(--s-3); }
+    .studio-ai-row { display: flex; gap: var(--s-2); flex-wrap: wrap; }
+    .studio-ai-row select { max-width: 280px; }
+    .studio-ai-row input { flex: 1; min-width: 180px; }
+    .studio-proposal {
+      border: 1px solid var(--accent); border-radius: var(--r-md);
+      padding: var(--s-3); display: flex; flex-direction: column; gap: var(--s-2);
+      background: var(--bg);
+    }
+    .studio-proposal-head { font-size: var(--fs-sm); font-weight: 600; color: var(--accent); }
+    .studio-proposal-body { line-height: 1.7; max-height: 40vh; overflow-y: auto; }
+    .studio-proposal-body p { margin-bottom: var(--s-2); }
+    .studio-proposal-actions { display: flex; gap: var(--s-2); flex-wrap: wrap; }
+    .studio-proposal-actions .btn { width: auto; }
     .muted { color: var(--text-muted); font-size: var(--fs-sm); }
   `
   document.head.appendChild(style)
