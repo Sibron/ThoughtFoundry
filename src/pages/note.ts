@@ -29,13 +29,14 @@ import {
   type NoteLink
 } from '../lib/links'
 import { fetchSources, type Source } from '../lib/sources'
+import { fetchProjects, fetchNoteProjectIds, setNoteProjects, type BookProject } from '../lib/projects'
 import { openLinkModal } from '../lib/link-modal'
 import { SECTIONS } from '../lib/sections'
 import { rankBySimilarity } from '../lib/similarity'
 import { fetchNeighbors } from '../lib/semantic'
 import { processNote, AiBudgetError } from '../lib/ai'
 import { renderTopbar, attachTopbar, isAiEnabled } from '../lib/nav'
-import { navigateTo } from '../router'
+import { navigateTo, navigateBack } from '../router'
 
 const STATUS_LABELS: Record<NoteStatus, string> = {
   inbox: 'Inbox',
@@ -60,14 +61,18 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
   let noteThemeIds: string[] = []
   let links: NoteLink[] = []
   let sources: Source[] = []
+  let projects: BookProject[] = []
+  let noteProjectIds: string[] = []
 
   try {
-    [note, themes, noteThemeIds, links, sources] = await Promise.all([
+    [note, themes, noteThemeIds, links, sources, projects, noteProjectIds] = await Promise.all([
       fetchNoteById(id),
       fetchThemes(),
       fetchThemesForNote(id),
       fetchLinksForNote(id),
-      fetchSources()
+      fetchSources(),
+      fetchProjects(),
+      fetchNoteProjectIds(id)
     ])
   } catch (err) {
     document.querySelector('.note-body')!.innerHTML =
@@ -116,6 +121,15 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
           `<label class="chip-check"><input type="checkbox" class="theme-check" value="${t.id}" ${noteThemeIds.includes(t.id) ? 'checked' : ''}/> ${escHtml(t.name)}</label>`
         ).join('')
       : '<span class="muted">Nog geen thema\'s. Maak ze aan via Thema\'s.</span>'
+    // Only offer live projects — attaching a fresh thought to an archived
+    // project is almost always a mistake (still shown when already attached).
+    const projectChecks = projects.length
+      ? projects
+          .filter(p => p.status !== 'archived' || noteProjectIds.includes(p.id))
+          .map(p =>
+            `<label class="chip-check"><input type="checkbox" class="project-check" value="${p.id}" ${noteProjectIds.includes(p.id) ? 'checked' : ''}/> ${escHtml(p.title)}</label>`
+          ).join('')
+      : '<span class="muted">Nog geen boekprojecten. Maak ze aan via Bibliotheek → Boek → Projecten.</span>'
 
     body.innerHTML = `
       <article class="note-card">
@@ -182,6 +196,11 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
         <fieldset class="field">
           <legend class="field-label">Thema's</legend>
           <div class="chip-group">${themeChecks}</div>
+        </fieldset>
+
+        <fieldset class="field">
+          <legend class="field-label">Boekprojecten</legend>
+          <div class="chip-group">${projectChecks}</div>
         </fieldset>
 
         <fieldset class="field">
@@ -533,12 +552,15 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
     const updates = { ...collectUpdate(), ...extra }
     if (!updates.content) { showToast('Uitwerking mag niet leeg zijn.'); return false }
     const themeIds = Array.from(document.querySelectorAll<HTMLInputElement>('.theme-check:checked')).map(c => c.value)
+    const projectIds = Array.from(document.querySelectorAll<HTMLInputElement>('.project-check:checked')).map(c => c.value)
     try {
       const saved = await updateNote(id, updates)
       Object.assign(current, saved)
       tagsState = [...(current.tags ?? [])]
       await setThemesForNote(id, themeIds)
       noteThemeIds = themeIds
+      await setNoteProjects(id, projectIds)
+      noteProjectIds = projectIds
       return true
     } catch (err) {
       showToast(`Opslaan mislukt: ${errMsg(err)}`)
@@ -563,7 +585,7 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
       btn.disabled = false
     })
 
-    document.getElementById('back-btn')?.addEventListener('click', () => navigateTo('/inbox'))
+    document.getElementById('back-btn')?.addEventListener('click', () => navigateBack('/inbox'))
 
     document.getElementById('delete-btn')?.addEventListener('click', async () => {
       if (!confirm('Deze nota definitief verwijderen?')) return

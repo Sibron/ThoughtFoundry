@@ -1,12 +1,14 @@
 import {
   fetchProjects, createProject, updateProject, deleteProject,
-  fetchProjectNoteIds,
+  fetchProjectNoteIds, addNotesToProject, removeNoteFromProject,
   BOOK_STATUSES, type BookProject, type BookProjectInsert, type ProjectStatus
 } from '../lib/projects'
 import { fetchNotesByIds, type Note } from '../lib/notes'
 import { isAiEnabled } from '../lib/nav'
 import { runGapAnalysis } from '../lib/ai'
 import { createAiAction } from '../lib/ai-action'
+import { openNotePicker } from '../lib/note-picker'
+import { navigateTo } from '../router'
 import { createCrudList, injectCrudStyles, showToast, esc, errMsg, type CrudListConfig, type CrudDetailCtx } from '../lib/crud-list'
 
 type ProjectForm = BookProjectInsert & { status: ProjectStatus }
@@ -82,10 +84,13 @@ async function mountDetail(project: BookProject, host: HTMLElement, ctx: CrudDet
   let notes: Note[] = []
   let gapResult: string | null = null
 
-  try {
-    noteIds = await fetchProjectNoteIds(project.id)
-    notes = noteIds.length > 0 ? await fetchNotesByIds(noteIds) : []
-  } catch { /* show empty */ }
+  async function loadNotes(): Promise<void> {
+    try {
+      noteIds = await fetchProjectNoteIds(project.id)
+      notes = noteIds.length > 0 ? await fetchNotesByIds(noteIds) : []
+    } catch { /* show empty */ }
+  }
+  await loadNotes()
 
   const status = BOOK_STATUSES[project.status]
 
@@ -133,6 +138,36 @@ async function mountDetail(project: BookProject, host: HTMLElement, ctx: CrudDet
       })
     })
 
+    document.getElementById('proj-attach-btn')?.addEventListener('click', () => {
+      openNotePicker({
+        title: `Noten koppelen aan «${project.title}»`,
+        seedText: [project.core_question, project.description].filter(Boolean).join('\n'),
+        excludeIds: noteIds,
+        onConfirm: async (ids) => {
+          await addNotesToProject(project.id, ids)
+          showToast(`${ids.length} ${ids.length === 1 ? 'noot' : 'noten'} gekoppeld`)
+          await loadNotes()
+          render()
+        }
+      })
+    })
+
+    document.querySelectorAll<HTMLButtonElement>('[data-detach-id]').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation()
+        try {
+          await removeNoteFromProject(project.id, btn.dataset['detachId']!)
+          showToast('Noot ontkoppeld')
+          await loadNotes()
+          render()
+        } catch { showToast('Ontkoppelen mislukt') }
+      })
+    })
+
+    document.querySelectorAll<HTMLElement>('.proj-note-row[data-note-id]').forEach(row => {
+      row.addEventListener('click', () => navigateTo('/note?id=' + row.dataset['noteId']))
+    })
+
     const gapHost = document.getElementById('gap-action-host')
     if (gapHost) {
       createAiAction(gapHost, {
@@ -161,16 +196,22 @@ async function mountDetail(project: BookProject, host: HTMLElement, ctx: CrudDet
 }
 
 function renderNotesTab(notes: Note[]): string {
-  if (notes.length === 0) return '<p class="muted">Nog geen noten gekoppeld aan dit project.</p>'
   return `
-    <div class="proj-notes-list">
-      ${notes.map(n => `
-        <div class="crud-note-row">
-          <span class="crud-note-title">${esc(n.ai_title ?? n.core_idea ?? n.content.slice(0, 80))}</span>
-          <span class="badge badge-${n.status}">${esc(n.status)}</span>
-        </div>
-      `).join('')}
+    <div class="proj-notes-tools">
+      <button class="btn btn-ghost" id="proj-attach-btn">+ Noten koppelen</button>
     </div>
+    ${notes.length === 0
+      ? '<p class="muted">Nog geen noten gekoppeld aan dit project. Koppel ze hier, of via het veld Boekprojecten in de nota-editor.</p>'
+      : `<div class="proj-notes-list">
+          ${notes.map(n => `
+            <div class="crud-note-row proj-note-row" data-note-id="${n.id}" role="button" tabindex="0">
+              <span class="crud-note-title">${esc(n.ai_title ?? n.core_idea ?? n.content.slice(0, 80))}</span>
+              <span class="badge badge-${n.status}">${esc(n.status)}</span>
+              <button class="btn btn-ghost btn-sm proj-detach" data-detach-id="${n.id}" title="Uit dit project halen">Ontkoppel</button>
+            </div>
+          `).join('')}
+        </div>`
+    }
   `
 }
 
@@ -273,7 +314,12 @@ function injectProjectStyles(): void {
       font-size: var(--fs-sm); cursor: pointer; color: var(--text-muted); margin-bottom: -1px;
     }
     .proj-tab.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+    .proj-notes-tools { margin-bottom: var(--s-2); }
+    .proj-notes-tools .btn { width: auto; }
     .proj-notes-list { display: flex; flex-direction: column; gap: var(--s-1); }
+    .proj-note-row { cursor: pointer; }
+    .proj-note-row:hover { border-color: var(--accent); }
+    .proj-detach { flex-shrink: 0; }
     .gap-wrap { display: flex; flex-direction: column; gap: var(--s-3); }
     .gap-wrap .btn { width: auto; }
     .gap-result { background: var(--bg); border: 1px solid var(--border); border-radius: var(--r-sm); padding: var(--s-4); border-left: 3px solid var(--accent); }

@@ -111,3 +111,28 @@ export async function setNoteProjects(noteId: string, projectIds: string[]): Pro
   const { error } = await supabase.from('note_book_projects').insert(rows)
   if (error) throw error
 }
+
+/** Bulk-attach notes to one project (skips rows that already exist). */
+export async function addNotesToProject(projectId: string, noteIds: string[]): Promise<void> {
+  if (noteIds.length === 0) return
+  const { data: userData } = await supabase.auth.getUser()
+  const userId = userData.user?.id
+  if (!userId) throw new Error('Niet aangemeld')
+
+  const existing = new Set(await fetchProjectNoteIds(projectId))
+  const rows = noteIds
+    .filter(id => !existing.has(id))
+    .map(id => ({ note_id: id, project_id: projectId, user_id: userId }))
+  if (rows.length === 0) return
+  const { error } = await supabase.from('note_book_projects').insert(rows)
+  if (error) throw error
+}
+
+export async function removeNoteFromProject(projectId: string, noteId: string): Promise<void> {
+  const { error } = await supabase
+    .from('note_book_projects')
+    .delete()
+    .eq('project_id', projectId)
+    .eq('note_id', noteId)
+  if (error) throw error
+}
