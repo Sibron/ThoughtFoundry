@@ -52,10 +52,10 @@ Deno.serve(async (req: Request) => {
   const apiKey = Deno.env.get('ANTHROPIC_API_KEY')
   if (!apiKey) return jsonResponse({ error: 'ANTHROPIC_API_KEY not configured' }, 500)
 
-  let body: { persona?: string; overrideCap?: boolean } = {}
+  let body: { persona?: string; model?: 'claude-haiku-4-5' | 'claude-sonnet-4-6'; overrideCap?: boolean } = {}
   try { body = await req.json() } catch { /* body is optional */ }
 
-  const model = 'claude-sonnet-4-6'
+  const model = body.model ?? 'claude-sonnet-4-6'
   const supabase = getUserClient(req)
 
   let userId: string
