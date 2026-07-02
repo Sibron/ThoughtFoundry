@@ -53,3 +53,38 @@ export async function fetchSemanticBridges(
   if (error) throw error
   return (data ?? []) as BridgePair[]
 }
+
+export interface MatchedNote {
+  id: string
+  content: string
+  similarity: number
+}
+
+/**
+ * Embed arbitrary text with the free in-runtime model (edge fn `embed-text`,
+ * nothing persisted, zero cost). Feed the result to matchNotes for
+ * query-by-meaning.
+ */
+export async function embedText(text: string): Promise<number[]> {
+  const { data, error } = await supabase.functions.invoke('embed-text', { body: { text } })
+  if (error) throw new Error(error.message ?? 'embed-text mislukt')
+  const payload = data as { embedding?: number[]; error?: string } | null
+  if (payload?.error) throw new Error(payload.error)
+  if (!Array.isArray(payload?.embedding)) throw new Error('Geen embedding ontvangen')
+  return payload.embedding
+}
+
+/** Cosine KNN over the user's embedded notes for an arbitrary query vector. */
+export async function matchNotes(
+  embedding: number[],
+  count = 10,
+  excludeId?: string
+): Promise<MatchedNote[]> {
+  const { data, error } = await supabase.rpc('match_notes', {
+    query_embedding: embedding,
+    match_count: count,
+    exclude_id: excludeId ?? null
+  })
+  if (error) throw error
+  return (data ?? []) as MatchedNote[]
+}

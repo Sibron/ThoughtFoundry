@@ -1,9 +1,10 @@
-import { insertNote, queueOfflineNote, flushOfflineQueue, offlineQueueSize, fetchNotes, fetchRandomNote, fetchOnThisDay, type NoteInsert, type Note } from '../lib/notes'
+import { insertNote, queueOfflineNote, flushOfflineQueue, offlineQueueSize, fetchNotes, fetchRandomNote, fetchOnThisDay, getNoteTitle, type NoteInsert, type Note } from '../lib/notes'
 import { fetchSources, type Source } from '../lib/sources'
-import { fetchLinks } from '../lib/links'
+import { fetchLinks, createLink } from '../lib/links'
 import { openLinkModal } from '../lib/link-modal'
 import { fetchAllNoteThemes } from '../lib/themes'
-import { findSurprisingPair, pairKey, type SurprisingPair } from '../lib/similarity'
+import { findSurprisingPair, pairKey, rankBySimilarity, type SurprisingPair } from '../lib/similarity'
+import { embedNote } from '../lib/ai'
 import { renderTopbar, attachTopbar, renderGuidanceBanner } from '../lib/nav'
 import { navigateTo } from '../router'
 
@@ -41,6 +42,7 @@ export async function renderCapture(app: HTMLElement): Promise<void> {
         placeholder="Gooi het erin. Half is goed genoeg. Later wordt het iets."
       ></textarea>
       <p class="duplicate-hint" id="duplicate-hint"></p>
+      <div class="related-card" id="related-card" hidden></div>
 
       <details class="capture-extra" id="meer-details">
         <summary class="capture-extra-toggle">Meer velden</summary>
@@ -247,6 +249,10 @@ export async function renderCapture(app: HTMLElement): Promise<void> {
     try {
       if (navigator.onLine) {
         const saved = await insertNote(note)
+        // Keep the semantic substrate current from the moment of capture
+        // (free, fire-and-forget — a failure must never block saving).
+        void embedNote(saved.id).catch(() => {})
+        showRelatedCard(saved, recentNotes)
         recentNotes = [saved, ...recentNotes].slice(0, 50)
       } else {
         await queueOfflineNote(note)
@@ -449,6 +455,43 @@ function countIntersection(a: Set<string>, b: Set<string>): number {
   return count
 }
 
+/**
+ * Instant "Lijkt verwant aan …" card right after a save: lexical ranking over
+ * the already-loaded recent notes (zero network, works offline-ish), with a
+ * one-tap Koppel that creates a 'related' link. Dismisses on Weiger or the
+ * next save.
+ */
+function showRelatedCard(saved: Note, pool: Note[]): void {
+  const card = document.getElementById('related-card') as HTMLDivElement | null
+  if (!card) return
+  card.hidden = true
+
+  const candidates = pool.filter(n => n.id !== saved.id)
+  const [best] = rankBySimilarity(saved, candidates, 1)
+  if (!best || best.score < 3) return
+
+  const title = getNoteTitle(best.note, 70)
+  card.innerHTML = `
+    <span class="related-card-text">Lijkt verwant aan: «${escHtml(title)}»</span>
+    <span class="related-card-actions">
+      <button class="btn btn-ghost btn-sm" id="related-link-btn">Koppel</button>
+      <button class="btn btn-ghost btn-sm" id="related-dismiss-btn">Weiger</button>
+    </span>
+  `
+  card.hidden = false
+
+  document.getElementById('related-dismiss-btn')?.addEventListener('click', () => { card.hidden = true })
+  document.getElementById('related-link-btn')?.addEventListener('click', async () => {
+    try {
+      await createLink({ sourceId: saved.id, targetId: best.note.id, type: 'related', reason: 'Bij vastleggen gekoppeld' })
+      showToast('Gekoppeld')
+    } catch {
+      showToast('Koppelen mislukt (bestaat de link al?)')
+    }
+    card.hidden = true
+  })
+}
+
 function restoreDraft(els: {
   textarea: HTMLTextAreaElement
   useForEl: HTMLInputElement
@@ -562,6 +605,21 @@ function injectCaptureStyles(): void {
       min-height: 1.2em;
       margin: 0;
     }
+    .related-card {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: var(--s-2);
+      flex-wrap: wrap;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--accent);
+      border-radius: var(--r-sm);
+      padding: var(--s-2) var(--s-3);
+      font-size: var(--fs-sm);
+    }
+    .related-card-actions { display: inline-flex; gap: var(--s-1); }
+    .related-card .btn { width: auto; }
     .capture-mini-textarea {
       margin-top: var(--s-2);
     }

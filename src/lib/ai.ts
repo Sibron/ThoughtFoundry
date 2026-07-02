@@ -179,6 +179,7 @@ export async function generateChapter(input: {
 export interface SparkResult {
   synthesis: string | null
   matchCount: number
+  retrieval?: 'semantisch' | 'lexicaal'
   message?: string
   usage?: AIUsage
 }
