@@ -13,7 +13,9 @@ import { renderTopbar, attachTopbar, renderGuidanceBanner } from '../lib/nav'
 import { navigateTo } from '../router'
 import { mountSearch } from './search'
 import { mountGraph } from './graph'
+import { mountConnections } from './connections'
 import { injectShellStyles } from './denktools'
+import { esc as escHtml, errMsg, showToast } from '../lib/crud-list'
 
 export async function renderInbox(app: HTMLElement): Promise<void> {
   app.innerHTML = `
@@ -22,6 +24,7 @@ export async function renderInbox(app: HTMLElement): Promise<void> {
       <button class="shell-tab" data-view="list" aria-current="true">Lijst</button>
       <button class="shell-tab" data-view="search">Zoeken</button>
       <button class="shell-tab" data-view="graph">Graaf</button>
+      <button class="shell-tab" data-view="connections">Verbindingen</button>
     </div>
     <div id="inbox-view">
       <div id="inbox-list-view"></div>
@@ -37,25 +40,27 @@ export async function renderInbox(app: HTMLElement): Promise<void> {
   const toggle = document.getElementById('inbox-view-toggle')!
 
   // The list holds expensive state (status/type filters, search text, selection,
-  // loaded pages, scroll), so it is mounted once and only hidden/shown. Zoeken
-  // and Graaf are "re-finding" views without state worth keeping — they mount
-  // fresh into a separate aux container.
-  let current: 'list' | 'search' | 'graph' = 'list'
+  // loaded pages, scroll), so it is mounted once and only hidden/shown. Zoeken,
+  // Graaf and Verbindingen are "re-finding" views without state worth keeping —
+  // they mount fresh into a separate aux container.
+  type AuxView = 'search' | 'graph' | 'connections'
+  let current: 'list' | AuxView = 'list'
   let auxLoading = false
-  let auxDesired: 'search' | 'graph' | null = null
+  let auxDesired: AuxView | null = null
 
   // Single in-flight aux mount; re-mount if a newer view was requested mid-load
   // so the last-clicked view wins (guards against fast switching).
-  async function showAux(v: 'search' | 'graph'): Promise<void> {
+  async function showAux(v: AuxView): Promise<void> {
     auxDesired = v
     if (auxLoading) return
     auxLoading = true
     try {
       while (auxDesired) {
-        const t: 'search' | 'graph' = auxDesired
+        const t: AuxView = auxDesired
         auxView.innerHTML = ''
         if (t === 'search') await mountSearch(auxView)
-        else await mountGraph(auxView)
+        else if (t === 'graph') await mountGraph(auxView)
+        else await mountConnections(auxView)
         if (auxDesired === t) break
       }
     } finally {
@@ -65,7 +70,7 @@ export async function renderInbox(app: HTMLElement): Promise<void> {
 
   toggle.querySelectorAll<HTMLButtonElement>('.shell-tab').forEach(btn => {
     btn.addEventListener('click', async () => {
-      const v = btn.dataset['view'] as 'list' | 'search' | 'graph'
+      const v = btn.dataset['view'] as 'list' | AuxView
       if (v === current) return
       current = v
       toggle.querySelectorAll('.shell-tab').forEach(b => b.removeAttribute('aria-current'))
@@ -83,6 +88,16 @@ export async function renderInbox(app: HTMLElement): Promise<void> {
       }
     })
   })
+
+  // Deep-links: /inbox?view=search|graph|verbindingen (used by the old
+  // /search and /graph routes, Vandaag's CTA's, and "Bekijk in graaf" entries).
+  const params = new URLSearchParams(window.location.hash.split('?')[1] ?? '')
+  const requestedView = params.get('view')
+  const viewAlias: Record<string, string> = { zoeken: 'search', graaf: 'graph', verbindingen: 'connections' }
+  const view = requestedView ? (viewAlias[requestedView] ?? requestedView) : null
+  if (view === 'search' || view === 'graph' || view === 'connections') {
+    toggle.querySelector<HTMLButtonElement>(`[data-view="${view}"]`)?.click()
+  }
 
   await mountInboxList(listView)
 }
@@ -107,7 +122,7 @@ export async function mountInboxList(root: HTMLElement): Promise<void> {
       </div>
       <div class="orphan-banner focus-hide" id="orphan-banner" hidden></div>
       <div class="inbox-toolbar">
-        <input type="text" id="inbox-filter" placeholder="Zoeken in content, titel, samenvatting…" class="inbox-filter" />
+        <input type="text" id="inbox-filter" placeholder="Filter deze lijst…" title="Filtert de geladen notities. Diep zoeken? Gebruik Zoek in de bovenbalk." class="inbox-filter" />
         <label class="inbox-select-all"><input type="checkbox" id="select-all" /> alles</label>
       </div>
       <div class="inbox-bulkbar" id="inbox-bulkbar" hidden>
@@ -171,21 +186,20 @@ export async function mountInboxList(root: HTMLElement): Promise<void> {
     })
   })
 
+  // Pure client-side filter over the already-loaded rows — instant, no
+  // refetch. Deep search (full corpus, relevance-ranked, semantic mode) lives
+  // behind the Zoek button in the topbar.
   filterInput.addEventListener('input', () => {
     if (searchDebounce) clearTimeout(searchDebounce)
-    searchDebounce = setTimeout(async () => {
-      searchText = filterInput.value.trim()
-      page = 0
-      allNotes = []
-      selected.clear()
-      updateBulkBar()
-      await loadNotes()
-    }, 280)
+    searchDebounce = setTimeout(() => {
+      searchText = filterInput.value.trim().toLowerCase()
+      renderList()
+    }, 120)
   })
 
   selectAllEl.addEventListener('change', () => {
     if (selectAllEl.checked) {
-      allNotes.forEach(n => selected.add(n.id))
+      visibleNotes().forEach(n => selected.add(n.id))
     } else {
       selected.clear()
     }
@@ -233,13 +247,13 @@ export async function mountInboxList(root: HTMLElement): Promise<void> {
         // Orphans = notes with no link and no theme. Filter a wide recent pool
         // client-side; no pagination (the pile is meant to be drained, not browsed).
         const connected = await ensureConnected()
-        const pool = await fetchNotes(0, 300, statusFilter, searchText || undefined, noteTypeFilter)
+        const pool = await fetchNotes(0, 300, statusFilter, undefined, noteTypeFilter)
         allNotes = pool.filter(n => !connected.has(n.id))
         loadMoreBtn.style.display = 'none'
         renderList()
         return
       }
-      const notes = await fetchNotes(page, 50, statusFilter, searchText || undefined, noteTypeFilter)
+      const notes = await fetchNotes(page, 50, statusFilter, undefined, noteTypeFilter)
       allNotes = page === 0 ? notes : [...allNotes, ...notes]
       loadMoreBtn.style.display = notes.length === 50 ? 'flex' : 'none'
       renderList()
@@ -276,15 +290,27 @@ export async function mountInboxList(root: HTMLElement): Promise<void> {
     } catch { /* best-effort */ }
   }
 
+  function visibleNotes(): Note[] {
+    if (!searchText) return allNotes
+    return allNotes.filter(n =>
+      [n.content, n.ai_title, n.ai_summary, ...(n.tags ?? [])]
+        .filter(Boolean)
+        .some(t => (t as string).toLowerCase().includes(searchText))
+    )
+  }
+
   function renderList(): void {
-    if (allNotes.length === 0) {
-      listEl.innerHTML = '<div class="inbox-empty">Geen notities gevonden.</div>'
+    const notes = visibleNotes()
+    if (notes.length === 0) {
+      listEl.innerHTML = searchText
+        ? '<div class="inbox-empty">Niets in de geladen lijst. Diep zoeken? Gebruik Zoek in de bovenbalk.</div>'
+        : '<div class="inbox-empty">Geen notities gevonden.</div>'
       selectAllEl.checked = false
       return
     }
-    listEl.innerHTML = allNotes.map(note => renderNoteRow(note, selected.has(note.id))).join('')
+    listEl.innerHTML = notes.map(note => renderNoteRow(note, selected.has(note.id))).join('')
     attachRowListeners()
-    selectAllEl.checked = allNotes.length > 0 && allNotes.every(n => selected.has(n.id))
+    selectAllEl.checked = notes.length > 0 && notes.every(n => selected.has(n.id))
   }
 
   function updateBulkBar(): void {
@@ -433,25 +459,8 @@ function relativeDate(iso: string): string {
   return d.toLocaleDateString('nl-NL', { day: 'numeric', month: 'short', year: 'numeric' })
 }
 
-function escHtml(str: string): string {
-  return str
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-}
 
-function errMsg(err: unknown): string {
-  return err instanceof Error ? err.message : 'onbekende fout'
-}
 
-function showToast(msg: string): void {
-  const toast = document.getElementById('toast') as HTMLDivElement | null
-  if (!toast) return
-  toast.textContent = msg
-  toast.classList.add('show')
-  setTimeout(() => toast.classList.remove('show'), 2500)
-}
 
 function showToastWithUndo(msg: string, onUndo: () => void): void {
   const toast = document.getElementById('toast') as HTMLDivElement | null

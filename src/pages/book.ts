@@ -1,23 +1,17 @@
-import { fetchAllNotes, type Note } from '../lib/notes'
+import { fetchAllNotes, getNoteTitle, type Note } from '../lib/notes'
 import { fetchThemes, fetchAllNoteThemes, type Theme } from '../lib/themes'
-import { fetchChapters, saveChapter, deleteChapter, type Chapter } from '../lib/chapters'
+import { fetchChapters, saveChapter, deleteChapter, fetchSectionStats, type Chapter, type ChapterSectionStats } from '../lib/chapters'
 import { fetchBooks, createBook, updateBook, deleteBook, type Book } from '../lib/books'
+import { fetchProject, fetchProjectNoteIds, type BookProject } from '../lib/projects'
+import { renderChapterMarkdown, renderBookMarkdown, resolveChapterSections, downloadMarkdown, slugify } from '../lib/manuscript'
 import { generateChapter, type ChapterPlan } from '../lib/ai'
-import { getCostStatus, formatUsd } from '../lib/cost'
-import { startAiThinking, AI_PHASES } from '../lib/ai-thinking'
-import { renderTopbar, attachTopbar, isAiEnabled } from '../lib/nav'
+import { AI_PHASES } from '../lib/ai-thinking'
+import { createAiAction, type AiActionHandle } from '../lib/ai-action'
+import { isAiEnabled } from '../lib/nav'
 import { SECTIONS } from '../lib/sections'
+import { navigateTo } from '../router'
 import { mountProjects } from './projects'
-
-export async function renderBook(app: HTMLElement): Promise<void> {
-  app.innerHTML = `
-    ${renderTopbar('Boek', 'book')}
-    <div id="book-root"></div>
-    <div class="toast" id="toast"></div>
-  `
-  attachTopbar()
-  await mountBook(document.getElementById('book-root')!)
-}
+import { showToast, showUndoToast, esc as escHtml, errMsg, formatDate } from '../lib/crud-list'
 
 export async function mountBook(root: HTMLElement): Promise<void> {
   root.innerHTML = `
@@ -34,6 +28,13 @@ export async function mountBook(root: HTMLElement): Promise<void> {
   let chapters: Chapter[] = []
   let books: Book[] = []
   let activeTab: 'projects' | 'chapters' | 'books' = 'chapters'
+  let genAction: AiActionHandle | null = null
+
+  let sectionStats = new Map<string, ChapterSectionStats>()
+  // Workbench project scope: /library?tab=book&project=<id> pre-filters the
+  // note pool to that project's noten and stamps project_id on saved chapters.
+  let workProject: BookProject | null = null
+  let workProjectNoteIds: Set<string> = new Set()
 
   try {
     [notes, themes, noteThemes, chapters, books] = await Promise.all([
@@ -43,10 +44,24 @@ export async function mountBook(root: HTMLElement): Promise<void> {
       fetchChapters(),
       fetchBooks()
     ])
+    sectionStats = await fetchSectionStats().catch(() => new Map())
   } catch (err) {
     document.getElementById('book-body')!.innerHTML =
       `<div class="book-error">Laden mislukt: ${escHtml(errMsg(err))}</div>`
     return
+  }
+
+  const bookParams = new URLSearchParams(window.location.hash.split('?')[1] ?? '')
+  const bookTabParam = bookParams.get('booktab')
+  if (bookTabParam === 'projects' || bookTabParam === 'chapters' || bookTabParam === 'books') {
+    activeTab = bookTabParam
+  }
+  const projectParam = bookParams.get('project')
+  if (projectParam) {
+    try {
+      workProject = await fetchProject(projectParam)
+      if (workProject) workProjectNoteIds = new Set(await fetchProjectNoteIds(workProject.id))
+    } catch { /* scope is best-effort */ }
   }
 
   renderShell()
@@ -85,6 +100,7 @@ export async function mountBook(root: HTMLElement): Promise<void> {
         <header class="book-section-header">
           <h2>Hoofdstuk-werkbank</h2>
           <p class="muted">Selecteer een thema, kies nota's, en laat AI een hoofdstukschets voorstellen.</p>
+          ${workProject ? `<p class="book-project-scope">Project: <strong>${escHtml(workProject.title)}</strong> — alleen projectnoten worden getoond; het hoofdstuk wordt aan dit project gekoppeld.</p>` : ''}
         </header>
 
         <div class="book-controls">
@@ -105,8 +121,8 @@ export async function mountBook(root: HTMLElement): Promise<void> {
         <div class="book-notes-list" id="book-notes-list"></div>
 
         <div class="book-actions">
-          <button class="btn btn-primary" id="generate-btn" disabled>Genereer hoofdstuk</button>
           <span id="generate-info" class="muted"></span>
+          <div id="generate-action-host"></div>
         </div>
       </section>
 
@@ -130,10 +146,32 @@ export async function mountBook(root: HTMLElement): Promise<void> {
     const preselectedTheme = urlParams.get('theme')
     if (preselectedTheme) themeSelect.value = preselectedTheme
     themeSelect.addEventListener('change', () => renderNoteList())
+
+    genAction = createAiAction(document.getElementById('generate-action-host')!, {
+      label: 'Genereer hoofdstuk',
+      defaultModel: 'claude-sonnet-4-6',
+      expectedOutputTokens: 1200,
+      // Each selected note contributes its summary/content excerpt (~400 chars).
+      estimateInputChars: () => selectedNoteIds().length * 400 + 1500,
+      phases: AI_PHASES.book,
+      beforeRun: () => {
+        if (selectedNoteIds().length < 2) { showToast('Selecteer minimaal 2 nota\'s'); return false }
+        if (!isAiEnabled()) { showToast('Zet AI aan in Instellingen om hoofdstukken te genereren'); return false }
+        return true
+      },
+      run: async (model, overrideCap) => {
+        const ids = selectedNoteIds()
+        const themeId = (document.getElementById('book-theme') as HTMLSelectElement).value || undefined
+        const angle = (document.getElementById('book-angle') as HTMLInputElement).value.trim() || undefined
+        const { plan, usage } = await generateChapter({ noteIds: ids, themeId, angle, model, overrideCap })
+        showPlanEditor(plan, ids, themeId ?? null)
+        showToast('Hoofdstuk gegenereerd')
+        return usage
+      },
+    })
+
     renderNoteList()
     renderSaved()
-
-    document.getElementById('generate-btn')?.addEventListener('click', onGenerate)
   }
 
   function renderBooksTab(): void {
@@ -314,17 +352,19 @@ export async function mountBook(root: HTMLElement): Promise<void> {
       onExportBook(row, id)
     })
 
-    row.querySelector<HTMLButtonElement>('[data-action="delete"]')?.addEventListener('click', async (e) => {
+    row.querySelector<HTMLButtonElement>('[data-action="delete"]')?.addEventListener('click', (e) => {
       e.preventDefault()
-      if (!confirm('Boek verwijderen? Hoofdstukken zelf blijven bestaan.')) return
-      try {
-        await deleteBook(id)
-        books = books.filter(x => x.id !== id)
-        renderBooksTab()
-        showToast('Verwijderd')
-      } catch (err) {
-        showToast(`Mislukt: ${errMsg(err)}`)
-      }
+      // Soft-delete: the row disappears now, the API delete only runs after
+      // the undo window closes. Hoofdstukken zelf blijven bestaan.
+      const removed = books.find(x => x.id === id)
+      books = books.filter(x => x.id !== id)
+      renderBooksTab()
+      showUndoToast('Boek verwijderd',
+        async () => { try { await deleteBook(id) } catch (err) { showToast(`Verwijderen mislukt: ${errMsg(err)}`) } },
+        () => {
+          if (removed) books = [removed, ...books]
+          renderBooksTab()
+        })
     })
   }
 
@@ -346,7 +386,7 @@ export async function mountBook(root: HTMLElement): Promise<void> {
     }
   }
 
-  function onExportBook(row: HTMLDetailsElement, id: string): void {
+  async function onExportBook(row: HTMLDetailsElement, id: string): Promise<void> {
     const title = row.querySelector<HTMLInputElement>('[data-edit-title]')!.value.trim()
     const intro = row.querySelector<HTMLTextAreaElement>('[data-edit-intro]')!.value.trim()
     const chapterIds = Array.from(row.querySelectorAll<HTMLLIElement>('li.book-chapter-included'))
@@ -355,7 +395,13 @@ export async function mountBook(root: HTMLElement): Promise<void> {
     const orderedChapters = chapterIds
       .map(cid => chapters.find(c => c.id === cid))
       .filter((c): c is Chapter => !!c)
-    const md = renderBookMarkdown(title, intro, orderedChapters, notes)
+    // Prose-first: pull studio sections per chapter (outline fallback inside).
+    const manuscriptChapters = await Promise.all(orderedChapters.map(async c => ({
+      title: c.title,
+      summary: c.summary ?? '',
+      sections: await resolveChapterSections(c)
+    })))
+    const md = renderBookMarkdown(title, intro, manuscriptChapters, notes)
     const fallback = books.find(b => b.id === id)?.title ?? title
     downloadMarkdown(`${slugify(fallback) || 'boek'}.md`, md)
   }
@@ -368,13 +414,16 @@ export async function mountBook(root: HTMLElement): Promise<void> {
 
   function renderNoteList(): void {
     const themeId = (document.getElementById('book-theme') as HTMLSelectElement).value
-    const filtered = themeId
+    let filtered = themeId
       ? notes.filter(n => noteThemes.some(nt => nt.note_id === n.id && nt.theme_id === themeId))
       : notes
+    if (workProject) filtered = filtered.filter(n => workProjectNoteIds.has(n.id))
 
     const listEl = document.getElementById('book-notes-list')!
     if (filtered.length === 0) {
-      listEl.innerHTML = '<p class="muted">Geen verwerkte nota\'s in dit thema.</p>'
+      listEl.innerHTML = workProject
+        ? '<p class="muted">Geen verwerkte projectnoten gevonden. Koppel eerst noten aan het project.</p>'
+        : '<p class="muted">Geen verwerkte nota\'s in dit thema.</p>'
       updateGenerateState()
       return
     }
@@ -420,47 +469,12 @@ export async function mountBook(root: HTMLElement): Promise<void> {
 
   function updateGenerateState(): void {
     const ids = selectedNoteIds()
-    const btn = document.getElementById('generate-btn') as HTMLButtonElement
     const info = document.getElementById('generate-info')!
-    btn.disabled = ids.length < 2
     info.textContent = ids.length < 2
       ? 'Selecteer minimaal 2 nota\'s.'
       : `${ids.length} nota's geselecteerd.`
-  }
-
-  async function onGenerate(): Promise<void> {
-    const ids = selectedNoteIds()
-    if (ids.length < 2) return
-    if (!isAiEnabled()) { showToast('Zet AI aan in Instellingen om hoofdstukken te genereren'); return }
-
-    const status = await getCostStatus()
-    if (status.block) {
-      if (!confirm(`Maandelijkse cap (${formatUsd(status.capUsd)}) bereikt. Doorgaan?`)) return
-    } else if (status.warn) {
-      if (!confirm(`Je zit op ${(status.ratio * 100).toFixed(0)}% van je budget. Doorgaan?`)) return
-    }
-
-    const themeId = (document.getElementById('book-theme') as HTMLSelectElement).value || undefined
-    const angle = (document.getElementById('book-angle') as HTMLInputElement).value.trim() || undefined
-
-    const btn = document.getElementById('generate-btn') as HTMLButtonElement
-    btn.disabled = true
-    btn.textContent = 'AI denkt na…'
-    const stopThinking = startAiThinking(btn, AI_PHASES.book)
-
-    try {
-      const { plan, usage } = await generateChapter({
-        noteIds: ids, themeId, angle, model: 'claude-sonnet-4-6'
-      })
-      showPlanEditor(plan, ids, themeId ?? null)
-      showToast(`Hoofdstuk gegenereerd (${formatUsd(usage.costUsd)})`)
-    } catch (err) {
-      showToast(`Mislukt: ${errMsg(err)}`)
-    } finally {
-      stopThinking()
-      btn.disabled = false
-      btn.textContent = 'Genereer hoofdstuk'
-    }
+    genAction?.setDisabled(ids.length < 2)
+    genAction?.refreshEstimate()
   }
 
   function showPlanEditor(plan: ChapterPlan, allIds: string[], themeId: string | null): void {
@@ -480,7 +494,10 @@ export async function mountBook(root: HTMLElement): Promise<void> {
       </label>
 
       <div class="plan-sections" id="plan-sections">
-        ${plan.sections.map((s, i) => renderSectionEditor(s, i)).join('')}
+        ${plan.sections.map((s, i) => renderSectionEditor(s, i, (id) => {
+          const n = notes.find(x => x.id === id)
+          return n ? getNoteTitle(n, 48) : id.slice(0, 8) + '…'
+        })).join('')}
       </div>
 
       <div class="plan-actions">
@@ -495,6 +512,7 @@ export async function mountBook(root: HTMLElement): Promise<void> {
       try {
         const saved = await saveChapter({
           themeId,
+          projectId: workProject?.id ?? null,
           title: updated.title,
           summary: updated.summary,
           outline: updated.sections,
@@ -511,7 +529,7 @@ export async function mountBook(root: HTMLElement): Promise<void> {
 
     document.getElementById('plan-export')?.addEventListener('click', () => {
       const updated = collectPlan(plan)
-      const md = renderMarkdown(updated, notes)
+      const md = renderChapterMarkdown({ title: updated.title, summary: updated.summary, sections: updated.sections }, notes)
       downloadMarkdown(`${slugify(updated.title) || 'hoofdstuk'}.md`, md)
     })
 
@@ -526,7 +544,12 @@ export async function mountBook(root: HTMLElement): Promise<void> {
       el.innerHTML = '<p class="muted">Nog geen hoofdstukken opgeslagen.</p>'
       return
     }
-    el.innerHTML = chapters.map(c => `
+    el.innerHTML = chapters.map(c => {
+      const stats = sectionStats.get(c.id)
+      const badge = stats
+        ? `<span class="saved-progress">${stats.written}/${stats.total} secties geschreven${stats.words ? ` · ${stats.words} w` : ''}</span>`
+        : ''
+      return `
       <article class="saved-row" data-id="${c.id}">
         <header>
           <h3>${escHtml(c.title)}</h3>
@@ -537,33 +560,38 @@ export async function mountBook(root: HTMLElement): Promise<void> {
           ${c.outline.map(s => `<li><strong>${escHtml(s.heading)}</strong> <span class="muted">— ${s.note_ids.length} nota's</span></li>`).join('')}
         </ul>
         <div class="saved-actions">
+          <button class="btn btn-primary saved-write">Schrijf →</button>
           <button class="btn btn-ghost saved-export">Exporteer .md</button>
           <button class="btn btn-danger saved-delete">Verwijder</button>
+          ${badge}
         </div>
       </article>
-    `).join('')
+    `}).join('')
 
     el.querySelectorAll<HTMLElement>('.saved-row').forEach(row => {
       const id = row.dataset['id']!
-      row.querySelector('.saved-export')?.addEventListener('click', () => {
+      row.querySelector('.saved-write')?.addEventListener('click', () => {
+        navigateTo('/studio?chapter=' + id)
+      })
+      row.querySelector('.saved-export')?.addEventListener('click', async () => {
         const c = chapters.find(x => x.id === id)
         if (!c) return
-        const md = renderMarkdown(
-          { title: c.title, summary: c.summary ?? '', sections: c.outline },
-          notes
-        )
+        // Prose-first: written sections export their text, the rest fall back
+        // to the note-assembly of the outline.
+        const sections = await resolveChapterSections(c)
+        const md = renderChapterMarkdown({ title: c.title, summary: c.summary ?? '', sections }, notes)
         downloadMarkdown(`${slugify(c.title) || 'hoofdstuk'}.md`, md)
       })
-      row.querySelector('.saved-delete')?.addEventListener('click', async () => {
-        if (!confirm('Hoofdstuk verwijderen?')) return
-        try {
-          await deleteChapter(id)
-          chapters = chapters.filter(x => x.id !== id)
-          renderSaved()
-          showToast('Verwijderd')
-        } catch (err) {
-          showToast(`Mislukt: ${errMsg(err)}`)
-        }
+      row.querySelector('.saved-delete')?.addEventListener('click', () => {
+        const removed = chapters.find(x => x.id === id)
+        chapters = chapters.filter(x => x.id !== id)
+        renderSaved()
+        showUndoToast('Hoofdstuk verwijderd',
+          async () => { try { await deleteChapter(id) } catch (err) { showToast(`Verwijderen mislukt: ${errMsg(err)}`) } },
+          () => {
+            if (removed) chapters = [removed, ...chapters]
+            renderSaved()
+          })
       })
     })
   }
@@ -583,7 +611,11 @@ export async function mountBook(root: HTMLElement): Promise<void> {
   }
 }
 
-function renderSectionEditor(s: { heading: string; intent: string; note_ids: string[] }, i: number): string {
+function renderSectionEditor(
+  s: { heading: string; intent: string; note_ids: string[] },
+  i: number,
+  labelOf: (id: string) => string
+): string {
   return `
     <div class="plan-section">
       <label class="field">
@@ -597,103 +629,20 @@ function renderSectionEditor(s: { heading: string; intent: string; note_ids: str
       <div class="field">
         <span class="field-label">Nota's (${s.note_ids.length})</span>
         <div class="plan-section-notes" data-section-notes="${i}">
-          ${s.note_ids.map(id => `<label class="chip-check"><input type="checkbox" value="${id}" checked/> ${id.slice(0, 8)}…</label>`).join('')}
+          ${s.note_ids.map(id => `<label class="chip-check"><input type="checkbox" value="${id}" checked/> ${escHtml(labelOf(id))}</label>`).join('')}
         </div>
       </div>
     </div>
   `
 }
 
-function renderMarkdown(plan: { title: string; summary: string; sections: { heading: string; intent: string; note_ids: string[] }[] }, notes: Note[]): string {
-  const byId: Record<string, Note> = {}
-  notes.forEach(n => { byId[n.id] = n })
 
-  const lines: string[] = []
-  lines.push(`# ${plan.title}`, '')
-  if (plan.summary) lines.push(`> ${plan.summary}`, '')
 
-  plan.sections.forEach(s => {
-    lines.push(`## ${s.heading}`, '')
-    if (s.intent) lines.push(`*${s.intent}*`, '')
-    s.note_ids.forEach(id => {
-      const n = byId[id]
-      if (!n) return
-      const head = n.ai_title ?? n.content.slice(0, 80)
-      lines.push(`### ${head}`, '')
-      lines.push(n.content, '')
-      if (n.mini_notes) lines.push(`> ${n.mini_notes}`, '')
-      if (n.source_url) lines.push(`[bron](${n.source_url})`, '')
-    })
-  })
 
-  lines.push('---', `*Gegenereerd via ThoughtFoundry — ${new Date().toLocaleDateString('nl-NL')}*`)
-  return lines.join('\n')
-}
 
-function renderBookMarkdown(title: string, intro: string, chapters: Chapter[], notes: Note[]): string {
-  const lines: string[] = []
-  lines.push(`# ${title}`, '')
-  if (intro) lines.push(intro, '')
 
-  if (chapters.length > 1) {
-    lines.push('## Inhoud', '')
-    chapters.forEach((c, i) => {
-      lines.push(`${i + 1}. ${c.title}`)
-    })
-    lines.push('')
-  }
 
-  chapters.forEach((c, i) => {
-    lines.push('---', '')
-    const md = renderMarkdown(
-      { title: `Hoofdstuk ${i + 1}: ${c.title}`, summary: c.summary ?? '', sections: c.outline },
-      notes
-    )
-    // Strip the trailing "Gegenereerd via" footer per chapter
-    const trimmed = md.split('\n---\n')[0]
-    lines.push(trimmed, '')
-  })
 
-  lines.push('---', `*Gegenereerd via ThoughtFoundry — ${new Date().toLocaleDateString('nl-NL')}*`)
-  return lines.join('\n')
-}
-
-function downloadMarkdown(filename: string, content: string): void {
-  const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = filename
-  document.body.appendChild(a)
-  a.click()
-  document.body.removeChild(a)
-  URL.revokeObjectURL(url)
-}
-
-function slugify(s: string): string {
-  return s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
-    .replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60)
-}
-
-function showToast(msg: string): void {
-  const toast = document.getElementById('toast') as HTMLDivElement | null
-  if (!toast) return
-  toast.textContent = msg
-  toast.classList.add('show')
-  setTimeout(() => toast.classList.remove('show'), 2500)
-}
-
-function escHtml(str: string): string {
-  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
-}
-
-function errMsg(err: unknown): string {
-  return err instanceof Error ? err.message : 'onbekende fout'
-}
-
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString('nl-NL', { day: 'numeric', month: 'short', year: 'numeric' })
-}
 
 function injectBookStyles(): void {
   if (document.getElementById('book-styles')) return
@@ -823,6 +772,14 @@ function injectBookStyles(): void {
       font-size: var(--fs-lg);
       font-weight: 600;
     }
+    .book-project-scope {
+      font-size: var(--fs-sm);
+      color: var(--text);
+      background: var(--bg);
+      border-left: 3px solid var(--accent);
+      border-radius: var(--r-sm);
+      padding: var(--s-2) var(--s-3);
+    }
     .book-controls {
       display: grid;
       grid-template-columns: 1fr 2fr;
@@ -930,8 +887,11 @@ function injectBookStyles(): void {
     .saved-actions {
       display: flex;
       gap: var(--s-2);
+      align-items: center;
+      flex-wrap: wrap;
     }
     .saved-actions .btn { width: auto; }
+    .saved-progress { font-size: var(--fs-sm); color: var(--accent); font-weight: 600; }
     .book-loading,
     .book-error,
     .book-empty {

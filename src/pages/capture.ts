@@ -1,11 +1,14 @@
-import { insertNote, queueOfflineNote, flushOfflineQueue, offlineQueueSize, fetchNotes, fetchRandomNote, fetchOnThisDay, type NoteInsert, type Note } from '../lib/notes'
+import { insertNote, queueOfflineNote, flushOfflineQueue, offlineQueueSize, fetchNotes, fetchNotesByIds, fetchRandomNote, fetchOnThisDay, getNoteTitle, type NoteInsert, type Note } from '../lib/notes'
+import { fetchSemanticBridges, hasEmbeddings, fetchDismissedPairKeys, type BridgePair } from '../lib/semantic'
 import { fetchSources, type Source } from '../lib/sources'
-import { fetchLinks } from '../lib/links'
+import { fetchLinks, createLink } from '../lib/links'
 import { openLinkModal } from '../lib/link-modal'
 import { fetchAllNoteThemes } from '../lib/themes'
-import { findSurprisingPair, pairKey, type SurprisingPair } from '../lib/similarity'
+import { findSurprisingPair, pairKey, rankBySimilarity, type SurprisingPair } from '../lib/similarity'
+import { embedNote } from '../lib/ai'
 import { renderTopbar, attachTopbar, renderGuidanceBanner } from '../lib/nav'
 import { navigateTo } from '../router'
+import { esc as escHtml, showToast } from '../lib/crud-list'
 
 const DRAFT_KEY = 'capture_draft'
 
@@ -41,6 +44,7 @@ export async function renderCapture(app: HTMLElement): Promise<void> {
         placeholder="Gooi het erin. Half is goed genoeg. Later wordt het iets."
       ></textarea>
       <p class="duplicate-hint" id="duplicate-hint"></p>
+      <div class="related-card" id="related-card" hidden></div>
 
       <details class="capture-extra" id="meer-details">
         <summary class="capture-extra-toggle">Meer velden</summary>
@@ -247,6 +251,10 @@ export async function renderCapture(app: HTMLElement): Promise<void> {
     try {
       if (navigator.onLine) {
         const saved = await insertNote(note)
+        // Keep the semantic substrate current from the moment of capture
+        // (free, fire-and-forget — a failure must never block saving).
+        void embedNote(saved.id).catch(() => {})
+        showRelatedCard(saved, recentNotes)
         recentNotes = [saved, ...recentNotes].slice(0, 50)
       } else {
         await queueOfflineNote(note)
@@ -351,9 +359,39 @@ export async function renderCapture(app: HTMLElement): Promise<void> {
     pairData = { pool, linkedPairs, themeMap }
   }
 
+  // Prefer semantic bridges (meaning-based, cross-theme, minus dismissed) when
+  // embeddings exist; the lexical findSurprisingPair stays as the fallback.
+  let semanticPairs: BridgePair[] | null = null
+  const loadSemanticPairs = async (): Promise<BridgePair[]> => {
+    if (semanticPairs) return semanticPairs
+    if (!(await hasEmbeddings())) { semanticPairs = []; return semanticPairs }
+    const [bridges, dismissed] = await Promise.all([
+      fetchSemanticBridges({ bandLo: 0.55, bandHi: 0.72, max: 20 }),
+      fetchDismissedPairKeys().catch(() => new Set<string>())
+    ])
+    semanticPairs = bridges.filter(p => !dismissed.has(`${p.a_id}|${p.b_id}`))
+    return semanticPairs
+  }
+
   const showSurprisingPair = async (): Promise<void> => {
     panel.hidden = true
     try {
+      const sem = await loadSemanticPairs().catch(() => [] as BridgePair[])
+      if (sem.length > 0) {
+        const p = sem[Math.floor(Math.random() * sem.length)]
+        const notes = await fetchNotesByIds([p.a_id, p.b_id])
+        const a = notes.find(n => n.id === p.a_id)
+        const b = notes.find(n => n.id === p.b_id)
+        if (a && b) {
+          if (!pairData) await loadPairData().catch(() => {})
+          currentPair = { a, b, score: p.similarity }
+          pairAEl.textContent = pairPreview(a)
+          pairBEl.textContent = pairPreview(b)
+          pairPanel.hidden = false
+          return
+        }
+      }
+
       if (!pairData) await loadPairData()
       const pair = findSurprisingPair(pairData!.pool, pairData!.linkedPairs, pairData!.themeMap)
       if (!pair) {
@@ -385,6 +423,11 @@ export async function renderCapture(app: HTMLElement): Promise<void> {
       defaultReason: 'Verrassende verbinding',
       onLinked: () => {
         data.linkedPairs.add(pairKey(pair.a.id, pair.b.id))
+        if (semanticPairs) {
+          semanticPairs = semanticPairs.filter(p =>
+            !(p.a_id === pair.a.id && p.b_id === pair.b.id) &&
+            !(p.a_id === pair.b.id && p.b_id === pair.a.id))
+        }
         showToast('Gekoppeld')
         void showSurprisingPair() // roll the next bridge
       }
@@ -447,6 +490,43 @@ function countIntersection(a: Set<string>, b: Set<string>): number {
   let count = 0
   for (const w of a) if (b.has(w)) count++
   return count
+}
+
+/**
+ * Instant "Lijkt verwant aan …" card right after a save: lexical ranking over
+ * the already-loaded recent notes (zero network, works offline-ish), with a
+ * one-tap Koppel that creates a 'related' link. Dismisses on Weiger or the
+ * next save.
+ */
+function showRelatedCard(saved: Note, pool: Note[]): void {
+  const card = document.getElementById('related-card') as HTMLDivElement | null
+  if (!card) return
+  card.hidden = true
+
+  const candidates = pool.filter(n => n.id !== saved.id)
+  const [best] = rankBySimilarity(saved, candidates, 1)
+  if (!best || best.score < 3) return
+
+  const title = getNoteTitle(best.note, 70)
+  card.innerHTML = `
+    <span class="related-card-text">Lijkt verwant aan: «${escHtml(title)}»</span>
+    <span class="related-card-actions">
+      <button class="btn btn-ghost btn-sm" id="related-link-btn">Koppel</button>
+      <button class="btn btn-ghost btn-sm" id="related-dismiss-btn">Weiger</button>
+    </span>
+  `
+  card.hidden = false
+
+  document.getElementById('related-dismiss-btn')?.addEventListener('click', () => { card.hidden = true })
+  document.getElementById('related-link-btn')?.addEventListener('click', async () => {
+    try {
+      await createLink({ sourceId: saved.id, targetId: best.note.id, type: 'related', reason: 'Bij vastleggen gekoppeld' })
+      showToast('Gekoppeld')
+    } catch {
+      showToast('Koppelen mislukt (bestaat de link al?)')
+    }
+    card.hidden = true
+  })
 }
 
 function restoreDraft(els: {
@@ -513,9 +593,6 @@ async function refreshOnlineIndicator(): Promise<void> {
   }
 }
 
-function escHtml(str: string): string {
-  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
-}
 
 function relTime(iso: string): string {
   const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000)
@@ -527,12 +604,6 @@ function relTime(iso: string): string {
   return `${Math.floor(days / 365)} jaar geleden`
 }
 
-function showToast(msg: string): void {
-  const toast = document.getElementById('toast') as HTMLDivElement
-  toast.textContent = msg
-  toast.classList.add('show')
-  setTimeout(() => toast.classList.remove('show'), 2500)
-}
 
 function injectCaptureStyles(): void {
   if (document.getElementById('capture-styles')) return
@@ -562,6 +633,21 @@ function injectCaptureStyles(): void {
       min-height: 1.2em;
       margin: 0;
     }
+    .related-card {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: var(--s-2);
+      flex-wrap: wrap;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--accent);
+      border-radius: var(--r-sm);
+      padding: var(--s-2) var(--s-3);
+      font-size: var(--fs-sm);
+    }
+    .related-card-actions { display: inline-flex; gap: var(--s-1); }
+    .related-card .btn { width: auto; }
     .capture-mini-textarea {
       margin-top: var(--s-2);
     }

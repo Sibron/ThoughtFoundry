@@ -1,7 +1,8 @@
 import { runSpark } from '../lib/ai'
-import { getCostStatus, formatUsd, renderCostNote } from '../lib/cost'
-import { startAiThinking, AI_PHASES } from '../lib/ai-thinking'
-import { renderTopbar, attachTopbar } from '../lib/nav'
+import { formatUsd } from '../lib/cost'
+import { AI_PHASES } from '../lib/ai-thinking'
+import { createAiAction } from '../lib/ai-action'
+import { showToast, esc as escHtml } from '../lib/crud-list'
 
 const OUTPUT_TYPES = [
   { value: 'reflectie',     label: 'Persoonlijke reflectie' },
@@ -12,16 +13,6 @@ const OUTPUT_TYPES = [
 ] as const
 
 type OutputType = typeof OUTPUT_TYPES[number]['value']
-
-export async function renderSpark(app: HTMLElement): Promise<void> {
-  app.innerHTML = `
-    ${renderTopbar('Spark', 'spark')}
-    <div id="spark-root"></div>
-    <div class="toast" id="toast"></div>
-  `
-  attachTopbar()
-  await mountSpark(document.getElementById('spark-root')!)
-}
 
 export async function mountSpark(root: HTMLElement): Promise<void> {
   root.innerHTML = `
@@ -48,10 +39,7 @@ export async function mountSpark(root: HTMLElement): Promise<void> {
           </div>
         </fieldset>
 
-        <div class="spark-actions">
-          <button class="btn btn-primary" id="spark-run">Spark starten</button>
-          <span id="spark-cost" class="cost-note"></span>
-        </div>
+        <div class="spark-actions" id="spark-action-host"></div>
       </div>
 
       <div id="spark-result" class="spark-result" hidden>
@@ -75,58 +63,46 @@ export async function mountSpark(root: HTMLElement): Promise<void> {
     })
   })
 
-  // Show current cost
-  try {
-    const cost = await getCostStatus()
-    renderCostNote('spark-cost', cost)
-  } catch { /* non-critical */ }
-
-  document.getElementById('spark-run')?.addEventListener('click', onRun)
   document.getElementById('spark-new')?.addEventListener('click', () => {
     document.getElementById('spark-result')!.hidden = true
     ;(document.getElementById('spark-query') as HTMLTextAreaElement).value = ''
     ;(document.getElementById('spark-query') as HTMLTextAreaElement).focus()
   })
 
-  async function onRun(): Promise<void> {
-    const query = (document.getElementById('spark-query') as HTMLTextAreaElement).value.trim()
-    if (!query) { showToast('Vul een thema of vraag in'); return }
-
-    const outputType = (document.querySelector<HTMLInputElement>('input[name="output-type"]:checked')?.value ?? 'reflectie') as OutputType
-
-    const btn = document.getElementById('spark-run') as HTMLButtonElement
-    btn.disabled = true
-    btn.textContent = 'AI denkt na…'
-    const stopThinking = startAiThinking(btn, AI_PHASES.spark)
-
-    try {
-      const result = await runSpark({ query, outputType })
+  const queryEl = document.getElementById('spark-query') as HTMLTextAreaElement
+  const action = createAiAction(document.getElementById('spark-action-host')!, {
+    label: 'Spark starten',
+    defaultModel: 'claude-sonnet-4-6',
+    expectedOutputTokens: 900,
+    // Server sends the top-20 matching notes (~400 chars each) + prompt scaffolding.
+    estimateInputChars: () => 9_000 + queryEl.value.length,
+    phases: AI_PHASES.spark,
+    beforeRun: () => {
+      if (!queryEl.value.trim()) { showToast('Vul een thema of vraag in'); return false }
+      return true
+    },
+    run: async (model, overrideCap) => {
+      const query = queryEl.value.trim()
+      const outputType = (document.querySelector<HTMLInputElement>('input[name="output-type"]:checked')?.value ?? 'reflectie') as OutputType
+      const result = await runSpark({ query, outputType, model, overrideCap })
 
       if (!result.synthesis) {
         showToast(result.message ?? 'Geen passende nota\'s gevonden.')
-        return
+        return result.usage
       }
 
       document.getElementById('spark-result')!.hidden = false
       document.getElementById('result-meta')!.innerHTML =
         `Synthese op basis van <strong>${result.matchCount}</strong> passende nota${result.matchCount === 1 ? '' : "'s"}` +
+        (result.retrieval ? ` · gevonden via ${result.retrieval === 'semantisch' ? 'betekenis' : 'woorden'}` : '') +
         (result.usage ? ` · ${formatUsd(result.usage.costUsd)}` : '')
 
       document.getElementById('result-body')!.innerHTML = renderMarkdown(result.synthesis)
-
       document.getElementById('result-body')!.scrollIntoView({ behavior: 'smooth', block: 'start' })
-
-      // refresh cost
-      const freshCost = await getCostStatus()
-      renderCostNote('spark-cost', freshCost)
-    } catch (err) {
-      showToast(`Spark mislukt: ${errMsg(err)}`)
-    } finally {
-      stopThinking()
-      btn.disabled = false
-      btn.textContent = 'Spark starten'
-    }
-  }
+      return result.usage
+    },
+  })
+  queryEl.addEventListener('input', () => action.refreshEstimate())
 
   document.getElementById('spark-copy')?.addEventListener('click', () => {
     const text = document.getElementById('result-body')?.innerText ?? ''
@@ -134,17 +110,7 @@ export async function mountSpark(root: HTMLElement): Promise<void> {
   })
 }
 
-function showToast(msg: string): void {
-  const toast = document.getElementById('toast') as HTMLDivElement | null
-  if (!toast) return
-  toast.textContent = msg
-  toast.classList.add('show')
-  setTimeout(() => toast.classList.remove('show'), 2500)
-}
 
-function escHtml(str: string): string {
-  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
-}
 
 function inlineMd(text: string): string {
   return escHtml(text)
@@ -175,10 +141,6 @@ function renderMarkdown(text: string): string {
 
   if (inList) html.push('</ul>')
   return html.join('')
-}
-
-function errMsg(err: unknown): string {
-  return err instanceof Error ? err.message : 'onbekende fout'
 }
 
 function injectSparkStyles(): void {

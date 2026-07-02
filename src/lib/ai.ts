@@ -26,11 +26,40 @@ export interface AIUsage {
   costUsd: number
 }
 
+/**
+ * Thrown when the server-side budget guard (functions/_shared/budget.ts)
+ * blocks a call with HTTP 402. Callers show a confirm and may retry the same
+ * call with `overrideCap: true` in the body.
+ */
+export class AiBudgetError extends Error {
+  spend: number
+  cap: number
+  constructor(spend: number, cap: number) {
+    super(`Maandbudget bereikt ($${spend.toFixed(2)} van $${cap.toFixed(2)})`)
+    this.name = 'AiBudgetError'
+    this.spend = spend
+    this.cap = cap
+  }
+}
+
 async function invoke<T>(name: string, body: Record<string, unknown>): Promise<T> {
   const persona = getPersona()
   const fullBody = persona ? { ...body, persona } : body
   const { data, error } = await supabase.functions.invoke(name, { body: fullBody })
-  if (error) throw new Error(error.message ?? 'Edge function error')
+  if (error) {
+    // Non-2xx: the SDK stashes the raw Response on error.context. Pull the
+    // payload out so a 402 budget block surfaces as a typed AiBudgetError.
+    const ctx = (error as { context?: Response }).context
+    if (ctx && typeof ctx.json === 'function') {
+      const payload = await ctx.json().catch(() => null) as
+        { error?: string; spend?: number; cap?: number } | null
+      if (payload?.error === 'ai_budget_exceeded') {
+        throw new AiBudgetError(payload.spend ?? 0, payload.cap ?? 0)
+      }
+      if (payload?.error) throw new Error(payload.error)
+    }
+    throw new Error(error.message ?? 'Edge function error')
+  }
   if (data && typeof data === 'object' && 'error' in data) {
     throw new Error(String((data as { error: string }).error))
   }
@@ -39,10 +68,12 @@ async function invoke<T>(name: string, body: Record<string, unknown>): Promise<T
 
 export async function processNote(
   noteId: string,
-  model?: 'claude-haiku-4-5' | 'claude-sonnet-4-6'
+  model?: 'claude-haiku-4-5' | 'claude-sonnet-4-6',
+  overrideCap?: boolean
 ): Promise<{ suggestion: NoteSuggestion; usage: AIUsage }> {
   const body: Record<string, unknown> = { noteId }
   if (model) body['model'] = model
+  if (overrideCap) body['overrideCap'] = true
   return invoke('process-note', body)
 }
 
@@ -51,9 +82,9 @@ export async function embedNote(noteId: string): Promise<{ ok: true; dimensions:
 }
 
 /**
- * Embed the next batch of notes that still need a Voyage embedding. Drives the
- * resumable backfill loop in Settings — each call re-queries the cursor, so the
- * run resumes after a refresh. Returns `done` when nothing is left.
+ * Embed the next batch of notes that still need a gte-small embedding. Drives
+ * the resumable backfill loop in Settings — each call re-queries the cursor, so
+ * the run resumes after a refresh. Returns `done` when nothing is left.
  */
 export async function embedNotesBatch(
   batchSize = 50
@@ -103,8 +134,8 @@ export async function reprocessNote(noteId: string): Promise<AIUsage> {
   }
 
   // Keep the semantic substrate current: embed the freshly processed note so it
-  // becomes findable by note_neighbors / semantic_bridges. Best-effort — a Voyage
-  // failure (e.g. no key) must never break reprocessing.
+  // becomes findable by note_neighbors / semantic_bridges. Best-effort — an
+  // embedding failure must never break reprocessing.
   void embedNote(noteId).catch(() => {})
 
   return usage
@@ -124,9 +155,10 @@ export interface EnrichedLink {
  * so this stays cheap. Nothing is persisted — the caller reviews and links.
  */
 export async function enrichLinks(
-  pairs: { aId: string; bId: string }[]
+  pairs: { aId: string; bId: string }[],
+  opts: { model?: 'claude-haiku-4-5' | 'claude-sonnet-4-6'; overrideCap?: boolean } = {}
 ): Promise<{ links: EnrichedLink[]; usage: AIUsage }> {
-  return invoke('enrich-links', { pairs })
+  return invoke('enrich-links', { pairs, ...opts })
 }
 
 export async function generateChapter(input: {
@@ -134,17 +166,20 @@ export async function generateChapter(input: {
   themeId?: string
   angle?: string
   model?: 'claude-sonnet-4-6' | 'claude-haiku-4-5' | 'claude-opus-4-7'
+  overrideCap?: boolean
 }): Promise<{ plan: ChapterPlan; usage: AIUsage }> {
   const body: Record<string, unknown> = { noteIds: input.noteIds }
-  if (input.themeId) body['themeId'] = input.themeId
-  if (input.angle)   body['angle']   = input.angle
-  if (input.model)   body['model']   = input.model
+  if (input.themeId)     body['themeId']     = input.themeId
+  if (input.angle)       body['angle']       = input.angle
+  if (input.model)       body['model']       = input.model
+  if (input.overrideCap) body['overrideCap'] = true
   return invoke('generate-chapter', body)
 }
 
 export interface SparkResult {
   synthesis: string | null
   matchCount: number
+  retrieval?: 'semantisch' | 'lexicaal'
   message?: string
   usage?: AIUsage
 }
@@ -153,8 +188,9 @@ export async function runSpark(input: {
   query: string
   outputType: 'reflectie' | 'coaching' | 'beslissing' | 'blogdraft' | 'gesprekskader'
   model?: 'claude-haiku-4-5' | 'claude-sonnet-4-6'
+  overrideCap?: boolean
 }): Promise<SparkResult> {
-  return invoke('spark', input as Record<string, unknown>)
+  return invoke('spark', input as unknown as Record<string, unknown>)
 }
 
 export interface DenkpartnerQuestion {
@@ -174,8 +210,9 @@ export async function runDenkpartner(input: {
   tag?: string
   themeId?: string
   model?: 'claude-haiku-4-5' | 'claude-sonnet-4-6'
+  overrideCap?: boolean
 }): Promise<DenkpartnerResult> {
-  return invoke('denkpartner', input as Record<string, unknown>)
+  return invoke('denkpartner', input as unknown as Record<string, unknown>)
 }
 
 export interface Cluster {
@@ -192,6 +229,43 @@ export interface ClustersResult {
   usage?: AIUsage
 }
 
-export async function detectClusters(): Promise<ClustersResult> {
-  return invoke('detect-clusters', {})
+export async function detectClusters(
+  opts: { model?: 'claude-haiku-4-5' | 'claude-sonnet-4-6'; overrideCap?: boolean } = {}
+): Promise<ClustersResult> {
+  return invoke('detect-clusters', { ...opts })
+}
+
+export type WriteSectionMode = 'draft' | 'rewrite' | 'tighten' | 'continue'
+
+/**
+ * AI writing assist for one studio section. Returns a PROPOSAL (plain
+ * markdown prose) — the caller decides whether to apply it, and snapshots a
+ * revision first.
+ */
+export async function writeSection(input: {
+  sectionId?: string
+  heading?: string
+  intent?: string
+  noteIds?: string[]
+  mode: WriteSectionMode
+  selection?: string
+  currentText?: string
+  instruction?: string
+  model?: 'claude-haiku-4-5' | 'claude-sonnet-4-6'
+  overrideCap?: boolean
+}): Promise<{ text: string; usage: AIUsage }> {
+  return invoke('write-section', input as unknown as Record<string, unknown>)
+}
+
+/**
+ * Gap-analyse for a book project: white spots, missing counter-arguments,
+ * unelaborated questions, corpus risk. Goes through the same invoke wrapper
+ * as every other AI feature (persona injection + budget error mapping).
+ */
+export async function runGapAnalysis(input: {
+  projectId: string
+  model?: 'claude-haiku-4-5' | 'claude-sonnet-4-6'
+  overrideCap?: boolean
+}): Promise<{ analysis: string; usage: AIUsage }> {
+  return invoke('gap-analysis', input as unknown as Record<string, unknown>)
 }

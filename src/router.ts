@@ -19,3 +19,13 @@ export function createRouter(routes: Routes): void {
 export function navigateTo(path: string): void {
   window.location.hash = path
 }
+
+/**
+ * Context-aware back: return to wherever the user actually came from (graph,
+ * search, a project detail, …) instead of a hardcoded route. Falls back when
+ * there is no in-app history (e.g. the page was opened via a direct link).
+ */
+export function navigateBack(fallback: string): void {
+  if (window.history.length > 1) window.history.back()
+  else navigateTo(fallback)
+}

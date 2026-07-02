@@ -151,6 +151,41 @@ export function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : 'onbekende fout'
 }
 
+export function formatDate(iso: string): string {
+  return new Date(iso).toLocaleDateString('nl-NL', { day: 'numeric', month: 'short', year: 'numeric' })
+}
+
+/**
+ * Soft-delete toast — the non-blocking replacement for confirm(): the UI
+ * change has already happened; `onCommit` (the real API delete) runs after a
+ * 6s grace period unless the user taps Ongedaan maken, which runs `onUndo`
+ * (restore the UI) instead. Styling comes from the global .toast-undo rule.
+ */
+export function showUndoToast(
+  message: string,
+  onCommit: () => void | Promise<void>,
+  onUndo: () => void
+): void {
+  const toast = document.getElementById('toast') as HTMLDivElement | null
+  if (!toast) { void onCommit(); return }
+  toast.innerHTML = `<span>${esc(message)}</span><button type="button" class="toast-undo">Ongedaan maken</button>`
+  toast.classList.add('show')
+  let done = false
+  const finish = (commit: boolean) => {
+    if (done) return
+    done = true
+    toast.classList.remove('show')
+    setTimeout(() => { if (!toast.classList.contains('show')) toast.textContent = '' }, 250)
+    if (commit) void onCommit()
+  }
+  const timer = setTimeout(() => finish(true), 6000)
+  toast.querySelector<HTMLButtonElement>('.toast-undo')?.addEventListener('click', () => {
+    clearTimeout(timer)
+    finish(false)
+    onUndo()
+  })
+}
+
 // ── Shared layout CSS ───────────────────────────────────────────────────────
 // Structural classes shared by every CRUD-list page. Pages inject this once and
 // keep only their entity-specific styling (type pills, status buttons, etc.) in

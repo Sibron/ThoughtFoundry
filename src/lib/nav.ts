@@ -34,17 +34,18 @@ export function renderGuidanceBanner(text: string, tone: 'anchor' | 'quiet' = 'q
 
 // ── Navigation ────────────────────────────────────────────────────────────
 
-export type NavKey = 'capture' | 'inbox' | 'search' | 'process' | 'graph' | 'book' | 'themes' | 'settings' | 'spark' | 'denkpartner' | 'clusters' | 'sources' | 'projects' | 'denktools' | 'library'
+export type NavKey = 'vandaag' | 'capture' | 'inbox' | 'process' | 'settings' | 'denktools' | 'library'
 
 /**
  * Render the slim sticky header + fixed bottom tab bar.
  * Signature is unchanged: `title` shows in the header, `active` highlights
  * the matching tab, `extra` is injected into the header actions (e.g. online indicator).
  */
-// Tabs shown directly in the bottom bar. Anything else (Denktools, Instellingen)
-// lives behind the "Meer" overflow sheet. Zoeken/Graaf live as views inside
-// Vangbak; Thema's/Bronnen/Boek/Projecten live as sub-tabs inside Bibliotheek.
-const PRIMARY_TABS: NavKey[] = ['capture', 'inbox', 'process', 'library']
+// Tabs shown directly in the bottom bar. Anything else (Verwerken, Denktools,
+// Instellingen) lives behind the "Meer" overflow sheet. Zoeken/Graaf live as
+// views inside Vangbak; Thema's/Bronnen/Boek/Projecten as sub-tabs in
+// Bibliotheek. Vandaag is the goal-oriented home dashboard.
+const PRIMARY_TABS: NavKey[] = ['vandaag', 'capture', 'inbox', 'library']
 
 export function renderTopbar(title: string, active?: NavKey, extra = ''): string {
   const ai = isAiEnabled()
@@ -58,21 +59,24 @@ export function renderTopbar(title: string, active?: NavKey, extra = ''): string
   const sheetItem = (key: NavKey, label: string) =>
     `<button class="nav-sheet-item${active === key ? ' active' : ''}" data-nav="${key}">${label}</button>`
 
-  const aiSheetItems = ai ? sheetItem('denktools', 'Denktools') : ''
+  const aiSheetItems = ai
+    ? sheetItem('process', 'Verwerken') + sheetItem('denktools', 'Denktools')
+    : ''
 
   return `
     <header class="topbar">
       <span class="topbar-title">${title}</span>
       <div class="topbar-actions">
         ${extra}
+        <button class="topbar-btn" data-nav="zoek-overlay" id="zoek-overlay-btn" title="Zoek in al je notities">Zoek</button>
         <button class="topbar-btn" data-nav="focus-mode" aria-pressed="false" id="focus-mode-btn">Focus</button>
         <button class="topbar-btn" data-nav="toggle-theme" id="theme-toggle-btn">Donker</button>
       </div>
     </header>
-    <nav class="bottom-nav focus-hide ${ai ? 'bottom-nav--5col' : 'bottom-nav--4col'}" aria-label="Hoofdnavigatie">
+    <nav class="bottom-nav focus-hide bottom-nav--5col" aria-label="Hoofdnavigatie">
+      ${tab('vandaag', 'Vandaag')}
       ${tab('capture', 'Nieuw')}
       ${tab('inbox', 'Vangbak')}
-      ${ai ? tab('process', 'Verwerken') : ''}
       ${tab('library', 'Bibliotheek')}
       <button class="tab-btn${meerActive ? ' active' : ''}" data-nav="meer" aria-expanded="false" aria-controls="nav-sheet">Meer</button>
     </nav>
@@ -125,6 +129,13 @@ export function attachTopbar(): void {
       if (nav === 'meer') {
         const sheet = document.getElementById('nav-sheet')
         setSheetOpen(!!sheet?.hidden)
+        return
+      }
+      if (nav === 'zoek-overlay') {
+        // Dynamic import: keeps nav.ts free of a page dependency cycle and
+        // loads the overlay only when first used.
+        const { openSearchOverlay } = await import('./search-overlay')
+        void openSearchOverlay()
         return
       }
 

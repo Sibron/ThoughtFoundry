@@ -1,9 +1,10 @@
 // Semantic linking — the embeddings-powered counterpart of similarity.ts.
 //
 // These call pgvector RPCs (note_neighbors, semantic_bridges) which cost ZERO
-// AI tokens — the embeddings are generated once (Voyage), and every lookup after
-// that is pure database math. Callers should fall back to the lexical helpers in
-// similarity.ts when hasEmbeddings() is false (no Voyage key / not backfilled).
+// AI tokens — embeddings are generated once by the Supabase Edge runtime's
+// built-in gte-small model (384 dims, free, no API key), and every lookup after
+// that is pure database math. Callers should fall back to the lexical helpers
+// in similarity.ts when hasEmbeddings() is false (backfill not run yet).
 
 import { supabase } from './supabase'
 
@@ -51,4 +52,67 @@ export async function fetchSemanticBridges(
   })
   if (error) throw error
   return (data ?? []) as BridgePair[]
+}
+
+export interface MatchedNote {
+  id: string
+  content: string
+  similarity: number
+}
+
+/**
+ * Embed arbitrary text with the free in-runtime model (edge fn `embed-text`,
+ * nothing persisted, zero cost). Feed the result to matchNotes for
+ * query-by-meaning.
+ */
+export async function embedText(text: string): Promise<number[]> {
+  const { data, error } = await supabase.functions.invoke('embed-text', { body: { text } })
+  if (error) throw new Error(error.message ?? 'embed-text mislukt')
+  const payload = data as { embedding?: number[]; error?: string } | null
+  if (payload?.error) throw new Error(payload.error)
+  if (!Array.isArray(payload?.embedding)) throw new Error('Geen embedding ontvangen')
+  return payload.embedding
+}
+
+/** Cosine KNN over the user's embedded notes for an arbitrary query vector. */
+export async function matchNotes(
+  embedding: number[],
+  count = 10,
+  excludeId?: string
+): Promise<MatchedNote[]> {
+  const { data, error } = await supabase.rpc('match_notes', {
+    query_embedding: embedding,
+    match_count: count,
+    exclude_id: excludeId ?? null
+  })
+  if (error) throw error
+  return (data ?? []) as MatchedNote[]
+}
+
+// ── Suggestion dismissals ───────────────────────────────────────────────────
+// Rejected pairs are persisted (normalized a < b, like semantic_bridges) so a
+// dismissal on one device sticks on every device.
+
+function normalizePair(a: string, b: string): [string, string] {
+  return a < b ? [a, b] : [b, a]
+}
+
+/** "a|b" keys of every pair the user rejected. */
+export async function fetchDismissedPairKeys(): Promise<Set<string>> {
+  const { data, error } = await supabase
+    .from('connection_dismissals')
+    .select('a_id, b_id')
+  if (error) throw error
+  return new Set((data ?? []).map((r: { a_id: string; b_id: string }) => `${r.a_id}|${r.b_id}`))
+}
+
+export async function dismissPair(a: string, b: string): Promise<void> {
+  const { data: userData } = await supabase.auth.getUser()
+  const userId = userData.user?.id
+  if (!userId) throw new Error('Niet aangemeld')
+  const [aId, bId] = normalizePair(a, b)
+  const { error } = await supabase
+    .from('connection_dismissals')
+    .upsert({ user_id: userId, a_id: aId, b_id: bId }, { onConflict: 'user_id,a_id,b_id' })
+  if (error) throw error
 }

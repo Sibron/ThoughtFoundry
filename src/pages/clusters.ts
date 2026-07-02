@@ -1,19 +1,9 @@
 import { detectClusters, type Cluster } from '../lib/ai'
-import { getCostStatus, renderCostNote } from '../lib/cost'
-import { startAiThinking, AI_PHASES } from '../lib/ai-thinking'
-import { renderTopbar, attachTopbar } from '../lib/nav'
+import { AI_PHASES } from '../lib/ai-thinking'
+import { createAiAction } from '../lib/ai-action'
 import { insertNote, fetchNotesByIds, getNoteTitle } from '../lib/notes'
 import { createLink } from '../lib/links'
-
-export async function renderClusters(app: HTMLElement): Promise<void> {
-  app.innerHTML = `
-    ${renderTopbar('Clusters', 'clusters')}
-    <div id="clusters-root"></div>
-    <div class="toast" id="toast"></div>
-  `
-  attachTopbar()
-  await mountClusters(document.getElementById('clusters-root')!)
-}
+import { showToast, esc as escHtml, errMsg } from '../lib/crud-list'
 
 export async function mountClusters(root: HTMLElement): Promise<void> {
   root.innerHTML = `
@@ -22,11 +12,8 @@ export async function mountClusters(root: HTMLElement): Promise<void> {
         <p class="clusters-intro">
           AI analyseert je verwerkte nota's en detecteert 2-4 impliciete thema-clusters — patronen die je nog niet bewust als thema hebt gelabeld, inclusief welke permanente nota ontbreekt.
         </p>
-        <div class="clusters-run-row">
-          <button class="btn btn-primary" id="clusters-run">Clusters detecteren</button>
-          <span id="clusters-cost" class="cost-note"></span>
-        </div>
-        <p class="muted">Gebruikt Sonnet (hogere kwaliteit). Vereist minimaal 5 verwerkte nota's.</p>
+        <div class="clusters-run-row" id="clusters-action-host"></div>
+        <p class="muted">Vereist minimaal 5 verwerkte nota's.</p>
       </div>
 
       <div id="clusters-result" hidden></div>
@@ -35,27 +22,21 @@ export async function mountClusters(root: HTMLElement): Promise<void> {
 
   injectClustersStyles()
 
-  try {
-    const cost = await getCostStatus()
-    renderCostNote('clusters-cost', cost)
-  } catch { /* non-critical */ }
-
-  document.getElementById('clusters-run')?.addEventListener('click', onRun)
-
-  async function onRun(): Promise<void> {
-    const btn = document.getElementById('clusters-run') as HTMLButtonElement
-    btn.disabled = true
-    btn.textContent = 'AI denkt na…'
-    const stopThinking = startAiThinking(btn, AI_PHASES.clusters)
-
-    try {
-      const result = await detectClusters()
+  createAiAction(document.getElementById('clusters-action-host')!, {
+    label: 'Clusters detecteren',
+    defaultModel: 'claude-sonnet-4-6',
+    expectedOutputTokens: 800,
+    // Server sends up to 100 processed notes (~300 chars each).
+    estimateInputChars: () => 30_000,
+    phases: AI_PHASES.clusters,
+    run: async (model, overrideCap) => {
+      const result = await detectClusters({ model, overrideCap })
       const resultEl = document.getElementById('clusters-result') as HTMLDivElement
       resultEl.hidden = false
 
       if (!result.clusters.length) {
         resultEl.innerHTML = `<div class="clusters-empty"><p>${escHtml(result.message ?? 'Geen clusters gevonden.')}</p></div>`
-        return
+        return result.usage
       }
 
       resultEl.innerHTML = `
@@ -82,17 +63,9 @@ export async function mountClusters(root: HTMLElement): Promise<void> {
           })
         }).catch(() => { /* non-critical */ })
       }
-
-      const freshCost = await getCostStatus()
-      renderCostNote('clusters-cost', freshCost)
-    } catch (err) {
-      showToast(`Detectie mislukt: ${errMsg(err)}`)
-    } finally {
-      stopThinking()
-      btn.disabled = false
-      btn.textContent = 'Clusters detecteren'
-    }
-  }
+      return result.usage
+    },
+  })
 
   function renderCluster(c: Cluster, i: number): string {
     return `
@@ -148,21 +121,8 @@ export async function mountClusters(root: HTMLElement): Promise<void> {
   }
 }
 
-function showToast(msg: string): void {
-  const toast = document.getElementById('toast') as HTMLDivElement | null
-  if (!toast) return
-  toast.textContent = msg
-  toast.classList.add('show')
-  setTimeout(() => toast.classList.remove('show'), 2500)
-}
 
-function escHtml(str: string): string {
-  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
-}
 
-function errMsg(err: unknown): string {
-  return err instanceof Error ? err.message : 'onbekende fout'
-}
 
 function injectClustersStyles(): void {
   if (document.getElementById('clusters-styles')) return

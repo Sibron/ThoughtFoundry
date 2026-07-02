@@ -10,21 +10,14 @@ import { warmSnapshots } from './lib/snapshots'
 import { createRouter, navigateTo } from './router'
 import { renderSetup } from './pages/setup'
 import { renderLogin } from './pages/login'
+import { renderVandaag } from './pages/vandaag'
 import { renderCapture } from './pages/capture'
 import { renderInbox } from './pages/inbox'
-import { renderSearch } from './pages/search'
 import { renderNoteDetail } from './pages/note'
 import { renderProcess } from './pages/process'
-import { renderGraph } from './pages/graph'
-import { renderBook } from './pages/book'
-import { renderThemes } from './pages/themes'
 import { renderSettings } from './pages/settings'
-import { renderSpark } from './pages/spark'
-import { renderDenkpartner } from './pages/denkpartner'
-import { renderClusters } from './pages/clusters'
-import { renderSources } from './pages/sources'
-import { renderProjects } from './pages/projects'
 import { renderThemeSections } from './pages/theme-sections'
+import { renderStudio } from './pages/studio'
 import { renderDenktools } from './pages/denktools'
 import { renderLibrary } from './pages/library'
 
@@ -58,36 +51,48 @@ function aiGuard(handler: (app: HTMLElement) => void | Promise<void>, title: str
   })
 }
 
+/** Redirect a retired route, carrying any query params of the old URL along. */
+function redirect(to: string): () => void {
+  return () => {
+    const q = window.location.hash.split('?')[1]
+    navigateTo(q ? `${to}${to.includes('?') ? '&' : '?'}${q}` : to)
+  }
+}
+
 if (!isConfigured) {
   renderSetup(app)
 } else {
   createRouter({
     '/': async () => {
       const session = await getSession()
-      navigateTo(session ? '/capture' : '/login')
+      navigateTo(session ? '/vandaag' : '/login')
     },
     '/login': async () => {
       const session = await getSession()
-      if (session) { navigateTo('/capture'); return }
+      if (session) { navigateTo('/vandaag'); return }
       renderLogin(app)
     },
+    '/vandaag':  () => guard(renderVandaag),
     '/capture':  () => guard(renderCapture),
     '/inbox':    () => guard(renderInbox),
-    '/search':   () => guard(renderSearch),
     '/note':     () => guard(renderNoteDetail),
     '/process':  aiGuard(renderProcess, 'Verwerken'),
-    '/graph':    () => guard(renderGraph),
-    '/book':     aiGuard(renderBook, 'Boek'),
-    '/themes':           () => guard(renderThemes),
     '/theme-sections':   () => guard(renderThemeSections),
+    '/studio':   () => guard(renderStudio),
     '/settings':    () => guard(renderSettings),
-    '/spark':       aiGuard(renderSpark, 'Spark'),
-    '/denkpartner': aiGuard(renderDenkpartner, 'Denkpartner'),
-    '/clusters':    aiGuard(renderClusters, 'Clusters'),
-    '/sources':     () => guard(renderSources),
-    '/projects':    () => guard(renderProjects),
     '/denktools':   aiGuard(renderDenktools, 'Denktools'),
-    '/library':     () => guard(renderLibrary)
+    '/library':     () => guard(renderLibrary),
+    // Retired standalone routes (pre-consolidation deep links / muscle
+    // memory): everything lives inside a shell now, so redirect there.
+    '/search':      redirect('/inbox?view=search'),
+    '/graph':       redirect('/inbox?view=graph'),
+    '/themes':      redirect('/library?tab=themes'),
+    '/sources':     redirect('/library?tab=sources'),
+    '/book':        redirect('/library?tab=book'),
+    '/projects':    redirect('/library?tab=book'),
+    '/spark':       redirect('/denktools'),
+    '/denkpartner': redirect('/denktools'),
+    '/clusters':    redirect('/denktools')
   })
 }
 
