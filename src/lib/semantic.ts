@@ -88,3 +88,31 @@ export async function matchNotes(
   if (error) throw error
   return (data ?? []) as MatchedNote[]
 }
+
+// ── Suggestion dismissals ───────────────────────────────────────────────────
+// Rejected pairs are persisted (normalized a < b, like semantic_bridges) so a
+// dismissal on one device sticks on every device.
+
+function normalizePair(a: string, b: string): [string, string] {
+  return a < b ? [a, b] : [b, a]
+}
+
+/** "a|b" keys of every pair the user rejected. */
+export async function fetchDismissedPairKeys(): Promise<Set<string>> {
+  const { data, error } = await supabase
+    .from('connection_dismissals')
+    .select('a_id, b_id')
+  if (error) throw error
+  return new Set((data ?? []).map((r: { a_id: string; b_id: string }) => `${r.a_id}|${r.b_id}`))
+}
+
+export async function dismissPair(a: string, b: string): Promise<void> {
+  const { data: userData } = await supabase.auth.getUser()
+  const userId = userData.user?.id
+  if (!userId) throw new Error('Niet aangemeld')
+  const [aId, bId] = normalizePair(a, b)
+  const { error } = await supabase
+    .from('connection_dismissals')
+    .upsert({ user_id: userId, a_id: aId, b_id: bId }, { onConflict: 'user_id,a_id,b_id' })
+  if (error) throw error
+}

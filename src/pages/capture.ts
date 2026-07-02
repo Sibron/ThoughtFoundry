@@ -1,4 +1,5 @@
-import { insertNote, queueOfflineNote, flushOfflineQueue, offlineQueueSize, fetchNotes, fetchRandomNote, fetchOnThisDay, getNoteTitle, type NoteInsert, type Note } from '../lib/notes'
+import { insertNote, queueOfflineNote, flushOfflineQueue, offlineQueueSize, fetchNotes, fetchNotesByIds, fetchRandomNote, fetchOnThisDay, getNoteTitle, type NoteInsert, type Note } from '../lib/notes'
+import { fetchSemanticBridges, hasEmbeddings, fetchDismissedPairKeys, type BridgePair } from '../lib/semantic'
 import { fetchSources, type Source } from '../lib/sources'
 import { fetchLinks, createLink } from '../lib/links'
 import { openLinkModal } from '../lib/link-modal'
@@ -357,9 +358,39 @@ export async function renderCapture(app: HTMLElement): Promise<void> {
     pairData = { pool, linkedPairs, themeMap }
   }
 
+  // Prefer semantic bridges (meaning-based, cross-theme, minus dismissed) when
+  // embeddings exist; the lexical findSurprisingPair stays as the fallback.
+  let semanticPairs: BridgePair[] | null = null
+  const loadSemanticPairs = async (): Promise<BridgePair[]> => {
+    if (semanticPairs) return semanticPairs
+    if (!(await hasEmbeddings())) { semanticPairs = []; return semanticPairs }
+    const [bridges, dismissed] = await Promise.all([
+      fetchSemanticBridges({ bandLo: 0.55, bandHi: 0.72, max: 20 }),
+      fetchDismissedPairKeys().catch(() => new Set<string>())
+    ])
+    semanticPairs = bridges.filter(p => !dismissed.has(`${p.a_id}|${p.b_id}`))
+    return semanticPairs
+  }
+
   const showSurprisingPair = async (): Promise<void> => {
     panel.hidden = true
     try {
+      const sem = await loadSemanticPairs().catch(() => [] as BridgePair[])
+      if (sem.length > 0) {
+        const p = sem[Math.floor(Math.random() * sem.length)]
+        const notes = await fetchNotesByIds([p.a_id, p.b_id])
+        const a = notes.find(n => n.id === p.a_id)
+        const b = notes.find(n => n.id === p.b_id)
+        if (a && b) {
+          if (!pairData) await loadPairData().catch(() => {})
+          currentPair = { a, b, score: p.similarity }
+          pairAEl.textContent = pairPreview(a)
+          pairBEl.textContent = pairPreview(b)
+          pairPanel.hidden = false
+          return
+        }
+      }
+
       if (!pairData) await loadPairData()
       const pair = findSurprisingPair(pairData!.pool, pairData!.linkedPairs, pairData!.themeMap)
       if (!pair) {
@@ -391,6 +422,11 @@ export async function renderCapture(app: HTMLElement): Promise<void> {
       defaultReason: 'Verrassende verbinding',
       onLinked: () => {
         data.linkedPairs.add(pairKey(pair.a.id, pair.b.id))
+        if (semanticPairs) {
+          semanticPairs = semanticPairs.filter(p =>
+            !(p.a_id === pair.a.id && p.b_id === pair.b.id) &&
+            !(p.a_id === pair.b.id && p.b_id === pair.a.id))
+        }
         showToast('Gekoppeld')
         void showSurprisingPair() // roll the next bridge
       }

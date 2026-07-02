@@ -189,6 +189,7 @@ async function renderWeek(): Promise<void> {
       <div class="vd-week-ctas">
         ${inboxCount > 0 ? `<button class="btn btn-ghost btn-sm" data-week-nav="${isAiEnabled() ? '/process' : '/inbox'}">Verwerk vangbak (${inboxCount})</button>` : ''}
         ${orphans ? `<button class="btn btn-ghost btn-sm" data-week-nav="/inbox">Wezen: ${orphans} losse notities</button>` : ''}
+        <button class="btn btn-ghost btn-sm" data-week-nav="/inbox?view=verbindingen">Voorgestelde verbindingen</button>
         <button class="btn btn-ghost btn-sm" data-week-nav="/inbox?view=graph">Bekijk je graaf</button>
       </div>
     `
