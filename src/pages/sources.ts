@@ -1,20 +1,9 @@
 import { createSource, updateSource, deleteSource, SOURCE_TYPES, SOURCE_TYPE_ORDER, type Source, type SourceInsert, type SourceType } from '../lib/sources'
 import { type Note } from '../lib/notes'
 import { loadSourcesSnapshot } from '../lib/snapshots'
-import { renderTopbar, attachTopbar } from '../lib/nav'
 import { createCrudList, injectCrudStyles, showToast, esc, errMsg, type CrudListConfig } from '../lib/crud-list'
 
 type SourceForm = SourceInsert & { type: SourceType }
-
-export async function renderSources(app: HTMLElement): Promise<void> {
-  app.innerHTML = `
-    ${renderTopbar('Bronnen', 'sources')}
-    <div id="src-root"></div>
-    <div class="toast" id="toast"></div>
-  `
-  attachTopbar()
-  await mountSources(document.getElementById('src-root')!)
-}
 
 export async function mountSources(root: HTMLElement): Promise<void> {
   root.innerHTML = `

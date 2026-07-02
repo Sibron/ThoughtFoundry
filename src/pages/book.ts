@@ -5,19 +5,9 @@ import { fetchBooks, createBook, updateBook, deleteBook, type Book } from '../li
 import { generateChapter, type ChapterPlan } from '../lib/ai'
 import { AI_PHASES } from '../lib/ai-thinking'
 import { createAiAction, type AiActionHandle } from '../lib/ai-action'
-import { renderTopbar, attachTopbar, isAiEnabled } from '../lib/nav'
+import { isAiEnabled } from '../lib/nav'
 import { SECTIONS } from '../lib/sections'
 import { mountProjects } from './projects'
-
-export async function renderBook(app: HTMLElement): Promise<void> {
-  app.innerHTML = `
-    ${renderTopbar('Boek', 'book')}
-    <div id="book-root"></div>
-    <div class="toast" id="toast"></div>
-  `
-  attachTopbar()
-  await mountBook(document.getElementById('book-root')!)
-}
 
 export async function mountBook(root: HTMLElement): Promise<void> {
   root.innerHTML = `

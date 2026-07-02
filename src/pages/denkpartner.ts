@@ -3,17 +3,6 @@ import { fetchThemes, type Theme } from '../lib/themes'
 import { insertNote } from '../lib/notes'
 import { AI_PHASES } from '../lib/ai-thinking'
 import { createAiAction } from '../lib/ai-action'
-import { renderTopbar, attachTopbar } from '../lib/nav'
-
-export async function renderDenkpartner(app: HTMLElement): Promise<void> {
-  app.innerHTML = `
-    ${renderTopbar('Denkpartner', 'denkpartner')}
-    <div id="dp-root"></div>
-    <div class="toast" id="toast"></div>
-  `
-  attachTopbar()
-  await mountDenkpartner(document.getElementById('dp-root')!)
-}
 
 export async function mountDenkpartner(root: HTMLElement): Promise<void> {
   root.innerHTML = `

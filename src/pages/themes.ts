@@ -5,7 +5,7 @@ import {
   type Theme
 } from '../lib/themes'
 import { loadThemesSnapshot, type ThemesSnapshot } from '../lib/snapshots'
-import { renderTopbar, attachTopbar, renderGuidanceBanner } from '../lib/nav'
+import { renderGuidanceBanner } from '../lib/nav'
 import { navigateTo } from '../router'
 
 const COLOR_PALETTE = [
@@ -27,16 +27,6 @@ const SECTION_LABELS: Record<string, string> = {
   ondersteunende_concepten:  'Ondersteunende concepten',
   methodieken:               'Methodieken / handvaten',
   reflectievragen:           'Reflectie- of verdiepingsvragen',
-}
-
-export async function renderThemes(app: HTMLElement): Promise<void> {
-  app.innerHTML = `
-    ${renderTopbar("Thema's", 'themes')}
-    <div id="themes-root"></div>
-    <div class="toast" id="toast"></div>
-  `
-  attachTopbar()
-  await mountThemes(document.getElementById('themes-root')!)
 }
 
 export async function mountThemes(root: HTMLElement): Promise<void> {

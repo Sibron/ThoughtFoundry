@@ -1,21 +1,15 @@
-import { fetchNotes, getNoteTitle, type Note } from '../lib/notes'
+import { fetchNotes, fetchNotesByIds, getNoteTitle, type Note } from '../lib/notes'
 import { rankByQuery } from '../lib/similarity'
-import { renderTopbar, attachTopbar } from '../lib/nav'
+import { embedText, matchNotes, hasEmbeddings } from '../lib/semantic'
 import { navigateTo } from '../router'
 
 // Fast full-text search across content / title / summary. The single most
 // important re-finding tool: "I know I wrote this down somewhere" must always
 // resolve in one screen, or trust in the system collapses.
-
-export async function renderSearch(app: HTMLElement): Promise<void> {
-  app.innerHTML = `
-    ${renderTopbar('Zoeken', 'search')}
-    <div id="search-root"></div>
-    <div class="toast" id="toast"></div>
-  `
-  attachTopbar()
-  await mountSearch(document.getElementById('search-root')!)
-}
+//
+// Two modes: Woorden (lexical, live while typing) and Betekenis (semantic —
+// embed the query with the free edge model + match_notes; runs on Enter, not
+// per keystroke, since it's a network round-trip).
 
 export async function mountSearch(root: HTMLElement): Promise<void> {
   root.innerHTML = `
@@ -28,6 +22,11 @@ export async function mountSearch(root: HTMLElement): Promise<void> {
         autocomplete="off"
         autocapitalize="off"
       />
+      <div class="search-modes" role="radiogroup" aria-label="Zoekmodus">
+        <button class="search-mode active" data-mode="words" role="radio" aria-checked="true">Woorden</button>
+        <button class="search-mode" data-mode="meaning" role="radio" aria-checked="false">Betekenis</button>
+        <span class="search-mode-hint" id="search-mode-hint"></span>
+      </div>
       <div id="search-results" class="search-results">
         <p class="search-hint">Typ om te zoeken in content, titel en samenvatting.</p>
       </div>
@@ -38,8 +37,10 @@ export async function mountSearch(root: HTMLElement): Promise<void> {
 
   const input = document.getElementById('search-input') as HTMLInputElement
   const resultsEl = document.getElementById('search-results') as HTMLDivElement
+  const modeHint = document.getElementById('search-mode-hint') as HTMLElement
   let debounce: ReturnType<typeof setTimeout> | null = null
   let lastQuery = ''
+  let mode: 'words' | 'meaning' = 'words'
 
   // Allow ?q= deep-links (e.g. from a shortcut) to pre-fill the search.
   const hash = window.location.hash.slice(1)
@@ -51,7 +52,7 @@ export async function mountSearch(root: HTMLElement): Promise<void> {
 
   input.focus()
 
-  const run = async () => {
+  const runWords = async () => {
     const q = input.value.trim()
     lastQuery = q
     if (q.length < 2) {
@@ -71,31 +72,86 @@ export async function mountSearch(root: HTMLElement): Promise<void> {
     }
   }
 
+  const runMeaning = async () => {
+    const q = input.value.trim()
+    lastQuery = q
+    if (q.length < 2) {
+      resultsEl.innerHTML = '<p class="search-hint">Typ een vraag of gedachte en druk op Enter.</p>'
+      return
+    }
+    resultsEl.innerHTML = '<p class="search-hint">Zoeken op betekenis…</p>'
+    try {
+      if (!(await hasEmbeddings())) {
+        resultsEl.innerHTML = '<p class="search-hint">Nog geen semantische index — activeer embeddings via Instellingen.</p>'
+        return
+      }
+      const vec = await embedText(q)
+      const hits = await matchNotes(vec, 20)
+      if (q !== lastQuery) return
+      const strong = hits.filter(h => h.similarity >= 0.45)
+      if (strong.length === 0) {
+        resultsEl.innerHTML = `<p class="search-hint">Niets gevonden dat lijkt op "${escHtml(q)}".</p>`
+        return
+      }
+      const notes = await fetchNotesByIds(strong.map(h => h.id))
+      const simById = new Map(strong.map(h => [h.id, h.similarity]))
+      notes.sort((a, b) => (simById.get(b.id) ?? 0) - (simById.get(a.id) ?? 0))
+      renderResults(notes, q, simById)
+    } catch (err) {
+      resultsEl.innerHTML = `<p class="search-hint">Zoeken mislukt: ${escHtml(errMsg(err))}</p>`
+    }
+  }
+
+  const run = () => (mode === 'words' ? runWords() : runMeaning())
+
   input.addEventListener('input', () => {
+    if (mode !== 'words') return // meaning mode runs on Enter, not per keystroke
     if (debounce) clearTimeout(debounce)
-    debounce = setTimeout(run, 220)
+    debounce = setTimeout(runWords, 220)
+  })
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') run()
+  })
+
+  root.querySelectorAll<HTMLButtonElement>('.search-mode').forEach(btn => {
+    btn.addEventListener('click', () => {
+      mode = btn.dataset['mode'] as 'words' | 'meaning'
+      root.querySelectorAll('.search-mode').forEach(b => {
+        b.classList.toggle('active', b === btn)
+        b.setAttribute('aria-checked', String(b === btn))
+      })
+      modeHint.textContent = mode === 'meaning'
+        ? 'Vindt nota\'s met andere woorden maar dezelfde gedachte. Enter om te zoeken.'
+        : ''
+      input.focus()
+      if (input.value.trim()) run()
+    })
   })
 
   if (input.value.trim()) run()
 
-  function renderResults(notes: Note[], q: string): void {
+  function renderResults(notes: Note[], q: string, similarity?: Map<string, number>): void {
     if (notes.length === 0) {
       resultsEl.innerHTML = `<p class="search-hint">Niets gevonden voor "${escHtml(q)}".</p>`
       return
     }
     resultsEl.innerHTML = `
-      <p class="search-count">${notes.length} resultaat${notes.length === 1 ? '' : 'en'}</p>
+      <p class="search-count">${notes.length} resultaat${notes.length === 1 ? '' : 'en'}${similarity ? ' · op betekenis' : ''}</p>
       <ul class="search-list">
         ${notes.map(n => {
           const title = getNoteTitle(n, 70)
-          const snippet = highlight(snippetAround(n.content, q), q)
+          const snippet = similarity
+            ? escHtml(n.content.slice(0, 160)) + (n.content.length > 160 ? '…' : '')
+            : highlight(snippetAround(n.content, q), q)
+          const sim = similarity?.get(n.id)
           return `
             <li class="search-item" data-id="${n.id}">
-              <div class="search-item-title">${highlight(escHtml(title), q)}</div>
+              <div class="search-item-title">${similarity ? escHtml(title) : highlight(escHtml(title), q)}</div>
               <div class="search-item-snippet">${snippet}</div>
               <div class="search-item-meta">
                 <span class="badge badge-${n.status}">${escHtml(n.status)}</span>
                 <span class="search-item-date">${formatDate(n.created_at)}</span>
+                ${sim != null ? `<span class="search-item-sim">${Math.round(sim * 100)}% verwant</span>` : ''}
               </div>
             </li>`
         }).join('')}
@@ -173,6 +229,23 @@ function injectSearchStyles(): void {
       font-size: var(--fs-lg);
       padding: var(--s-3) var(--s-4);
     }
+    .search-modes {
+      display: flex;
+      align-items: center;
+      gap: var(--s-1);
+      flex-wrap: wrap;
+    }
+    .search-mode {
+      border: 1px solid var(--border); border-radius: var(--r-sm);
+      background: var(--bg); color: var(--text-muted);
+      padding: 4px var(--s-3); font-size: var(--fs-sm); cursor: pointer;
+    }
+    .search-mode.active {
+      border-color: var(--accent); color: var(--accent);
+      background: var(--surface); font-weight: 600;
+    }
+    .search-mode-hint { font-size: var(--fs-sm); color: var(--text-muted); }
+    .search-item-sim { font-size: var(--fs-sm); color: var(--accent); font-weight: 600; }
     .search-hint, .search-count {
       color: var(--text-muted);
       font-size: var(--fs-sm);
