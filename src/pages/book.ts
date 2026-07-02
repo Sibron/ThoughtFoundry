@@ -1,7 +1,9 @@
 import { fetchAllNotes, getNoteTitle, type Note } from '../lib/notes'
 import { fetchThemes, fetchAllNoteThemes, type Theme } from '../lib/themes'
-import { fetchChapters, saveChapter, deleteChapter, fetchSections, fetchSectionStats, type Chapter, type ChapterSectionStats } from '../lib/chapters'
+import { fetchChapters, saveChapter, deleteChapter, fetchSectionStats, type Chapter, type ChapterSectionStats } from '../lib/chapters'
 import { fetchBooks, createBook, updateBook, deleteBook, type Book } from '../lib/books'
+import { fetchProject, fetchProjectNoteIds, type BookProject } from '../lib/projects'
+import { renderChapterMarkdown, renderBookMarkdown, resolveChapterSections, downloadMarkdown, slugify } from '../lib/manuscript'
 import { generateChapter, type ChapterPlan } from '../lib/ai'
 import { AI_PHASES } from '../lib/ai-thinking'
 import { createAiAction, type AiActionHandle } from '../lib/ai-action'
@@ -28,6 +30,10 @@ export async function mountBook(root: HTMLElement): Promise<void> {
   let genAction: AiActionHandle | null = null
 
   let sectionStats = new Map<string, ChapterSectionStats>()
+  // Workbench project scope: /library?tab=book&project=<id> pre-filters the
+  // note pool to that project's noten and stamps project_id on saved chapters.
+  let workProject: BookProject | null = null
+  let workProjectNoteIds: Set<string> = new Set()
 
   try {
     [notes, themes, noteThemes, chapters, books] = await Promise.all([
@@ -42,6 +48,19 @@ export async function mountBook(root: HTMLElement): Promise<void> {
     document.getElementById('book-body')!.innerHTML =
       `<div class="book-error">Laden mislukt: ${escHtml(errMsg(err))}</div>`
     return
+  }
+
+  const bookParams = new URLSearchParams(window.location.hash.split('?')[1] ?? '')
+  const bookTabParam = bookParams.get('booktab')
+  if (bookTabParam === 'projects' || bookTabParam === 'chapters' || bookTabParam === 'books') {
+    activeTab = bookTabParam
+  }
+  const projectParam = bookParams.get('project')
+  if (projectParam) {
+    try {
+      workProject = await fetchProject(projectParam)
+      if (workProject) workProjectNoteIds = new Set(await fetchProjectNoteIds(workProject.id))
+    } catch { /* scope is best-effort */ }
   }
 
   renderShell()
@@ -80,6 +99,7 @@ export async function mountBook(root: HTMLElement): Promise<void> {
         <header class="book-section-header">
           <h2>Hoofdstuk-werkbank</h2>
           <p class="muted">Selecteer een thema, kies nota's, en laat AI een hoofdstukschets voorstellen.</p>
+          ${workProject ? `<p class="book-project-scope">Project: <strong>${escHtml(workProject.title)}</strong> — alleen projectnoten worden getoond; het hoofdstuk wordt aan dit project gekoppeld.</p>` : ''}
         </header>
 
         <div class="book-controls">
@@ -363,7 +383,7 @@ export async function mountBook(root: HTMLElement): Promise<void> {
     }
   }
 
-  function onExportBook(row: HTMLDetailsElement, id: string): void {
+  async function onExportBook(row: HTMLDetailsElement, id: string): Promise<void> {
     const title = row.querySelector<HTMLInputElement>('[data-edit-title]')!.value.trim()
     const intro = row.querySelector<HTMLTextAreaElement>('[data-edit-intro]')!.value.trim()
     const chapterIds = Array.from(row.querySelectorAll<HTMLLIElement>('li.book-chapter-included'))
@@ -372,7 +392,13 @@ export async function mountBook(root: HTMLElement): Promise<void> {
     const orderedChapters = chapterIds
       .map(cid => chapters.find(c => c.id === cid))
       .filter((c): c is Chapter => !!c)
-    const md = renderBookMarkdown(title, intro, orderedChapters, notes)
+    // Prose-first: pull studio sections per chapter (outline fallback inside).
+    const manuscriptChapters = await Promise.all(orderedChapters.map(async c => ({
+      title: c.title,
+      summary: c.summary ?? '',
+      sections: await resolveChapterSections(c)
+    })))
+    const md = renderBookMarkdown(title, intro, manuscriptChapters, notes)
     const fallback = books.find(b => b.id === id)?.title ?? title
     downloadMarkdown(`${slugify(fallback) || 'boek'}.md`, md)
   }
@@ -385,13 +411,16 @@ export async function mountBook(root: HTMLElement): Promise<void> {
 
   function renderNoteList(): void {
     const themeId = (document.getElementById('book-theme') as HTMLSelectElement).value
-    const filtered = themeId
+    let filtered = themeId
       ? notes.filter(n => noteThemes.some(nt => nt.note_id === n.id && nt.theme_id === themeId))
       : notes
+    if (workProject) filtered = filtered.filter(n => workProjectNoteIds.has(n.id))
 
     const listEl = document.getElementById('book-notes-list')!
     if (filtered.length === 0) {
-      listEl.innerHTML = '<p class="muted">Geen verwerkte nota\'s in dit thema.</p>'
+      listEl.innerHTML = workProject
+        ? '<p class="muted">Geen verwerkte projectnoten gevonden. Koppel eerst noten aan het project.</p>'
+        : '<p class="muted">Geen verwerkte nota\'s in dit thema.</p>'
       updateGenerateState()
       return
     }
@@ -480,6 +509,7 @@ export async function mountBook(root: HTMLElement): Promise<void> {
       try {
         const saved = await saveChapter({
           themeId,
+          projectId: workProject?.id ?? null,
           title: updated.title,
           summary: updated.summary,
           outline: updated.sections,
@@ -496,7 +526,7 @@ export async function mountBook(root: HTMLElement): Promise<void> {
 
     document.getElementById('plan-export')?.addEventListener('click', () => {
       const updated = collectPlan(plan)
-      const md = renderMarkdown(updated, notes)
+      const md = renderChapterMarkdown({ title: updated.title, summary: updated.summary, sections: updated.sections }, notes)
       downloadMarkdown(`${slugify(updated.title) || 'hoofdstuk'}.md`, md)
     })
 
@@ -545,19 +575,8 @@ export async function mountBook(root: HTMLElement): Promise<void> {
         if (!c) return
         // Prose-first: written sections export their text, the rest fall back
         // to the note-assembly of the outline.
-        let sections: { heading: string; intent: string; note_ids: string[]; content_md?: string | null }[] = c.outline
-        try {
-          const rows = await fetchSections(c.id)
-          if (rows.length > 0) {
-            sections = rows.map(r => ({
-              heading: r.heading, intent: r.intent ?? '', note_ids: r.note_ids, content_md: r.content_md
-            }))
-          }
-        } catch { /* un-migrated client — outline fallback */ }
-        const md = renderMarkdown(
-          { title: c.title, summary: c.summary ?? '', sections },
-          notes
-        )
+        const sections = await resolveChapterSections(c)
+        const md = renderChapterMarkdown({ title: c.title, summary: c.summary ?? '', sections }, notes)
         downloadMarkdown(`${slugify(c.title) || 'hoofdstuk'}.md`, md)
       })
       row.querySelector('.saved-delete')?.addEventListener('click', async () => {
@@ -614,85 +633,9 @@ function renderSectionEditor(
   `
 }
 
-function renderMarkdown(
-  plan: { title: string; summary: string; sections: { heading: string; intent: string; note_ids: string[]; content_md?: string | null }[] },
-  notes: Note[]
-): string {
-  const byId: Record<string, Note> = {}
-  notes.forEach(n => { byId[n.id] = n })
 
-  const lines: string[] = []
-  lines.push(`# ${plan.title}`, '')
-  if (plan.summary) lines.push(`> ${plan.summary}`, '')
 
-  plan.sections.forEach(s => {
-    lines.push(`## ${s.heading}`, '')
-    // Prose-first: a section written in the studio exports its own text; an
-    // unwritten section falls back to assembling its attached notes.
-    if (s.content_md?.trim()) {
-      lines.push(s.content_md.trim(), '')
-      return
-    }
-    if (s.intent) lines.push(`*${s.intent}*`, '')
-    s.note_ids.forEach(id => {
-      const n = byId[id]
-      if (!n) return
-      const head = n.ai_title ?? n.content.slice(0, 80)
-      lines.push(`### ${head}`, '')
-      lines.push(n.content, '')
-      if (n.mini_notes) lines.push(`> ${n.mini_notes}`, '')
-      if (n.source_url) lines.push(`[bron](${n.source_url})`, '')
-    })
-  })
 
-  lines.push('---', `*Gegenereerd via ThoughtFoundry — ${new Date().toLocaleDateString('nl-NL')}*`)
-  return lines.join('\n')
-}
-
-function renderBookMarkdown(title: string, intro: string, chapters: Chapter[], notes: Note[]): string {
-  const lines: string[] = []
-  lines.push(`# ${title}`, '')
-  if (intro) lines.push(intro, '')
-
-  if (chapters.length > 1) {
-    lines.push('## Inhoud', '')
-    chapters.forEach((c, i) => {
-      lines.push(`${i + 1}. ${c.title}`)
-    })
-    lines.push('')
-  }
-
-  chapters.forEach((c, i) => {
-    lines.push('---', '')
-    const md = renderMarkdown(
-      { title: `Hoofdstuk ${i + 1}: ${c.title}`, summary: c.summary ?? '', sections: c.outline },
-      notes
-    )
-    // Strip the trailing "Gegenereerd via" footer per chapter
-    const trimmed = md.split('\n---\n')[0]
-    lines.push(trimmed, '')
-  })
-
-  lines.push('---', `*Gegenereerd via ThoughtFoundry — ${new Date().toLocaleDateString('nl-NL')}*`)
-  return lines.join('\n')
-}
-
-function downloadMarkdown(filename: string, content: string): void {
-  const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = filename
-  document.body.appendChild(a)
-  a.click()
-  document.body.removeChild(a)
-  URL.revokeObjectURL(url)
-}
-
-function slugify(s: string): string {
-  return s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
-    .replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60)
-}
 
 function showToast(msg: string): void {
   const toast = document.getElementById('toast') as HTMLDivElement | null
@@ -841,6 +784,14 @@ function injectBookStyles(): void {
     .book-section-header h2 {
       font-size: var(--fs-lg);
       font-weight: 600;
+    }
+    .book-project-scope {
+      font-size: var(--fs-sm);
+      color: var(--text);
+      background: var(--bg);
+      border-left: 3px solid var(--accent);
+      border-radius: var(--r-sm);
+      padding: var(--s-2) var(--s-3);
     }
     .book-controls {
       display: grid;
