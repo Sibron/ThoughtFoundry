@@ -9,6 +9,7 @@ interface UserSettingsRow {
   display_motion: string
   display_theme: string
   focus_mode: boolean
+  review_weekday: number
 }
 
 export type UserSettingsPatch = Partial<Omit<UserSettingsRow, 'user_id'>>
@@ -52,6 +53,13 @@ async function _fetchAndApply(): Promise<void> {
   localStorage.setItem('display_motion', row.display_motion)
   localStorage.setItem('tf-theme', row.display_theme)
   localStorage.setItem('tf-focus', row.focus_mode ? 'true' : 'false')
+  localStorage.setItem('review_weekday', String(row.review_weekday ?? 0))
+}
+
+/** 0 = zondag … 6 = zaterdag (matches Date#getDay). */
+export function getReviewWeekday(): number {
+  const n = Number(localStorage.getItem('review_weekday'))
+  return Number.isInteger(n) && n >= 0 && n <= 6 ? n : 0
 }
 
 /**

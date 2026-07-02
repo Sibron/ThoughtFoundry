@@ -9,6 +9,7 @@ export interface BookProject {
   core_question: string
   description: string | null
   status: ProjectStatus
+  target_date: string | null
   created_at: string
   updated_at: string
 }
@@ -18,6 +19,7 @@ export interface BookProjectInsert {
   core_question: string
   description?: string
   status?: ProjectStatus
+  target_date?: string | null
 }
 
 export const BOOK_STATUSES: Record<ProjectStatus, { label: string; color: string }> = {
@@ -54,7 +56,8 @@ export async function createProject(input: BookProjectInsert): Promise<BookProje
       title: input.title,
       core_question: input.core_question,
       description: input.description ?? null,
-      status: input.status ?? 'exploring'
+      status: input.status ?? 'exploring',
+      target_date: input.target_date ?? null
     })
     .select()
     .single()
