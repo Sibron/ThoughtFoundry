@@ -12,25 +12,46 @@ import { navigateTo } from '../router'
 
 interface GraphNode {
   id: string
-  note: Note
-  themeId: string | null
+  kind: 'note' | 'theme'
+  note: Note | null
+  theme: Theme | null
+  /** ALL themes of a note (multi-theme notes belong to every cluster). */
+  themeIds: string[]
   x: number
   y: number
   vx: number
   vy: number
   radius: number
+  /** Explicit-link degree — drives node size and label priority. */
+  degree: number
 }
 
 interface GraphEdge {
   source: string
   target: string
   kind: 'theme' | 'explicit'
+  linkType?: LinkType
   reason?: string | null
   linkId?: string
 }
 
 const WIDTH = 1000
 const HEIGHT = 720
+
+// Show at most this many note labels at once (picked by link-degree) — beyond
+// that the canvas turns into label soup. Theme labels always show.
+const MAX_NOTE_LABELS = 60
+
+// Distinct stroke per relation type so the KIND of connection reads at a
+// glance. Chosen to hold up in light and dark mode.
+const LINK_TYPE_COLORS: Record<LinkType, string> = {
+  builds_on:   '#4E7A5E',
+  contradicts: '#C0392B',
+  example_of:  '#B8860B',
+  contrasts:   '#7D6B9E',
+  applies_to:  '#3E7CA8',
+  related:     '#8A8A8A',
+}
 
 export async function mountGraph(root: HTMLElement): Promise<void> {
   root.innerHTML = `
@@ -48,13 +69,18 @@ export async function mountGraph(root: HTMLElement): Promise<void> {
             <input type="checkbox" id="graph-theme-edges" />
             Toon thema-verbanden
           </label>
+          <label class="graph-filter graph-toggle">
+            <input type="checkbox" id="graph-connected-only" />
+            Alleen verbonden
+          </label>
           <button class="btn btn-ghost graph-suggest-btn" id="graph-suggest">Verbindingen voorstellen</button>
           <button class="btn btn-ghost graph-reset-btn" id="graph-reset" title="Beeld herstellen" aria-label="Beeld herstellen">Reset beeld</button>
         </div>
         <div class="graph-meta-row">
           <span class="graph-legend" aria-hidden="true">
-            <span class="legend-item"><span class="legend-swatch legend-theme"></span>Thema</span>
-            <span class="legend-item"><span class="legend-swatch legend-explicit"></span>Link</span>
+            ${(Object.keys(LINK_TYPE_COLORS) as LinkType[]).map(t =>
+              `<span class="legend-item"><span class="legend-swatch" style="border-top-color:${LINK_TYPE_COLORS[t]}"></span>${LINK_TYPE_LABELS[t]}</span>`
+            ).join('')}
             <span class="legend-item"><span class="legend-swatch legend-suggested"></span>Voorstel</span>
           </span>
           <span class="graph-stats" id="graph-stats"></span>
@@ -151,10 +177,20 @@ export async function mountGraph(root: HTMLElement): Promise<void> {
     renderSvg()
   })
 
+  // Declutter: only notes that carry at least one explicit link.
+  let connectedOnly = false
+  const connectedToggle = document.getElementById('graph-connected-only') as HTMLInputElement
+  connectedToggle.addEventListener('change', () => {
+    interacted = true
+    connectedOnly = connectedToggle.checked
+    rebuild()
+  })
+
   let nodes: GraphNode[] = []
   let edges: GraphEdge[] = []
   let svg: SVGSVGElement | null = null
   let usingTemporalFallback = false
+  let hiddenUnconnected = 0
   // Candidate (not-yet-created) links surfaced by semantic_bridges, drawn dashed.
   let suggestedEdges: { a: string; b: string }[] = []
 
@@ -182,60 +218,126 @@ export async function mountGraph(root: HTMLElement): Promise<void> {
 
   rebuild()
 
+  // Deep-link: /inbox?view=graph&focus=<noteId> (e.g. "Bekijk in graaf" in the
+  // note editor) lands zoomed-in on that note with its ego network lit.
+  const focusParam = new URLSearchParams(window.location.hash.split('?')[1] ?? '').get('focus')
+  if (focusParam) {
+    const focusTarget = nodes.find(n => n.id === focusParam)
+    if (focusTarget) {
+      interacted = true
+      focusedId = focusTarget.id
+      view.scale = 1.6
+      centerOnNode(focusTarget)
+      applyHighlights()
+      if (focusTarget.kind === 'note') void showSidebar(focusTarget)
+    }
+  }
+
   function rebuild(): void {
-    const filtered = selectedTheme
-      ? notes.filter(n => noteThemes.some(nt => nt.note_id === n.id && nt.theme_id === selectedTheme))
+    // ALL themes per note — a multi-theme note belongs to every cluster it's in.
+    const themesOfNote = new Map<string, string[]>()
+    noteThemes.forEach(nt => {
+      const arr = themesOfNote.get(nt.note_id) ?? []
+      arr.push(nt.theme_id)
+      themesOfNote.set(nt.note_id, arr)
+    })
+
+    // Explicit-link degree per note (drives size + label priority).
+    const degreeOf = new Map<string, number>()
+    links.forEach(l => {
+      degreeOf.set(l.source_id, (degreeOf.get(l.source_id) ?? 0) + 1)
+      degreeOf.set(l.target_id, (degreeOf.get(l.target_id) ?? 0) + 1)
+    })
+
+    let filtered = selectedTheme
+      ? notes.filter(n => (themesOfNote.get(n.id) ?? []).includes(selectedTheme))
       : notes
 
-    const themeOfNote: Record<string, string | null> = {}
-    notes.forEach(n => {
-      const matches = noteThemes.filter(nt => nt.note_id === n.id)
-      themeOfNote[n.id] = matches[0]?.theme_id ?? null
+    hiddenUnconnected = 0
+    if (connectedOnly) {
+      const before = filtered.length
+      filtered = filtered.filter(n => (degreeOf.get(n.id) ?? 0) > 0)
+      hiddenUnconnected = before - filtered.length
+    }
+
+    // Theme hubs: a REAL, visible node per theme present in the current view —
+    // notes attach to their hub(s), so themes read as labeled clusters instead
+    // of an invisible first-note star.
+    const noteIds = new Set(filtered.map(n => n.id))
+    const themesInView = themes.filter(t =>
+      selectedTheme ? t.id === selectedTheme
+        : filtered.some(n => (themesOfNote.get(n.id) ?? []).includes(t.id)))
+
+    // Seed layout by cluster: hubs on a ring, notes near the centroid of their
+    // hubs (with jitter), unthemed notes around the centre. The force layout
+    // then only has to relax an already-meaningful geography.
+    const cx = WIDTH / 2, cy = HEIGHT / 2
+    const ring = Math.min(WIDTH, HEIGHT) * 0.33
+    const hubPos = new Map<string, { x: number; y: number }>()
+    themesInView.forEach((t, i) => {
+      const angle = (i / Math.max(themesInView.length, 1)) * Math.PI * 2
+      hubPos.set(t.id, { x: cx + Math.cos(angle) * ring, y: cy + Math.sin(angle) * ring })
     })
 
-    nodes = filtered.map((note, i) => ({
-      id: note.id,
-      note,
-      themeId: themeOfNote[note.id] ?? null,
-      x: WIDTH / 2 + Math.cos(i * 2.4) * 200,
-      y: HEIGHT / 2 + Math.sin(i * 2.4) * 200,
-      vx: 0, vy: 0,
-      radius: 8
-    }))
+    const themeNodes: GraphNode[] = themesInView.map(t => {
+      const pos = hubPos.get(t.id)!
+      const count = noteThemes.filter(nt => nt.theme_id === t.id && noteIds.has(nt.note_id)).length
+      return {
+        id: 'theme:' + t.id,
+        kind: 'theme',
+        note: null,
+        theme: t,
+        themeIds: [t.id],
+        x: pos.x, y: pos.y, vx: 0, vy: 0,
+        radius: Math.min(22, 12 + Math.sqrt(count) * 1.6),
+        degree: count,
+      }
+    })
 
-    const ids = new Set(nodes.map(n => n.id))
+    const noteNodes: GraphNode[] = filtered.map((note, i) => {
+      const tIds = themesOfNote.get(note.id) ?? []
+      const anchors = tIds.map(id => hubPos.get(id)).filter((p): p is { x: number; y: number } => !!p)
+      const ax = anchors.length ? anchors.reduce((s, p) => s + p.x, 0) / anchors.length : cx
+      const ay = anchors.length ? anchors.reduce((s, p) => s + p.y, 0) / anchors.length : cy
+      const jitter = 70
+      const degree = degreeOf.get(note.id) ?? 0
+      return {
+        id: note.id,
+        kind: 'note',
+        note,
+        theme: null,
+        themeIds: tIds,
+        x: ax + Math.cos(i * 2.4) * jitter,
+        y: ay + Math.sin(i * 2.4) * jitter,
+        vx: 0, vy: 0,
+        radius: Math.min(14, 6 + Math.sqrt(degree) * 2.2),
+        degree,
+      }
+    })
+
+    nodes = [...themeNodes, ...noteNodes]
     edges = []
 
-    // Theme-based edges: connect each note in a theme to a single representative
-    // (the first note of that theme) — a "star", not a clique. A clique is
-    // O(n²) edges per theme and turns the canvas into a hairball that buries the
-    // real typed links; a star keeps the clustering pull at O(n) edges.
-    const byTheme: Record<string, string[]> = {}
+    // Note ↔ theme-hub edges (one per membership) pull clusters together.
     noteThemes.forEach(nt => {
-      if (!ids.has(nt.note_id)) return
-      ;(byTheme[nt.theme_id] ??= []).push(nt.note_id)
-    })
-    Object.values(byTheme).forEach(group => {
-      const hub = group[0]
-      for (let i = 1; i < group.length; i++) {
-        edges.push({ source: hub, target: group[i], kind: 'theme' })
-      }
+      if (!noteIds.has(nt.note_id) || !hubPos.has(nt.theme_id)) return
+      edges.push({ source: 'theme:' + nt.theme_id, target: nt.note_id, kind: 'theme' })
     })
 
     // Explicit links — added last so they paint on top of theme edges.
     links.forEach(l => {
-      if (ids.has(l.source_id) && ids.has(l.target_id)) {
-        edges.push({ source: l.source_id, target: l.target_id, kind: 'explicit', reason: l.reason, linkId: l.id })
+      if (noteIds.has(l.source_id) && noteIds.has(l.target_id)) {
+        edges.push({ source: l.source_id, target: l.target_id, kind: 'explicit', linkType: l.type, reason: l.reason, linkId: l.id })
       }
     })
 
-    // Temporal clustering fallback when no edges exist
+    // Temporal clustering fallback when there is nothing else to hold on to.
     usingTemporalFallback = false
     if (edges.length === 0) {
       const WEEK_MS = 7 * 24 * 60 * 60 * 1000
       const byWeek = new Map<number, GraphNode[]>()
-      for (const n of nodes) {
-        const week = Math.floor(new Date(n.note.created_at).getTime() / WEEK_MS)
+      for (const n of noteNodes) {
+        const week = Math.floor(new Date(n.note!.created_at).getTime() / WEEK_MS)
         if (!byWeek.has(week)) byWeek.set(week, [])
         byWeek.get(week)!.push(n)
       }
@@ -254,11 +356,18 @@ export async function mountGraph(root: HTMLElement): Promise<void> {
 
   function updateStats(): void {
     const stats = document.getElementById('graph-stats')!
+    const noteCount = nodes.filter(n => n.kind === 'note').length
     if (usingTemporalFallback) {
-      stats.textContent = `${nodes.length} nota's · Tijdclusters (thema's nog niet gekoppeld)`
-    } else {
-      stats.textContent = `${nodes.length} nota's · ${edges.filter(e => e.kind === 'explicit').length} expliciete links · ${themes.length} thema's`
+      stats.textContent = `${noteCount} nota's · Tijdclusters (thema's nog niet gekoppeld)`
+      return
     }
+    const parts = [
+      `${noteCount} nota's`,
+      `${edges.filter(e => e.kind === 'explicit').length} expliciete links`,
+      `${themes.length} thema's`,
+    ]
+    if (hiddenUnconnected > 0) parts.push(`${hiddenUnconnected} losse verborgen`)
+    stats.textContent = parts.join(' · ')
   }
 
   function renderSvg(): void {
@@ -304,6 +413,7 @@ export async function mountGraph(root: HTMLElement): Promise<void> {
       line.dataset['tgt'] = e.target
       if (e.kind === 'explicit') {
         line.setAttribute('marker-end', 'url(#arrow)')
+        if (e.linkType) line.style.stroke = LINK_TYPE_COLORS[e.linkType]
         const link = e.linkId ? linkById.get(e.linkId) : undefined
         if (link) {
           const title = document.createElementNS('http://www.w3.org/2000/svg', 'title')
@@ -330,28 +440,41 @@ export async function mountGraph(root: HTMLElement): Promise<void> {
       svg!.appendChild(line)
     })
 
+    // Only the best-connected notes get an always-rendered label; the rest
+    // show theirs on hover/focus (CSS). Theme labels always render.
+    const labelBudget = new Set(
+      nodes.filter(n => n.kind === 'note')
+        .sort((a, b) => b.degree - a.degree)
+        .slice(0, MAX_NOTE_LABELS)
+        .map(n => n.id)
+    )
+
     nodes.forEach(n => {
-      const themeColor = themes.find(t => t.id === n.themeId)?.color ?? '#999'
+      const isTheme = n.kind === 'theme'
+      const color = isTheme
+        ? (n.theme?.color ?? '#999')
+        : (themes.find(t => t.id === n.themeIds[0])?.color ?? '#999')
       const g = document.createElementNS('http://www.w3.org/2000/svg', 'g')
-      g.setAttribute('class', 'graph-node')
+      g.setAttribute('class', `graph-node ${isTheme ? 'graph-node--theme' : 'graph-node--note'}${!isTheme && n.degree === 0 ? ' graph-node--loose' : ''}`)
       g.setAttribute('transform', `translate(${n.x}, ${n.y})`)
       g.setAttribute('role', 'button')
       g.setAttribute('tabindex', '0')
-      g.setAttribute('aria-label', getNoteTitle(n.note, 80))
+      g.setAttribute('aria-label', isTheme ? `Thema: ${n.theme?.name ?? ''}` : getNoteTitle(n.note!, 80))
       g.dataset['id'] = n.id
 
       const c = document.createElementNS('http://www.w3.org/2000/svg', 'circle')
       c.setAttribute('r', String(n.radius))
-      c.setAttribute('fill', themeColor)
+      c.setAttribute('fill', color)
       c.setAttribute('stroke', '#fff')
-      c.setAttribute('stroke-width', '1.5')
+      c.setAttribute('stroke-width', isTheme ? '2.5' : '1.5')
+      if (isTheme) c.setAttribute('fill-opacity', '0.85')
       g.appendChild(c)
 
-      const label = getNoteTitle(n.note, 28).slice(0, 28)
+      const label = isTheme ? (n.theme?.name ?? '') : getNoteTitle(n.note!, 28).slice(0, 28)
       const t = document.createElementNS('http://www.w3.org/2000/svg', 'text')
       t.setAttribute('x', String(n.radius + 4))
       t.setAttribute('y', '4')
-      t.setAttribute('class', 'graph-node-label')
+      t.setAttribute('class', `graph-node-label${isTheme ? ' graph-node-label--theme' : ''}${!isTheme && !labelBudget.has(n.id) ? ' graph-node-label--ondemand' : ''}`)
       t.textContent = label
       g.appendChild(t)
 
@@ -372,7 +495,33 @@ export async function mountGraph(root: HTMLElement): Promise<void> {
     interacted = true
     focusedId = n.id
     applyHighlights()
-    showSidebar(n)
+    if (n.kind === 'theme') showThemeSidebar(n)
+    else showSidebar(n)
+  }
+
+  function showThemeSidebar(n: GraphNode): void {
+    const aside = document.getElementById('graph-sidebar')!
+    const t = n.theme!
+    const memberIds = new Set(noteThemes.filter(nt => nt.theme_id === t.id).map(nt => nt.note_id))
+    const members = nodes.filter(x => x.kind === 'note' && memberIds.has(x.id))
+    aside.innerHTML = `
+      <h3 class="sidebar-title" style="color:${t.color}">${escHtml(t.name)}</h3>
+      ${t.description ? `<p class="muted">${escHtml(t.description)}</p>` : ''}
+      <p class="muted">${members.length} nota's in beeld</p>
+      <button class="btn btn-ghost" id="theme-focus-filter">Filter op dit thema</button>
+      <ul class="sidebar-links">
+        ${members.slice(0, 20).map(m =>
+          `<li><span class="sidebar-link-main">${escHtml(getNoteTitle(m.note!, 60))}</span></li>`
+        ).join('')}
+        ${members.length > 20 ? `<li class="muted">… en ${members.length - 20} meer</li>` : ''}
+      </ul>
+    `
+    document.getElementById('theme-focus-filter')?.addEventListener('click', () => {
+      themeSelect.value = t.id
+      selectedTheme = t.id
+      focusedId = null
+      rebuild()
+    })
   }
 
   function clearFocus(): void {
@@ -431,6 +580,9 @@ export async function mountGraph(root: HTMLElement): Promise<void> {
     const vbW = WIDTH / view.scale
     const vbH = HEIGHT / view.scale
     svg.setAttribute('viewBox', `${view.x} ${view.y} ${vbW} ${vbH}`)
+    // Level-of-detail: zoomed out, the on-demand note labels hide (hover/focus
+    // still reveals them); zoomed in they all show. Pure CSS via this flag.
+    svg.setAttribute('data-lod', view.scale >= 1.4 ? 'near' : 'far')
   }
 
   function resetView(): void {
@@ -525,8 +677,9 @@ export async function mountGraph(root: HTMLElement): Promise<void> {
 
   function nodeMatchesQuery(n: GraphNode, q: string): boolean {
     if (!q) return false
-    return getNoteTitle(n.note, 200).toLowerCase().includes(q)
-      || (n.note.content ?? '').toLowerCase().includes(q)
+    if (n.kind === 'theme') return (n.theme?.name ?? '').toLowerCase().includes(q)
+    return getNoteTitle(n.note!, 200).toLowerCase().includes(q)
+      || (n.note!.content ?? '').toLowerCase().includes(q)
   }
 
   function neighborsOf(id: string): Set<string> {
@@ -595,18 +748,23 @@ export async function mountGraph(root: HTMLElement): Promise<void> {
 
   async function showSidebar(n: GraphNode): Promise<void> {
     const aside = document.getElementById('graph-sidebar')!
-    const themeName = themes.find(t => t.id === n.themeId)?.name ?? 'geen thema'
+    const note = n.note!
+    const themeNames = n.themeIds
+      .map(id => themes.find(t => t.id === id)?.name)
+      .filter(Boolean)
+      .join(', ') || 'geen thema'
     const explicit = edges.filter(e => e.kind === 'explicit' && (e.source === n.id || e.target === n.id))
 
     aside.innerHTML = `
-      <h3 class="sidebar-title">${escHtml(getNoteTitle(n.note, 80))}</h3>
+      <h3 class="sidebar-title">${escHtml(getNoteTitle(note, 80))}</h3>
       <div class="sidebar-meta">
-        <span class="badge badge-${n.note.status}">${escHtml(n.note.status)}</span>
-        <span class="muted">${escHtml(themeName)}</span>
+        <span class="badge badge-${note.status}">${escHtml(note.status)}</span>
+        <span class="muted">${escHtml(themeNames)}</span>
       </div>
-      <p class="sidebar-content">${escHtml(n.note.content)}</p>
-      ${n.note.ai_summary ? `<p class="sidebar-summary"><em>${escHtml(n.note.ai_summary)}</em></p>` : ''}
-      ${(n.note.tags ?? []).length ? `<div class="sidebar-tags">${n.note.tags.map(t => `<span class="badge">${escHtml(t)}</span>`).join('')}</div>` : ''}
+      <p class="sidebar-content">${escHtml(note.content)}</p>
+      ${note.ai_summary ? `<p class="sidebar-summary"><em>${escHtml(note.ai_summary)}</em></p>` : ''}
+      ${(note.tags ?? []).length ? `<div class="sidebar-tags">${note.tags.map(t => `<span class="badge">${escHtml(t)}</span>`).join('')}</div>` : ''}
+      <button class="btn btn-ghost btn-sm" id="sidebar-open-note">Open nota →</button>
 
       <h4 class="sidebar-subtitle">Expliciete links (${explicit.length})</h4>
       <ul class="sidebar-links">
@@ -631,14 +789,16 @@ export async function mountGraph(root: HTMLElement): Promise<void> {
         <select id="link-target">
           <option value="">— kies nota —</option>
           ${nodes
-            .filter(o => o.id !== n.id)
-            .map(o => `<option value="${o.id}">${escHtml(getNoteTitle(o.note, 60))}</option>`)
+            .filter(o => o.kind === 'note' && o.id !== n.id)
+            .map(o => `<option value="${o.id}">${escHtml(getNoteTitle(o.note!, 60))}</option>`)
             .join('')}
         </select>
         <input type="text" id="link-reason" placeholder="Reden (optioneel)" />
         <button class="btn btn-primary" id="link-add">Toevoegen</button>
       </details>
     `
+
+    document.getElementById('sidebar-open-note')?.addEventListener('click', () => navigateTo('/note?id=' + n.id))
 
     aside.querySelectorAll<HTMLButtonElement>('.link-del').forEach(btn => {
       btn.addEventListener('click', async () => {
@@ -1118,6 +1278,20 @@ function injectGraphStyles(): void {
       fill: var(--text-muted);
       pointer-events: none;
     }
+    .graph-node-label--theme {
+      font-family: var(--font-brand);
+      font-size: 14px;
+      font-weight: 600;
+      fill: var(--text);
+    }
+    /* Level-of-detail: labels beyond the degree budget only show zoomed-in,
+       on hover, or when the node is focused/matched. */
+    .graph-node-label--ondemand { opacity: 0; transition: opacity 0.15s ease; }
+    .graph-svg[data-lod="near"] .graph-node-label--ondemand { opacity: 1; }
+    .graph-node:hover .graph-node-label--ondemand,
+    .graph-node.is-focused .graph-node-label--ondemand,
+    .graph-node.is-match .graph-node-label--ondemand { opacity: 1; }
+    .graph-node--loose circle { opacity: 0.55; }
     .graph-sidebar {
       background: var(--surface);
       border: 1px solid var(--border);

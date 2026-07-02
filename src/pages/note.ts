@@ -233,6 +233,7 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
         <div class="note-actions">
           <button class="btn btn-primary" id="save-btn">Opslaan</button>
           <button class="btn btn-ghost" id="mark-processed">Markeer als verwerkt</button>
+          <button class="btn btn-ghost" id="show-in-graph">Bekijk in graaf</button>
           <button class="btn btn-ghost" id="back-btn">Terug</button>
           <button class="btn btn-danger" id="delete-btn">Verwijderen</button>
         </div>
@@ -586,6 +587,9 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
     })
 
     document.getElementById('back-btn')?.addEventListener('click', () => navigateBack('/inbox'))
+
+    document.getElementById('show-in-graph')?.addEventListener('click', () =>
+      navigateTo(`/inbox?view=graph&focus=${id}`))
 
     document.getElementById('delete-btn')?.addEventListener('click', async () => {
       if (!confirm('Deze nota definitief verwijderen?')) return
