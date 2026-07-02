@@ -13,6 +13,7 @@ import { renderTopbar, attachTopbar, renderGuidanceBanner } from '../lib/nav'
 import { navigateTo } from '../router'
 import { mountSearch } from './search'
 import { mountGraph } from './graph'
+import { mountConnections } from './connections'
 import { injectShellStyles } from './denktools'
 
 export async function renderInbox(app: HTMLElement): Promise<void> {
@@ -22,6 +23,7 @@ export async function renderInbox(app: HTMLElement): Promise<void> {
       <button class="shell-tab" data-view="list" aria-current="true">Lijst</button>
       <button class="shell-tab" data-view="search">Zoeken</button>
       <button class="shell-tab" data-view="graph">Graaf</button>
+      <button class="shell-tab" data-view="connections">Verbindingen</button>
     </div>
     <div id="inbox-view">
       <div id="inbox-list-view"></div>
@@ -37,25 +39,27 @@ export async function renderInbox(app: HTMLElement): Promise<void> {
   const toggle = document.getElementById('inbox-view-toggle')!
 
   // The list holds expensive state (status/type filters, search text, selection,
-  // loaded pages, scroll), so it is mounted once and only hidden/shown. Zoeken
-  // and Graaf are "re-finding" views without state worth keeping — they mount
-  // fresh into a separate aux container.
-  let current: 'list' | 'search' | 'graph' = 'list'
+  // loaded pages, scroll), so it is mounted once and only hidden/shown. Zoeken,
+  // Graaf and Verbindingen are "re-finding" views without state worth keeping —
+  // they mount fresh into a separate aux container.
+  type AuxView = 'search' | 'graph' | 'connections'
+  let current: 'list' | AuxView = 'list'
   let auxLoading = false
-  let auxDesired: 'search' | 'graph' | null = null
+  let auxDesired: AuxView | null = null
 
   // Single in-flight aux mount; re-mount if a newer view was requested mid-load
   // so the last-clicked view wins (guards against fast switching).
-  async function showAux(v: 'search' | 'graph'): Promise<void> {
+  async function showAux(v: AuxView): Promise<void> {
     auxDesired = v
     if (auxLoading) return
     auxLoading = true
     try {
       while (auxDesired) {
-        const t: 'search' | 'graph' = auxDesired
+        const t: AuxView = auxDesired
         auxView.innerHTML = ''
         if (t === 'search') await mountSearch(auxView)
-        else await mountGraph(auxView)
+        else if (t === 'graph') await mountGraph(auxView)
+        else await mountConnections(auxView)
         if (auxDesired === t) break
       }
     } finally {
@@ -65,7 +69,7 @@ export async function renderInbox(app: HTMLElement): Promise<void> {
 
   toggle.querySelectorAll<HTMLButtonElement>('.shell-tab').forEach(btn => {
     btn.addEventListener('click', async () => {
-      const v = btn.dataset['view'] as 'list' | 'search' | 'graph'
+      const v = btn.dataset['view'] as 'list' | AuxView
       if (v === current) return
       current = v
       toggle.querySelectorAll('.shell-tab').forEach(b => b.removeAttribute('aria-current'))
@@ -84,12 +88,14 @@ export async function renderInbox(app: HTMLElement): Promise<void> {
     })
   })
 
-  // Deep-links: /inbox?view=search|graph (used by the old /search and /graph
-  // routes, and by "Bekijk in graaf" style entries elsewhere).
+  // Deep-links: /inbox?view=search|graph|verbindingen (used by the old
+  // /search and /graph routes, Vandaag's CTA's, and "Bekijk in graaf" entries).
   const params = new URLSearchParams(window.location.hash.split('?')[1] ?? '')
   const requestedView = params.get('view')
-  if (requestedView === 'search' || requestedView === 'graph') {
-    toggle.querySelector<HTMLButtonElement>(`[data-view="${requestedView}"]`)?.click()
+  const viewAlias: Record<string, string> = { zoeken: 'search', graaf: 'graph', verbindingen: 'connections' }
+  const view = requestedView ? (viewAlias[requestedView] ?? requestedView) : null
+  if (view === 'search' || view === 'graph' || view === 'connections') {
+    toggle.querySelector<HTMLButtonElement>(`[data-view="${view}"]`)?.click()
   }
 
   await mountInboxList(listView)
