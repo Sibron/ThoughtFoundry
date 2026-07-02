@@ -17,6 +17,7 @@ import { renderNoteDetail } from './pages/note'
 import { renderProcess } from './pages/process'
 import { renderSettings } from './pages/settings'
 import { renderThemeSections } from './pages/theme-sections'
+import { renderStudio } from './pages/studio'
 import { renderDenktools } from './pages/denktools'
 import { renderLibrary } from './pages/library'
 
@@ -77,6 +78,7 @@ if (!isConfigured) {
     '/note':     () => guard(renderNoteDetail),
     '/process':  aiGuard(renderProcess, 'Verwerken'),
     '/theme-sections':   () => guard(renderThemeSections),
+    '/studio':   () => guard(renderStudio),
     '/settings':    () => guard(renderSettings),
     '/denktools':   aiGuard(renderDenktools, 'Denktools'),
     '/library':     () => guard(renderLibrary),
