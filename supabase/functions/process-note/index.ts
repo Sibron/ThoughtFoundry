@@ -5,8 +5,10 @@
 import { corsHeaders, jsonResponse } from '../_shared/cors.ts'
 import { callAnthropic, estimateCost, parseJsonFromResponse } from '../_shared/anthropic.ts'
 import { getUserClient, requireUserId, logUsage } from '../_shared/supabase.ts'
+import { enforceBudget } from '../_shared/budget.ts'
 
 interface ProcessRequest {
+  overrideCap?: boolean
   noteId: string
   persona?: string
   model?: 'claude-haiku-4-5' | 'claude-sonnet-4-6'
@@ -89,6 +91,11 @@ Deno.serve(async (req: Request) => {
   let userId: string
   try { userId = await requireUserId(supabase) }
   catch { return jsonResponse({ error: 'Unauthorized' }, 401) }
+
+  // Monthly budget cap — real since M1. 402 + {spend, cap} unless the
+  // client explicitly confirmed the overrun (overrideCap: true).
+  const blocked = await enforceBudget(supabase, body)
+  if (blocked) return blocked
 
   // Load the note + the user's themes.
   const [{ data: noteData, error: noteErr }, { data: themesData }] = await Promise.all([

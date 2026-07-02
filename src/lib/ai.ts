@@ -26,11 +26,40 @@ export interface AIUsage {
   costUsd: number
 }
 
+/**
+ * Thrown when the server-side budget guard (functions/_shared/budget.ts)
+ * blocks a call with HTTP 402. Callers show a confirm and may retry the same
+ * call with `overrideCap: true` in the body.
+ */
+export class AiBudgetError extends Error {
+  spend: number
+  cap: number
+  constructor(spend: number, cap: number) {
+    super(`Maandbudget bereikt ($${spend.toFixed(2)} van $${cap.toFixed(2)})`)
+    this.name = 'AiBudgetError'
+    this.spend = spend
+    this.cap = cap
+  }
+}
+
 async function invoke<T>(name: string, body: Record<string, unknown>): Promise<T> {
   const persona = getPersona()
   const fullBody = persona ? { ...body, persona } : body
   const { data, error } = await supabase.functions.invoke(name, { body: fullBody })
-  if (error) throw new Error(error.message ?? 'Edge function error')
+  if (error) {
+    // Non-2xx: the SDK stashes the raw Response on error.context. Pull the
+    // payload out so a 402 budget block surfaces as a typed AiBudgetError.
+    const ctx = (error as { context?: Response }).context
+    if (ctx && typeof ctx.json === 'function') {
+      const payload = await ctx.json().catch(() => null) as
+        { error?: string; spend?: number; cap?: number } | null
+      if (payload?.error === 'ai_budget_exceeded') {
+        throw new AiBudgetError(payload.spend ?? 0, payload.cap ?? 0)
+      }
+      if (payload?.error) throw new Error(payload.error)
+    }
+    throw new Error(error.message ?? 'Edge function error')
+  }
   if (data && typeof data === 'object' && 'error' in data) {
     throw new Error(String((data as { error: string }).error))
   }
@@ -194,4 +223,17 @@ export interface ClustersResult {
 
 export async function detectClusters(): Promise<ClustersResult> {
   return invoke('detect-clusters', {})
+}
+
+/**
+ * Gap-analyse for a book project: white spots, missing counter-arguments,
+ * unelaborated questions, corpus risk. Goes through the same invoke wrapper
+ * as every other AI feature (persona injection + budget error mapping).
+ */
+export async function runGapAnalysis(input: {
+  projectId: string
+  model?: 'claude-haiku-4-5' | 'claude-sonnet-4-6'
+  overrideCap?: boolean
+}): Promise<{ analysis: string; usage: AIUsage }> {
+  return invoke('gap-analysis', input as unknown as Record<string, unknown>)
 }

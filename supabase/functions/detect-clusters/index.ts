@@ -5,6 +5,7 @@
 import { corsHeaders, jsonResponse } from '../_shared/cors.ts'
 import { callAnthropic, estimateCost, parseJsonFromResponse } from '../_shared/anthropic.ts'
 import { getUserClient, requireUserId, logUsage } from '../_shared/supabase.ts'
+import { enforceBudget } from '../_shared/budget.ts'
 
 interface Cluster {
   name: string
@@ -51,7 +52,7 @@ Deno.serve(async (req: Request) => {
   const apiKey = Deno.env.get('ANTHROPIC_API_KEY')
   if (!apiKey) return jsonResponse({ error: 'ANTHROPIC_API_KEY not configured' }, 500)
 
-  let body: { persona?: string } = {}
+  let body: { persona?: string; overrideCap?: boolean } = {}
   try { body = await req.json() } catch { /* body is optional */ }
 
   const model = 'claude-sonnet-4-6'
@@ -60,6 +61,11 @@ Deno.serve(async (req: Request) => {
   let userId: string
   try { userId = await requireUserId(supabase) }
   catch { return jsonResponse({ error: 'Unauthorized' }, 401) }
+
+  // Monthly budget cap — real since M1. 402 + {spend, cap} unless the
+  // client explicitly confirmed the overrun (overrideCap: true).
+  const blocked = await enforceBudget(supabase, body)
+  if (blocked) return blocked
 
   const { data: notesData, error: notesErr } = await supabase
     .from('notes')
