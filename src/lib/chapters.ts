@@ -54,6 +54,16 @@ export async function fetchChapter(id: string): Promise<Chapter | null> {
   return data ? normalize(data as unknown as Chapter) : null
 }
 
+export async function fetchChaptersByProject(projectId: string): Promise<Chapter[]> {
+  const { data, error } = await supabase
+    .from('chapters')
+    .select('*')
+    .eq('project_id', projectId)
+    .order('created_at', { ascending: true })
+  if (error) throw error
+  return ((data ?? []) as unknown as Chapter[]).map(normalize)
+}
+
 export async function saveChapter(input: {
   themeId?: string | null
   projectId?: string | null

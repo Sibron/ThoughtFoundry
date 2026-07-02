@@ -10,6 +10,7 @@ export interface BookProject {
   description: string | null
   status: ProjectStatus
   target_date: string | null
+  chapter_order: string[]
   created_at: string
   updated_at: string
 }
@@ -137,5 +138,14 @@ export async function removeNoteFromProject(projectId: string, noteId: string): 
     .delete()
     .eq('project_id', projectId)
     .eq('note_id', noteId)
+  if (error) throw error
+}
+
+/** Persist the manuscript's chapter ordering. */
+export async function updateChapterOrder(projectId: string, chapterIds: string[]): Promise<void> {
+  const { error } = await supabase
+    .from('book_projects')
+    .update({ chapter_order: chapterIds })
+    .eq('id', projectId)
   if (error) throw error
 }

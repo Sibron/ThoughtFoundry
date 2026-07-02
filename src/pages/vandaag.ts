@@ -10,6 +10,7 @@
 
 import { insertNote, queueOfflineNote, countByStatus, fetchConnectedNoteIds, fetchNotes } from '../lib/notes'
 import { fetchProjects, fetchProjectNoteIds, BOOK_STATUSES, type BookProject } from '../lib/projects'
+import { fetchChaptersByProject, fetchSectionStats, type ChapterSectionStats } from '../lib/chapters'
 import { fetchWeekStats, countCreatedThisWeek } from '../lib/weekstats'
 import { getReviewWeekday } from '../lib/user-settings'
 import { renderTopbar, attachTopbar, isAiEnabled } from '../lib/nav'
@@ -119,11 +120,14 @@ async function renderGoals(): Promise<void> {
     }
 
     const inboxCount = await countByStatus('inbox').catch(() => 0)
+    const stats = await fetchSectionStats().catch(() => new Map<string, ChapterSectionStats>())
 
     const cards = await Promise.all(projects.map(async p => {
       const noteIds = await fetchProjectNoteIds(p.id).catch(() => [] as string[])
       const thisWeek = await countCreatedThisWeek(noteIds).catch(() => 0)
-      return goalCard(p, noteIds.length, thisWeek, inboxCount)
+      const chapters = await fetchChaptersByProject(p.id).catch(() => [])
+      const words = chapters.reduce((sum, c) => sum + (stats.get(c.id)?.words ?? 0), 0)
+      return goalCard(p, noteIds.length, thisWeek, inboxCount, chapters.length, words)
     }))
     host.innerHTML = cards.join('')
     host.querySelectorAll<HTMLElement>('[data-goal-nav]').forEach(el => {
@@ -134,22 +138,36 @@ async function renderGoals(): Promise<void> {
   }
 }
 
-function goalCard(p: BookProject, noteCount: number, thisWeek: number, inboxCount: number): string {
+function goalCard(
+  p: BookProject,
+  noteCount: number,
+  thisWeek: number,
+  inboxCount: number,
+  chapterCount: number,
+  words: number
+): string {
   const status = BOOK_STATUSES[p.status]
   const target = p.target_date
     ? `<span class="vd-goal-target">🎯 ${new Date(p.target_date + 'T00:00:00').toLocaleDateString('nl-NL', { day: 'numeric', month: 'short' })}</span>`
     : ''
   const momentum = thisWeek > 0 ? ` · <strong>+${thisWeek} deze week</strong>` : ''
+  const progressParts = [
+    `${noteCount} ${noteCount === 1 ? 'noot' : 'noten'}`,
+    chapterCount ? `${chapterCount} ${chapterCount === 1 ? 'hoofdstuk' : 'hoofdstukken'}` : null,
+    words ? `${words} woorden` : null,
+  ].filter(Boolean).join(' · ')
 
   // One suggested next action per goal, cheapest signal first.
   let action: string
   if (noteCount === 0) action = 'Koppel je eerste noten aan dit project'
+  else if (chapterCount === 0 && isAiEnabled()) action = 'Genereer je eerste hoofdstuk uit projectnoten'
+  else if (chapterCount > 0 && words === 0) action = 'Open de schrijfstudio en schrijf je eerste sectie'
   else if (inboxCount > 0 && isAiEnabled()) action = `Verwerk je vangbak (${inboxCount}) — voedt je projecten`
-  else if (isAiEnabled()) action = 'Klaar voor een gap-analyse of nieuw hoofdstuk?'
+  else if (isAiEnabled()) action = 'Schrijf verder, of vraag een gap-analyse'
   else action = 'Blijf noten koppelen en verbinden'
 
   return `
-    <div class="vd-goal-card" data-goal-nav="/library?tab=book" role="button" tabindex="0"
+    <div class="vd-goal-card" data-goal-nav="/library?tab=book&booktab=projects" role="button" tabindex="0"
          style="border-left: 3px solid ${status.color}">
       <div class="vd-goal-top">
         <span class="vd-goal-status" style="color:${status.color}">${esc(status.label)}</span>
@@ -157,7 +175,7 @@ function goalCard(p: BookProject, noteCount: number, thisWeek: number, inboxCoun
       </div>
       <div class="vd-goal-title">${esc(p.title)}</div>
       <div class="vd-goal-question">${esc(p.core_question)}</div>
-      <div class="vd-goal-progress">${noteCount} ${noteCount === 1 ? 'noot' : 'noten'}${momentum}</div>
+      <div class="vd-goal-progress">${progressParts}${momentum}</div>
       <div class="vd-goal-action">→ ${esc(action)}</div>
     </div>`
 }
