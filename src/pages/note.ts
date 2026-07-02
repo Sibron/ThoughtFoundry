@@ -29,13 +29,15 @@ import {
   type NoteLink
 } from '../lib/links'
 import { fetchSources, type Source } from '../lib/sources'
+import { fetchProjects, fetchNoteProjectIds, setNoteProjects, type BookProject } from '../lib/projects'
 import { openLinkModal } from '../lib/link-modal'
 import { SECTIONS } from '../lib/sections'
 import { rankBySimilarity } from '../lib/similarity'
 import { fetchNeighbors } from '../lib/semantic'
-import { processNote } from '../lib/ai'
+import { processNote, AiBudgetError } from '../lib/ai'
 import { renderTopbar, attachTopbar, isAiEnabled } from '../lib/nav'
-import { navigateTo } from '../router'
+import { navigateTo, navigateBack } from '../router'
+import { esc as escHtml, errMsg, formatDate, showToast, showUndoToast } from '../lib/crud-list'
 
 const STATUS_LABELS: Record<NoteStatus, string> = {
   inbox: 'Inbox',
@@ -60,14 +62,18 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
   let noteThemeIds: string[] = []
   let links: NoteLink[] = []
   let sources: Source[] = []
+  let projects: BookProject[] = []
+  let noteProjectIds: string[] = []
 
   try {
-    [note, themes, noteThemeIds, links, sources] = await Promise.all([
+    [note, themes, noteThemeIds, links, sources, projects, noteProjectIds] = await Promise.all([
       fetchNoteById(id),
       fetchThemes(),
       fetchThemesForNote(id),
       fetchLinksForNote(id),
-      fetchSources()
+      fetchSources(),
+      fetchProjects(),
+      fetchNoteProjectIds(id)
     ])
   } catch (err) {
     document.querySelector('.note-body')!.innerHTML =
@@ -116,6 +122,15 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
           `<label class="chip-check"><input type="checkbox" class="theme-check" value="${t.id}" ${noteThemeIds.includes(t.id) ? 'checked' : ''}/> ${escHtml(t.name)}</label>`
         ).join('')
       : '<span class="muted">Nog geen thema\'s. Maak ze aan via Thema\'s.</span>'
+    // Only offer live projects — attaching a fresh thought to an archived
+    // project is almost always a mistake (still shown when already attached).
+    const projectChecks = projects.length
+      ? projects
+          .filter(p => p.status !== 'archived' || noteProjectIds.includes(p.id))
+          .map(p =>
+            `<label class="chip-check"><input type="checkbox" class="project-check" value="${p.id}" ${noteProjectIds.includes(p.id) ? 'checked' : ''}/> ${escHtml(p.title)}</label>`
+          ).join('')
+      : '<span class="muted">Nog geen boekprojecten. Maak ze aan via Bibliotheek → Boek → Projecten.</span>'
 
     body.innerHTML = `
       <article class="note-card">
@@ -185,6 +200,11 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
         </fieldset>
 
         <fieldset class="field">
+          <legend class="field-label">Boekprojecten</legend>
+          <div class="chip-group">${projectChecks}</div>
+        </fieldset>
+
+        <fieldset class="field">
           <legend class="field-label">Bron</legend>
           <select id="f-source">
             <option value=""${!current.source_id ? ' selected' : ''}>— Geen gekoppelde bron —</option>
@@ -206,6 +226,7 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
         ${isAiEnabled() ? `
         <div class="note-ai">
           <button class="btn btn-ghost btn-sm" id="ai-prefill">AI-suggesties ophalen</button>
+          <label class="muted note-ai-model"><input type="checkbox" id="ai-prefill-sonnet" /> Sonnet (beter, ~3× duurder)</label>
           <span class="muted">Vult titel, samenvatting, tags en sectie voor. Niets wordt opgeslagen tot je opslaat.</span>
           <div class="ai-theme-suggestions" id="ai-theme-suggestions"></div>
         </div>` : ''}
@@ -213,6 +234,7 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
         <div class="note-actions">
           <button class="btn btn-primary" id="save-btn">Opslaan</button>
           <button class="btn btn-ghost" id="mark-processed">Markeer als verwerkt</button>
+          <button class="btn btn-ghost" id="show-in-graph">Bekijk in graaf</button>
           <button class="btn btn-ghost" id="back-btn">Terug</button>
           <button class="btn btn-danger" id="delete-btn">Verwijderen</button>
         </div>
@@ -532,12 +554,15 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
     const updates = { ...collectUpdate(), ...extra }
     if (!updates.content) { showToast('Uitwerking mag niet leeg zijn.'); return false }
     const themeIds = Array.from(document.querySelectorAll<HTMLInputElement>('.theme-check:checked')).map(c => c.value)
+    const projectIds = Array.from(document.querySelectorAll<HTMLInputElement>('.project-check:checked')).map(c => c.value)
     try {
       const saved = await updateNote(id, updates)
       Object.assign(current, saved)
       tagsState = [...(current.tags ?? [])]
       await setThemesForNote(id, themeIds)
       noteThemeIds = themeIds
+      await setNoteProjects(id, projectIds)
+      noteProjectIds = projectIds
       return true
     } catch (err) {
       showToast(`Opslaan mislukt: ${errMsg(err)}`)
@@ -562,12 +587,22 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
       btn.disabled = false
     })
 
-    document.getElementById('back-btn')?.addEventListener('click', () => navigateTo('/inbox'))
+    document.getElementById('back-btn')?.addEventListener('click', () => navigateBack('/inbox'))
 
-    document.getElementById('delete-btn')?.addEventListener('click', async () => {
-      if (!confirm('Deze nota definitief verwijderen?')) return
-      try { await deleteNote(id); navigateTo('/inbox') }
-      catch (err) { showToast(`Verwijderen mislukt: ${errMsg(err)}`) }
+    document.getElementById('show-in-graph')?.addEventListener('click', () =>
+      navigateTo(`/inbox?view=graph&focus=${id}`))
+
+    document.getElementById('delete-btn')?.addEventListener('click', () => {
+      // Soft-delete: the editor makes way immediately; the API delete only
+      // runs after the undo window closes (undo restores the form in place).
+      const body = document.querySelector('.note-body') as HTMLElement
+      body.innerHTML = '<div class="note-loading">Nota verwijderd…</div>'
+      showUndoToast('Nota verwijderd',
+        async () => {
+          try { await deleteNote(id); navigateBack('/inbox') }
+          catch (err) { showToast(`Verwijderen mislukt: ${errMsg(err)}`); renderForm() }
+        },
+        () => renderForm())
     })
 
     document.getElementById('ai-prefill')?.addEventListener('click', async (e) => {
@@ -575,7 +610,17 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
       btn.disabled = true
       btn.textContent = 'Bezig…'
       try {
-        const { suggestion } = await processNote(id)
+        const model = (document.getElementById('ai-prefill-sonnet') as HTMLInputElement | null)?.checked
+          ? 'claude-sonnet-4-6' as const : 'claude-haiku-4-5' as const
+        let result: Awaited<ReturnType<typeof processNote>>
+        try {
+          result = await processNote(id, model)
+        } catch (err) {
+          if (err instanceof AiBudgetError && confirm(`${err.message}. Toch doorgaan?`)) {
+            result = await processNote(id, model, true)
+          } else { throw err }
+        }
+        const { suggestion } = result
         const set = (sel: string, v: string) => { (document.getElementById(sel) as HTMLInputElement | HTMLTextAreaElement).value = v }
         if (suggestion.title) set('f-title', suggestion.title)
         if (suggestion.summary) set('f-summary', suggestion.summary)
@@ -609,25 +654,9 @@ function noteIdFromHash(): string | null {
   return new URLSearchParams(hash.slice(qIndex + 1)).get('id')
 }
 
-function escHtml(str: string): string {
-  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
-}
 
-function errMsg(err: unknown): string {
-  return err instanceof Error ? err.message : 'onbekende fout'
-}
 
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString('nl-NL', { day: 'numeric', month: 'short', year: 'numeric' })
-}
 
-function showToast(msg: string): void {
-  const toast = document.getElementById('toast') as HTMLDivElement | null
-  if (!toast) return
-  toast.textContent = msg
-  toast.classList.add('show')
-  setTimeout(() => toast.classList.remove('show'), 2500)
-}
 
 function injectNoteStyles(): void {
   if (document.getElementById('note-styles')) return

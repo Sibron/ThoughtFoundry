@@ -9,6 +9,8 @@ export interface BookProject {
   core_question: string
   description: string | null
   status: ProjectStatus
+  target_date: string | null
+  chapter_order: string[]
   created_at: string
   updated_at: string
 }
@@ -18,6 +20,7 @@ export interface BookProjectInsert {
   core_question: string
   description?: string
   status?: ProjectStatus
+  target_date?: string | null
 }
 
 export const BOOK_STATUSES: Record<ProjectStatus, { label: string; color: string }> = {
@@ -54,7 +57,8 @@ export async function createProject(input: BookProjectInsert): Promise<BookProje
       title: input.title,
       core_question: input.core_question,
       description: input.description ?? null,
-      status: input.status ?? 'exploring'
+      status: input.status ?? 'exploring',
+      target_date: input.target_date ?? null
     })
     .select()
     .single()
@@ -109,5 +113,39 @@ export async function setNoteProjects(noteId: string, projectIds: string[]): Pro
 
   const rows = projectIds.map(pid => ({ note_id: noteId, project_id: pid, user_id: userId }))
   const { error } = await supabase.from('note_book_projects').insert(rows)
+  if (error) throw error
+}
+
+/** Bulk-attach notes to one project (skips rows that already exist). */
+export async function addNotesToProject(projectId: string, noteIds: string[]): Promise<void> {
+  if (noteIds.length === 0) return
+  const { data: userData } = await supabase.auth.getUser()
+  const userId = userData.user?.id
+  if (!userId) throw new Error('Niet aangemeld')
+
+  const existing = new Set(await fetchProjectNoteIds(projectId))
+  const rows = noteIds
+    .filter(id => !existing.has(id))
+    .map(id => ({ note_id: id, project_id: projectId, user_id: userId }))
+  if (rows.length === 0) return
+  const { error } = await supabase.from('note_book_projects').insert(rows)
+  if (error) throw error
+}
+
+export async function removeNoteFromProject(projectId: string, noteId: string): Promise<void> {
+  const { error } = await supabase
+    .from('note_book_projects')
+    .delete()
+    .eq('project_id', projectId)
+    .eq('note_id', noteId)
+  if (error) throw error
+}
+
+/** Persist the manuscript's chapter ordering. */
+export async function updateChapterOrder(projectId: string, chapterIds: string[]): Promise<void> {
+  const { error } = await supabase
+    .from('book_projects')
+    .update({ chapter_order: chapterIds })
+    .eq('id', projectId)
   if (error) throw error
 }

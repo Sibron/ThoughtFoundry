@@ -1,26 +1,19 @@
 import {
   fetchProjects, createProject, updateProject, deleteProject,
-  fetchProjectNoteIds,
+  fetchProjectNoteIds, addNotesToProject, removeNoteFromProject, updateChapterOrder,
   BOOK_STATUSES, type BookProject, type BookProjectInsert, type ProjectStatus
 } from '../lib/projects'
 import { fetchNotesByIds, type Note } from '../lib/notes'
-import { renderTopbar, attachTopbar, isAiEnabled } from '../lib/nav'
-import { getPersona } from '../lib/persona'
-import { supabase } from '../lib/supabase'
-import { getCostStatus } from '../lib/cost'
-import { createCrudList, injectCrudStyles, showToast, esc, errMsg, type CrudListConfig, type CrudDetailCtx } from '../lib/crud-list'
+import { fetchChaptersByProject, fetchSectionStats, type Chapter, type ChapterSectionStats } from '../lib/chapters'
+import { renderBookMarkdown, resolveChapterSections, downloadMarkdown, slugify } from '../lib/manuscript'
+import { isAiEnabled } from '../lib/nav'
+import { runGapAnalysis } from '../lib/ai'
+import { createAiAction } from '../lib/ai-action'
+import { openNotePicker } from '../lib/note-picker'
+import { navigateTo } from '../router'
+import { createCrudList, injectCrudStyles, showToast, showUndoToast, esc, errMsg, type CrudListConfig, type CrudDetailCtx } from '../lib/crud-list'
 
 type ProjectForm = BookProjectInsert & { status: ProjectStatus }
-
-export async function renderProjects(app: HTMLElement): Promise<void> {
-  app.innerHTML = `
-    ${renderTopbar('Projecten', 'projects')}
-    <div id="proj-root"></div>
-    <div class="toast" id="toast"></div>
-  `
-  attachTopbar()
-  await mountProjects(document.getElementById('proj-root')!)
-}
 
 export async function mountProjects(root: HTMLElement): Promise<void> {
   root.innerHTML = `
@@ -56,7 +49,8 @@ function mount(body: HTMLDivElement, projects: BookProject[]): void {
       title: p.title,
       core_question: p.core_question,
       description: p.description ?? '',
-      status: p.status
+      status: p.status,
+      target_date: p.target_date
     }),
     renderForm,
     parseForm: (form) => {
@@ -65,7 +59,8 @@ function mount(body: HTMLDivElement, projects: BookProject[]): void {
         title: get('pf-title'),
         core_question: get('pf-question'),
         description: get('pf-desc') || undefined,
-        status: (form.querySelector('[name="pf-status"]:checked') as HTMLInputElement)?.value as ProjectStatus ?? 'exploring'
+        status: (form.querySelector('[name="pf-status"]:checked') as HTMLInputElement)?.value as ProjectStatus ?? 'exploring',
+        target_date: get('pf-target') || null
       }
       if (!input.title || !input.core_question) { showToast('Titel en kernvraag zijn verplicht'); return null }
       return input
@@ -88,16 +83,37 @@ function mount(body: HTMLDivElement, projects: BookProject[]): void {
 // ── Detail view ─────────────────────────────────────────────────────────────
 
 async function mountDetail(project: BookProject, host: HTMLElement, ctx: CrudDetailCtx<BookProject>): Promise<void> {
-  let tab: 'notes' | 'gaps' = 'notes'
+  let tab: 'notes' | 'gaps' | 'chapters' | 'manuscript' = 'notes'
   let noteIds: string[] = []
   let notes: Note[] = []
   let gapResult: string | null = null
-  let gapLoading = false
+  let projectChapters: Chapter[] = []
+  let chapterStats = new Map<string, ChapterSectionStats>()
 
-  try {
-    noteIds = await fetchProjectNoteIds(project.id)
-    notes = noteIds.length > 0 ? await fetchNotesByIds(noteIds) : []
-  } catch { /* show empty */ }
+  async function loadNotes(): Promise<void> {
+    try {
+      noteIds = await fetchProjectNoteIds(project.id)
+      notes = noteIds.length > 0 ? await fetchNotesByIds(noteIds) : []
+    } catch { /* show empty */ }
+  }
+  async function loadChapters(): Promise<void> {
+    try {
+      projectChapters = await fetchChaptersByProject(project.id)
+      chapterStats = await fetchSectionStats().catch(() => new Map())
+    } catch { /* show empty */ }
+  }
+  await Promise.all([loadNotes(), loadChapters()])
+
+  /** Manuscript order: saved ordering first, then any chapters not yet ordered. */
+  function orderedChapters(): Chapter[] {
+    const byId = new Map(projectChapters.map(c => [c.id, c]))
+    const ordered: Chapter[] = []
+    for (const id of project.chapter_order ?? []) {
+      const c = byId.get(id)
+      if (c) { ordered.push(c); byId.delete(id) }
+    }
+    return [...ordered, ...byId.values()]
+  }
 
   const status = BOOK_STATUSES[project.status]
 
@@ -119,9 +135,14 @@ async function mountDetail(project: BookProject, host: HTMLElement, ctx: CrudDet
           <div class="proj-tabs">
             <button class="proj-tab${tab === 'notes' ? ' active' : ''}" data-tab="notes">Noten (${notes.length})</button>
             <button class="proj-tab${tab === 'gaps' ? ' active' : ''}" data-tab="gaps">Gap-analyse</button>
+            <button class="proj-tab${tab === 'chapters' ? ' active' : ''}" data-tab="chapters">Hoofdstukken (${projectChapters.length})</button>
+            <button class="proj-tab${tab === 'manuscript' ? ' active' : ''}" data-tab="manuscript">Manuscript</button>
           </div>
           <div class="proj-tab-content">
-            ${tab === 'notes' ? renderNotesTab(notes) : renderGapTab(gapLoading, gapResult)}
+            ${tab === 'notes' ? renderNotesTab(notes)
+              : tab === 'gaps' ? renderGapTab(gapResult)
+              : tab === 'chapters' ? renderChaptersTab(projectChapters, chapterStats)
+              : renderManuscriptTab(orderedChapters(), chapterStats)}
           </div>
         </div>
       </div>
@@ -129,100 +150,223 @@ async function mountDetail(project: BookProject, host: HTMLElement, ctx: CrudDet
 
     document.getElementById('proj-back')?.addEventListener('click', () => ctx.back())
     document.getElementById('pd-edit-btn')?.addEventListener('click', () => ctx.edit(project))
-    document.getElementById('pd-delete-btn')?.addEventListener('click', async () => {
-      if (!confirm(`Project "${project.title}" verwijderen? Nota's blijven bestaan.`)) return
-      try {
-        await deleteProject(project.id)
-        showToast('Project verwijderd')
-        ctx.remove(project.id)
-      } catch { showToast('Verwijderen mislukt') }
+    document.getElementById('pd-delete-btn')?.addEventListener('click', () => {
+      // Soft-delete: back to the list now, API delete after the undo window.
+      // Nota's blijven bestaan.
+      ctx.remove(project.id)
+      showUndoToast(`Project "${project.title}" verwijderd`,
+        async () => {
+          try { await deleteProject(project.id) }
+          catch { showToast('Verwijderen mislukt'); await reloadProjects() }
+        },
+        () => { void reloadProjects() })
     })
 
     document.querySelectorAll<HTMLButtonElement>('[data-tab]').forEach(btn => {
       btn.addEventListener('click', () => {
-        tab = btn.dataset['tab'] as 'notes' | 'gaps'
+        tab = btn.dataset['tab'] as typeof tab
         render()
       })
     })
 
-    document.getElementById('gap-run-btn')?.addEventListener('click', async () => {
-      if (notes.length === 0) { showToast('Voeg eerst noten toe aan dit project'); return }
-      if (!isAiEnabled()) { showToast('Zet AI aan in Instellingen voor gap-analyse'); return }
-      const costStatus = await getCostStatus().catch(() => null)
-      if (costStatus?.block) { showToast('Maandelijkse AI-cap bereikt. Verhoog de cap in Instellingen.'); return }
-      if (costStatus?.warn) {
-        if (!confirm(`Let op: je hebt ${(costStatus.ratio * 100).toFixed(0)}% van je AI-budget gebruikt. Doorgaan?`)) return
-      }
-      gapLoading = true
-      gapResult = null
-      render()
-      try {
-        gapResult = await runGapAnalysis(project)
-      } catch (err) {
-        gapResult = `Fout: ${errMsg(err)}`
-      }
-      gapLoading = false
-      render()
+    // ── Hoofdstukken tab ──────────────────────────────────────────────────
+    document.getElementById('proj-new-chapter')?.addEventListener('click', () => {
+      navigateTo(`/library?tab=book&project=${project.id}`)
     })
+    document.querySelectorAll<HTMLButtonElement>('[data-write-chapter]').forEach(btn => {
+      btn.addEventListener('click', () => navigateTo('/studio?chapter=' + btn.dataset['writeChapter']))
+    })
+
+    // ── Manuscript tab ────────────────────────────────────────────────────
+    document.querySelectorAll<HTMLButtonElement>('[data-ms-move]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const dir = btn.dataset['msMove'] === 'up' ? -1 : 1
+        const id = btn.dataset['msId']!
+        const order = orderedChapters().map(c => c.id)
+        const idx = order.indexOf(id)
+        const to = idx + dir
+        if (idx === -1 || to < 0 || to >= order.length) return
+        ;[order[idx], order[to]] = [order[to], order[idx]]
+        try {
+          await updateChapterOrder(project.id, order)
+          project.chapter_order = order
+          render()
+        } catch (err) { showToast(`Volgorde opslaan mislukt: ${errMsg(err)}`) }
+      })
+    })
+    document.getElementById('proj-export-manuscript')?.addEventListener('click', async (e) => {
+      const btn = e.currentTarget as HTMLButtonElement
+      const ordered = orderedChapters()
+      if (ordered.length === 0) { showToast('Nog geen hoofdstukken voor dit project'); return }
+      btn.disabled = true
+      btn.textContent = 'Samenstellen…'
+      try {
+        const manuscriptChapters = await Promise.all(ordered.map(async c => ({
+          title: c.title,
+          summary: c.summary ?? '',
+          sections: await resolveChapterSections(c)
+        })))
+        // Notes for the assembly fallback of unwritten sections.
+        const refIds = [...new Set(manuscriptChapters.flatMap(c => c.sections.flatMap(s => s.note_ids)))]
+        const refNotes = refIds.length ? await fetchNotesByIds(refIds).catch(() => [] as Note[]) : []
+        const md = renderBookMarkdown(
+          project.title,
+          project.description ?? '',
+          manuscriptChapters,
+          refNotes,
+          project.core_question
+        )
+        downloadMarkdown(`${slugify(project.title) || 'manuscript'}-manuscript.md`, md)
+        showToast('Manuscript geëxporteerd')
+      } catch (err) {
+        showToast(`Exporteren mislukt: ${errMsg(err)}`)
+      } finally {
+        btn.disabled = false
+        btn.textContent = 'Exporteer manuscript (.md)'
+      }
+    })
+
+    document.getElementById('proj-attach-btn')?.addEventListener('click', () => {
+      openNotePicker({
+        title: `Noten koppelen aan «${project.title}»`,
+        seedText: [project.core_question, project.description].filter(Boolean).join('\n'),
+        excludeIds: noteIds,
+        onConfirm: async (ids) => {
+          await addNotesToProject(project.id, ids)
+          showToast(`${ids.length} ${ids.length === 1 ? 'noot' : 'noten'} gekoppeld`)
+          await loadNotes()
+          render()
+        }
+      })
+    })
+
+    document.querySelectorAll<HTMLButtonElement>('[data-detach-id]').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation()
+        try {
+          await removeNoteFromProject(project.id, btn.dataset['detachId']!)
+          showToast('Noot ontkoppeld')
+          await loadNotes()
+          render()
+        } catch { showToast('Ontkoppelen mislukt') }
+      })
+    })
+
+    document.querySelectorAll<HTMLElement>('.proj-note-row[data-note-id]').forEach(row => {
+      row.addEventListener('click', () => navigateTo('/note?id=' + row.dataset['noteId']))
+    })
+
+    const gapHost = document.getElementById('gap-action-host')
+    if (gapHost) {
+      createAiAction(gapHost, {
+        label: 'Gap-analyse uitvoeren',
+        defaultModel: 'claude-sonnet-4-6',
+        expectedOutputTokens: 1500,
+        estimateInputChars: () => notes.length * 400 + 1200,
+        phases: ['Project doornemen…', 'Witte plekken zoeken…', 'Tegenargumenten wegen…', 'Analyse schrijven…'],
+        beforeRun: () => {
+          if (notes.length === 0) { showToast('Voeg eerst noten toe aan dit project'); return false }
+          if (!isAiEnabled()) { showToast('Zet AI aan in Instellingen voor gap-analyse'); return false }
+          return true
+        },
+        run: async (model, overrideCap) => {
+          const { analysis, usage } = await runGapAnalysis({ projectId: project.id, model, overrideCap })
+          gapResult = analysis || 'Geen resultaat ontvangen'
+          const wrap = document.getElementById('gap-result-wrap')
+          if (wrap) wrap.innerHTML = renderGapResult(gapResult)
+          return usage
+        },
+      })
+    }
   }
 
   render()
 }
 
 function renderNotesTab(notes: Note[]): string {
-  if (notes.length === 0) return '<p class="muted">Nog geen noten gekoppeld aan dit project.</p>'
   return `
-    <div class="proj-notes-list">
-      ${notes.map(n => `
-        <div class="crud-note-row">
-          <span class="crud-note-title">${esc(n.ai_title ?? n.core_idea ?? n.content.slice(0, 80))}</span>
-          <span class="badge badge-${n.status}">${esc(n.status)}</span>
-        </div>
-      `).join('')}
+    <div class="proj-notes-tools">
+      <button class="btn btn-ghost" id="proj-attach-btn">+ Noten koppelen</button>
     </div>
+    ${notes.length === 0
+      ? '<p class="muted">Nog geen noten gekoppeld aan dit project. Koppel ze hier, of via het veld Boekprojecten in de nota-editor.</p>'
+      : `<div class="proj-notes-list">
+          ${notes.map(n => `
+            <div class="crud-note-row proj-note-row" data-note-id="${n.id}" role="button" tabindex="0">
+              <span class="crud-note-title">${esc(n.ai_title ?? n.core_idea ?? n.content.slice(0, 80))}</span>
+              <span class="badge badge-${n.status}">${esc(n.status)}</span>
+              <button class="btn btn-ghost btn-sm proj-detach" data-detach-id="${n.id}" title="Uit dit project halen">Ontkoppel</button>
+            </div>
+          `).join('')}
+        </div>`
+    }
   `
 }
 
-function renderGapTab(loading: boolean, result: string | null): string {
+function renderGapTab(result: string | null): string {
   return `
     <div class="gap-wrap">
       <p class="muted">AI analyseert je huidige noten en wijst op witte plekken, ontbrekende tegenargumenten en risico's. Vereist minimaal 1 noot.</p>
-      <button class="btn btn-primary" id="gap-run-btn" ${loading ? 'disabled' : ''}>
-        ${loading ? 'Analyseren…' : 'Gap-analyse uitvoeren'}
-      </button>
-      ${result ? `
-        <div class="gap-result">
-          <pre class="gap-text">${esc(result)}</pre>
-        </div>
-      ` : ''}
+      <div id="gap-action-host"></div>
+      <div id="gap-result-wrap">${result ? renderGapResult(result) : ''}</div>
     </div>
   `
 }
 
-async function runGapAnalysis(project: BookProject): Promise<string> {
-  const { data: { session } } = await supabase.auth.getSession()
-  if (!session) throw new Error('Niet aangemeld')
+function renderGapResult(result: string): string {
+  return `
+    <div class="gap-result">
+      <pre class="gap-text">${esc(result)}</pre>
+    </div>
+  `
+}
 
-  const persona = getPersona()
-  const { data: urlData } = supabase.storage.from('_').getPublicUrl('')
-  const supabaseUrl = (urlData.publicUrl as string).split('/storage')[0]
+function renderChaptersTab(chapters: Chapter[], stats: Map<string, ChapterSectionStats>): string {
+  return `
+    <div class="proj-notes-tools">
+      <button class="btn btn-ghost" id="proj-new-chapter">Nieuw hoofdstuk uit projectnoten →</button>
+    </div>
+    ${chapters.length === 0
+      ? '<p class="muted">Nog geen hoofdstukken voor dit project. Start er een vanuit je projectnoten.</p>'
+      : `<div class="proj-notes-list">
+          ${chapters.map(c => {
+            const s = stats.get(c.id)
+            const badge = s ? `${s.written}/${s.total} secties${s.words ? ` · ${s.words} w` : ''}` : ''
+            return `
+              <div class="crud-note-row proj-chapter-row">
+                <span class="crud-note-title">${esc(c.title)}</span>
+                ${badge ? `<span class="proj-chapter-badge">${esc(badge)}</span>` : ''}
+                <button class="btn btn-primary btn-sm" data-write-chapter="${c.id}">Schrijf →</button>
+              </div>`
+          }).join('')}
+        </div>`
+    }
+  `
+}
 
-  const resp = await fetch(`${supabaseUrl}/functions/v1/gap-analysis`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${session.access_token}`
-    },
-    body: JSON.stringify({ projectId: project.id, persona })
-  })
-
-  if (!resp.ok) {
-    const err = await resp.json().catch(() => ({ error: resp.statusText }))
-    throw new Error(err.error ?? resp.statusText)
-  }
-
-  const data = await resp.json()
-  return data.analysis ?? data.text ?? 'Geen resultaat ontvangen'
+function renderManuscriptTab(ordered: Chapter[], stats: Map<string, ChapterSectionStats>): string {
+  const totalWords = ordered.reduce((sum, c) => sum + (stats.get(c.id)?.words ?? 0), 0)
+  return `
+    <div class="proj-notes-tools">
+      <button class="btn btn-primary" id="proj-export-manuscript">Exporteer manuscript (.md)</button>
+      ${totalWords ? `<span class="muted">${totalWords} geschreven woorden</span>` : ''}
+    </div>
+    <p class="muted">Titel, kernvraag en beschrijving vormen het voorwerk; daarna volgen de hoofdstukken in deze volgorde. Geschreven secties exporteren als proza, ongeschreven secties als nota-bundel.</p>
+    ${ordered.length === 0
+      ? '<p class="muted">Nog geen hoofdstukken voor dit project.</p>'
+      : `<div class="proj-notes-list">
+          ${ordered.map((c, i) => `
+            <div class="crud-note-row proj-chapter-row">
+              <span class="proj-ms-index">${i + 1}.</span>
+              <span class="crud-note-title">${esc(c.title)}</span>
+              <span class="proj-ms-controls">
+                <button class="btn btn-ghost btn-sm" data-ms-move="up" data-ms-id="${c.id}" ${i === 0 ? 'disabled' : ''}>↑</button>
+                <button class="btn btn-ghost btn-sm" data-ms-move="down" data-ms-id="${c.id}" ${i === ordered.length - 1 ? 'disabled' : ''}>↓</button>
+              </span>
+            </div>`).join('')}
+        </div>`
+    }
+  `
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -255,6 +399,10 @@ function renderForm(data: ProjectForm, editing: boolean): string {
         <textarea id="pf-desc" rows="3">${esc(data.description ?? '')}</textarea>
       </div>
       <div class="crud-field">
+        <label class="crud-label" for="pf-target">Streefdatum (optioneel)</label>
+        <input id="pf-target" type="date" value="${esc(data.target_date ?? '')}" />
+      </div>
+      <div class="crud-field">
         <span class="crud-label">Status</span>
         <div class="pf-status-btns">
           ${statuses.map(s => {
@@ -276,7 +424,7 @@ function renderForm(data: ProjectForm, editing: boolean): string {
 }
 
 function emptyForm(): ProjectForm {
-  return { title: '', core_question: '', description: '', status: 'exploring' }
+  return { title: '', core_question: '', description: '', status: 'exploring', target_date: null }
 }
 
 function injectProjectStyles(): void {
@@ -306,7 +454,16 @@ function injectProjectStyles(): void {
       font-size: var(--fs-sm); cursor: pointer; color: var(--text-muted); margin-bottom: -1px;
     }
     .proj-tab.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+    .proj-notes-tools .btn { width: auto; }
     .proj-notes-list { display: flex; flex-direction: column; gap: var(--s-1); }
+    .proj-note-row { cursor: pointer; }
+    .proj-note-row:hover { border-color: var(--accent); }
+    .proj-detach { flex-shrink: 0; }
+    .proj-chapter-row { align-items: center; }
+    .proj-chapter-badge { font-size: var(--fs-sm); color: var(--accent); font-weight: 600; white-space: nowrap; }
+    .proj-ms-index { color: var(--text-muted); font-size: var(--fs-sm); width: 1.6em; }
+    .proj-ms-controls { display: inline-flex; gap: 2px; flex-shrink: 0; }
+    .proj-notes-tools { display: flex; gap: var(--s-3); align-items: center; flex-wrap: wrap; margin-bottom: var(--s-2); }
     .gap-wrap { display: flex; flex-direction: column; gap: var(--s-3); }
     .gap-wrap .btn { width: auto; }
     .gap-result { background: var(--bg); border: 1px solid var(--border); border-radius: var(--r-sm); padding: var(--s-4); border-left: 3px solid var(--accent); }

@@ -5,8 +5,9 @@ import {
   type Theme
 } from '../lib/themes'
 import { loadThemesSnapshot, type ThemesSnapshot } from '../lib/snapshots'
-import { renderTopbar, attachTopbar, renderGuidanceBanner } from '../lib/nav'
+import { renderGuidanceBanner } from '../lib/nav'
 import { navigateTo } from '../router'
+import { showToast, showUndoToast, esc as escHtml, errMsg } from '../lib/crud-list'
 
 const COLOR_PALETTE = [
   '#4E8A5E', '#4E6E9A', '#C94A24', '#7E5E9E',
@@ -27,16 +28,6 @@ const SECTION_LABELS: Record<string, string> = {
   ondersteunende_concepten:  'Ondersteunende concepten',
   methodieken:               'Methodieken / handvaten',
   reflectievragen:           'Reflectie- of verdiepingsvragen',
-}
-
-export async function renderThemes(app: HTMLElement): Promise<void> {
-  app.innerHTML = `
-    ${renderTopbar("Thema's", 'themes')}
-    <div id="themes-root"></div>
-    <div class="toast" id="toast"></div>
-  `
-  attachTopbar()
-  await mountThemes(document.getElementById('themes-root')!)
 }
 
 export async function mountThemes(root: HTMLElement): Promise<void> {
@@ -253,43 +244,44 @@ export async function mountThemes(root: HTMLElement): Promise<void> {
     }
   }
 
-  async function onDelete(id: string): Promise<void> {
+  function onDelete(id: string): void {
+    // Soft-delete: the row disappears now; the API delete (which also drops
+    // the note-koppelingen) only runs after the undo window closes.
     const t = themes.find(x => x.id === id)
     const noteCount = counts[id] ?? 0
-    const msg = noteCount > 0
-      ? `Thema "${t?.name}" verwijderen? ${noteCount} nota('s) raken hun koppeling kwijt (de nota's zelf blijven bestaan).`
-      : `Thema "${t?.name}" verwijderen?`
-    if (!confirm(msg)) return
-    try {
-      await deleteTheme(id)
-      themes = themes.filter(x => x.id !== id)
-      delete counts[id]
-      sectionsByTheme.delete(id)
-      renderList()
+    const removedCount = counts[id]
+    const removedSections = sectionsByTheme.get(id)
+
+    themes = themes.filter(x => x.id !== id)
+    delete counts[id]
+    sectionsByTheme.delete(id)
+    renderList()
+    const updateTotal = () => {
       const total = document.querySelector('.themes-section-header h2')
       if (total) total.textContent = `Alle thema's (${themes.length})`
-      showToast('Verwijderd')
-    } catch (err) {
-      showToast(`Mislukt: ${errMsg(err)}`)
     }
+    updateTotal()
+
+    const msg = noteCount > 0
+      ? `Thema "${t?.name}" verwijderd — ${noteCount} nota('s) raken hun koppeling kwijt`
+      : `Thema "${t?.name}" verwijderd`
+    showUndoToast(msg,
+      async () => {
+        try { await deleteTheme(id) }
+        catch (err) { showToast(`Verwijderen mislukt: ${errMsg(err)}`) }
+      },
+      () => {
+        if (t) themes = [...themes, t].sort((a, b) => a.name.localeCompare(b.name))
+        if (removedCount != null) counts[id] = removedCount
+        if (removedSections) sectionsByTheme.set(id, removedSections)
+        renderList()
+        updateTotal()
+      })
   }
 }
 
-function showToast(msg: string): void {
-  const toast = document.getElementById('toast') as HTMLDivElement | null
-  if (!toast) return
-  toast.textContent = msg
-  toast.classList.add('show')
-  setTimeout(() => toast.classList.remove('show'), 2500)
-}
 
-function escHtml(str: string): string {
-  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
-}
 
-function errMsg(err: unknown): string {
-  return err instanceof Error ? err.message : 'onbekende fout'
-}
 
 function injectThemesStyles(): void {
   if (document.getElementById('themes-styles')) return

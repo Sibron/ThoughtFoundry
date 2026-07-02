@@ -1,9 +1,10 @@
-// Lexical similarity — a no-embeddings stand-in for semantic search.
+// Lexical similarity — the no-embeddings fallback for semantic.ts.
 //
-// The app's pgvector/Voyage stack is dormant (no embeddings are ever generated),
-// so "semantic" behaviour here is approximated with word- and tag-overlap. This
-// is intentionally cheap: it runs client-side over a capped pool of notes, which
-// is plenty fast at single-user scale (hundreds–low thousands of notes).
+// The real semantic path lives in semantic.ts (pgvector + gte-small embeddings,
+// generated on process/backfill). These helpers approximate relatedness with
+// word- and tag-overlap for notes that aren't embedded yet, and for flows that
+// must work offline. Intentionally cheap: runs client-side over a capped pool
+// of notes, which is plenty fast at single-user scale.
 //
 // Scoring favours shared tags and title words over body words, mirroring how a
 // human skims for relatedness.

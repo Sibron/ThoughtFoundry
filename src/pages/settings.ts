@@ -10,8 +10,12 @@ import { getInstallPrompt, clearInstallPrompt } from '../lib/pwa'
 import { countByStatus, fetchNoteIdsNeedingReprocess } from '../lib/notes'
 import { reprocessNote, embedNotesBatch } from '../lib/ai'
 import { getPersona, setPersona, getDefaultPersona } from '../lib/persona'
+import { saveUserSetting, getReviewWeekday } from '../lib/user-settings'
+
+const WEEKDAYS = ['Zondag', 'Maandag', 'Dinsdag', 'Woensdag', 'Donderdag', 'Vrijdag', 'Zaterdag']
 import { fetchThemes, updateTheme, type Theme } from '../lib/themes'
 import { getDensity, setDensity, getMotion, setMotion, getTheme, setTheme, getFocusMode, setFocusMode, type Theme as DisplayTheme } from '../lib/display'
+import { showToast, esc as escHtml, errMsg } from '../lib/crud-list'
 
 export async function renderSettings(app: HTMLElement): Promise<void> {
   app.innerHTML = `
@@ -120,6 +124,15 @@ export async function renderSettings(app: HTMLElement): Promise<void> {
          target="_blank" rel="noopener noreferrer">
         Voeg wekelijks TF-moment toe aan Google Agenda
       </a>
+      <label class="field">
+        <span class="field-label">Weekoverzicht-dag</span>
+        <select id="review-weekday-select">
+          ${WEEKDAYS.map((d, i) =>
+            `<option value="${i}"${getReviewWeekday() === i ? ' selected' : ''}>${d}</option>`
+          ).join('')}
+        </select>
+        <span class="muted">Op deze dag nodigt Vandaag je uit voor je weekoverzicht.</span>
+      </label>
     </section>
 
     <section class="settings-section">
@@ -286,6 +299,13 @@ export async function renderSettings(app: HTMLElement): Promise<void> {
     const on = (e.target as HTMLInputElement).checked
     setFocusMode(on)
     showToast(on ? 'Focusmodus ingeschakeld' : 'Focusmodus uitgeschakeld')
+  })
+
+  document.getElementById('review-weekday-select')?.addEventListener('change', (e) => {
+    const day = Number((e.target as HTMLSelectElement).value)
+    localStorage.setItem('review_weekday', String(day))
+    saveUserSetting({ review_weekday: day }).catch(() => {})
+    showToast('Weekoverzicht-dag opgeslagen')
   })
 
   document.getElementById('persona-save')?.addEventListener('click', () => {
@@ -523,21 +543,8 @@ export async function renderSettings(app: HTMLElement): Promise<void> {
   })
 }
 
-function showToast(msg: string): void {
-  const toast = document.getElementById('toast') as HTMLDivElement | null
-  if (!toast) return
-  toast.textContent = msg
-  toast.classList.add('show')
-  setTimeout(() => toast.classList.remove('show'), 2500)
-}
 
-function escHtml(str: string): string {
-  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
-}
 
-function errMsg(err: unknown): string {
-  return err instanceof Error ? err.message : 'onbekende fout'
-}
 
 function formatRelative(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime()

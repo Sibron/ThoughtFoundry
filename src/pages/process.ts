@@ -12,6 +12,7 @@ import { getCostStatus, getMonthlyCap, setMonthlyCap, formatUsd, type CostStatus
 import { startAiThinking, AI_PHASES } from '../lib/ai-thinking'
 import { renderTopbar, attachTopbar } from '../lib/nav'
 import { navigateTo } from '../router'
+import { showToast, esc as escHtml, errMsg, formatDate } from '../lib/crud-list'
 
 export async function renderProcess(app: HTMLElement): Promise<void> {
   app.innerHTML = `
@@ -33,6 +34,7 @@ export async function renderProcess(app: HTMLElement): Promise<void> {
   let cursor = 0
   let currentSuggestion: NoteSuggestion | null = null
   let cost: CostStatus
+  let useSonnet = false
 
   const SESSION_MAX_NOTES = 5
   const SESSION_MAX_MS = 25 * 60 * 1000
@@ -100,6 +102,10 @@ export async function renderProcess(app: HTMLElement): Promise<void> {
             <button class="btn btn-ghost" id="skip-note">Overslaan</button>
             <button class="btn btn-ghost" id="archive-note">Archiveren</button>
           </div>
+          <label class="pane-model">
+            <input type="checkbox" id="run-ai-sonnet" ${useSonnet ? 'checked' : ''} />
+            Gebruik Sonnet (beter, ~3× duurder)
+          </label>
         </section>
         <section class="process-suggest-pane" id="suggest-pane">
           <p class="pane-hint">Klik "AI-suggesties ophalen" om titel, samenvatting, tags en thema-matches te krijgen. Niets wordt opgeslagen tot je "Accepteer" klikt.</p>
@@ -108,6 +114,9 @@ export async function renderProcess(app: HTMLElement): Promise<void> {
     `
 
     document.getElementById('run-ai')?.addEventListener('click', runAi)
+    document.getElementById('run-ai-sonnet')?.addEventListener('change', (e) => {
+      useSonnet = (e.target as HTMLInputElement).checked
+    })
     document.getElementById('skip-note')?.addEventListener('click', () => {
       cursor++
       currentSuggestion = null
@@ -175,7 +184,7 @@ export async function renderProcess(app: HTMLElement): Promise<void> {
     btn.textContent = 'AI denkt na…'
     const stopThinking = startAiThinking(btn, AI_PHASES.process)
     try {
-      const { suggestion, usage } = await processNote(note.id, 'claude-haiku-4-5')
+      const { suggestion, usage } = await processNote(note.id, useSonnet ? 'claude-sonnet-4-6' : 'claude-haiku-4-5')
       currentSuggestion = suggestion
       await resolveRelatedLabels(suggestion.related_note_ids)
       renderSuggestion(note, suggestion)
@@ -499,30 +508,13 @@ function showToastWithUndo(
   }, 5000)
 }
 
-function showToast(msg: string): void {
-  if (_undoTimer) { clearTimeout(_undoTimer); _undoTimer = null }
-  const toast = document.getElementById('toast') as HTMLDivElement | null
-  if (!toast) return
-  toast.textContent = msg
-  toast.classList.add('show')
-  setTimeout(() => toast.classList.remove('show'), 2500)
-}
 
 function parseCsv(s: string): string[] {
   return s.split(',').map(x => x.trim()).filter(Boolean)
 }
 
-function escHtml(str: string): string {
-  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
-}
 
-function errMsg(err: unknown): string {
-  return err instanceof Error ? err.message : 'onbekende fout'
-}
 
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString('nl-NL', { day: 'numeric', month: 'short', year: 'numeric' })
-}
 
 function injectProcessStyles(): void {
   if (document.getElementById('process-styles')) return
@@ -620,6 +612,15 @@ function injectProcessStyles(): void {
       margin-top: auto;
     }
     .pane-actions .btn { width: auto; }
+    .pane-model {
+      display: inline-flex;
+      align-items: center;
+      gap: var(--s-1);
+      font-size: var(--fs-sm);
+      color: var(--text-muted);
+      cursor: pointer;
+      margin-top: var(--s-1);
+    }
     .pane-hint {
       font-size: var(--fs-sm);
       color: var(--text-muted);
