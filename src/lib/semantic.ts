@@ -1,9 +1,10 @@
 // Semantic linking — the embeddings-powered counterpart of similarity.ts.
 //
 // These call pgvector RPCs (note_neighbors, semantic_bridges) which cost ZERO
-// AI tokens — the embeddings are generated once (Voyage), and every lookup after
-// that is pure database math. Callers should fall back to the lexical helpers in
-// similarity.ts when hasEmbeddings() is false (no Voyage key / not backfilled).
+// AI tokens — embeddings are generated once by the Supabase Edge runtime's
+// built-in gte-small model (384 dims, free, no API key), and every lookup after
+// that is pure database math. Callers should fall back to the lexical helpers
+// in similarity.ts when hasEmbeddings() is false (backfill not run yet).
 
 import { supabase } from './supabase'
 
