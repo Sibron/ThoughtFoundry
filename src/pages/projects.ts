@@ -5,8 +5,8 @@ import {
 } from '../lib/projects'
 import { fetchNotesByIds, type Note } from '../lib/notes'
 import { renderTopbar, attachTopbar, isAiEnabled } from '../lib/nav'
-import { runGapAnalysis, AiBudgetError } from '../lib/ai'
-import { getCostStatus } from '../lib/cost'
+import { runGapAnalysis } from '../lib/ai'
+import { createAiAction } from '../lib/ai-action'
 import { createCrudList, injectCrudStyles, showToast, esc, errMsg, type CrudListConfig, type CrudDetailCtx } from '../lib/crud-list'
 
 type ProjectForm = BookProjectInsert & { status: ProjectStatus }
@@ -91,7 +91,6 @@ async function mountDetail(project: BookProject, host: HTMLElement, ctx: CrudDet
   let noteIds: string[] = []
   let notes: Note[] = []
   let gapResult: string | null = null
-  let gapLoading = false
 
   try {
     noteIds = await fetchProjectNoteIds(project.id)
@@ -120,7 +119,7 @@ async function mountDetail(project: BookProject, host: HTMLElement, ctx: CrudDet
             <button class="proj-tab${tab === 'gaps' ? ' active' : ''}" data-tab="gaps">Gap-analyse</button>
           </div>
           <div class="proj-tab-content">
-            ${tab === 'notes' ? renderNotesTab(notes) : renderGapTab(gapLoading, gapResult)}
+            ${tab === 'notes' ? renderNotesTab(notes) : renderGapTab(gapResult)}
           </div>
         </div>
       </div>
@@ -144,25 +143,28 @@ async function mountDetail(project: BookProject, host: HTMLElement, ctx: CrudDet
       })
     })
 
-    document.getElementById('gap-run-btn')?.addEventListener('click', async () => {
-      if (notes.length === 0) { showToast('Voeg eerst noten toe aan dit project'); return }
-      if (!isAiEnabled()) { showToast('Zet AI aan in Instellingen voor gap-analyse'); return }
-      const costStatus = await getCostStatus().catch(() => null)
-      if (costStatus?.block) { showToast('Maandelijkse AI-cap bereikt. Verhoog de cap in Instellingen.'); return }
-      if (costStatus?.warn) {
-        if (!confirm(`Let op: je hebt ${(costStatus.ratio * 100).toFixed(0)}% van je AI-budget gebruikt. Doorgaan?`)) return
-      }
-      gapLoading = true
-      gapResult = null
-      render()
-      try {
-        gapResult = await runGapAnalysisFlow(project)
-      } catch (err) {
-        gapResult = `Fout: ${errMsg(err)}`
-      }
-      gapLoading = false
-      render()
-    })
+    const gapHost = document.getElementById('gap-action-host')
+    if (gapHost) {
+      createAiAction(gapHost, {
+        label: 'Gap-analyse uitvoeren',
+        defaultModel: 'claude-sonnet-4-6',
+        expectedOutputTokens: 1500,
+        estimateInputChars: () => notes.length * 400 + 1200,
+        phases: ['Project doornemen…', 'Witte plekken zoeken…', 'Tegenargumenten wegen…', 'Analyse schrijven…'],
+        beforeRun: () => {
+          if (notes.length === 0) { showToast('Voeg eerst noten toe aan dit project'); return false }
+          if (!isAiEnabled()) { showToast('Zet AI aan in Instellingen voor gap-analyse'); return false }
+          return true
+        },
+        run: async (model, overrideCap) => {
+          const { analysis, usage } = await runGapAnalysis({ projectId: project.id, model, overrideCap })
+          gapResult = analysis || 'Geen resultaat ontvangen'
+          const wrap = document.getElementById('gap-result-wrap')
+          if (wrap) wrap.innerHTML = renderGapResult(gapResult)
+          return usage
+        },
+      })
+    }
   }
 
   render()
@@ -182,38 +184,22 @@ function renderNotesTab(notes: Note[]): string {
   `
 }
 
-function renderGapTab(loading: boolean, result: string | null): string {
+function renderGapTab(result: string | null): string {
   return `
     <div class="gap-wrap">
       <p class="muted">AI analyseert je huidige noten en wijst op witte plekken, ontbrekende tegenargumenten en risico's. Vereist minimaal 1 noot.</p>
-      <button class="btn btn-primary" id="gap-run-btn" ${loading ? 'disabled' : ''}>
-        ${loading ? 'Analyseren…' : 'Gap-analyse uitvoeren'}
-      </button>
-      ${result ? `
-        <div class="gap-result">
-          <pre class="gap-text">${esc(result)}</pre>
-        </div>
-      ` : ''}
+      <div id="gap-action-host"></div>
+      <div id="gap-result-wrap">${result ? renderGapResult(result) : ''}</div>
     </div>
   `
 }
 
-async function runGapAnalysisFlow(project: BookProject): Promise<string> {
-  try {
-    const { analysis } = await runGapAnalysis({ projectId: project.id })
-    return analysis || 'Geen resultaat ontvangen'
-  } catch (err) {
-    // Server-side budget block: the cap is a threshold, not a wall — one
-    // explicit confirm re-runs the call with overrideCap.
-    if (err instanceof AiBudgetError) {
-      if (!confirm(`${err.message}. Toch doorgaan?`)) {
-        throw new Error('Geannuleerd — maandbudget bereikt')
-      }
-      const { analysis } = await runGapAnalysis({ projectId: project.id, overrideCap: true })
-      return analysis || 'Geen resultaat ontvangen'
-    }
-    throw err
-  }
+function renderGapResult(result: string): string {
+  return `
+    <div class="gap-result">
+      <pre class="gap-text">${esc(result)}</pre>
+    </div>
+  `
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────

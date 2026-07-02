@@ -33,6 +33,7 @@ export async function renderProcess(app: HTMLElement): Promise<void> {
   let cursor = 0
   let currentSuggestion: NoteSuggestion | null = null
   let cost: CostStatus
+  let useSonnet = false
 
   const SESSION_MAX_NOTES = 5
   const SESSION_MAX_MS = 25 * 60 * 1000
@@ -100,6 +101,10 @@ export async function renderProcess(app: HTMLElement): Promise<void> {
             <button class="btn btn-ghost" id="skip-note">Overslaan</button>
             <button class="btn btn-ghost" id="archive-note">Archiveren</button>
           </div>
+          <label class="pane-model">
+            <input type="checkbox" id="run-ai-sonnet" ${useSonnet ? 'checked' : ''} />
+            Gebruik Sonnet (beter, ~3× duurder)
+          </label>
         </section>
         <section class="process-suggest-pane" id="suggest-pane">
           <p class="pane-hint">Klik "AI-suggesties ophalen" om titel, samenvatting, tags en thema-matches te krijgen. Niets wordt opgeslagen tot je "Accepteer" klikt.</p>
@@ -108,6 +113,9 @@ export async function renderProcess(app: HTMLElement): Promise<void> {
     `
 
     document.getElementById('run-ai')?.addEventListener('click', runAi)
+    document.getElementById('run-ai-sonnet')?.addEventListener('change', (e) => {
+      useSonnet = (e.target as HTMLInputElement).checked
+    })
     document.getElementById('skip-note')?.addEventListener('click', () => {
       cursor++
       currentSuggestion = null
@@ -175,7 +183,7 @@ export async function renderProcess(app: HTMLElement): Promise<void> {
     btn.textContent = 'AI denkt na…'
     const stopThinking = startAiThinking(btn, AI_PHASES.process)
     try {
-      const { suggestion, usage } = await processNote(note.id, 'claude-haiku-4-5')
+      const { suggestion, usage } = await processNote(note.id, useSonnet ? 'claude-sonnet-4-6' : 'claude-haiku-4-5')
       currentSuggestion = suggestion
       await resolveRelatedLabels(suggestion.related_note_ids)
       renderSuggestion(note, suggestion)
@@ -620,6 +628,15 @@ function injectProcessStyles(): void {
       margin-top: auto;
     }
     .pane-actions .btn { width: auto; }
+    .pane-model {
+      display: inline-flex;
+      align-items: center;
+      gap: var(--s-1);
+      font-size: var(--fs-sm);
+      color: var(--text-muted);
+      cursor: pointer;
+      margin-top: var(--s-1);
+    }
     .pane-hint {
       font-size: var(--fs-sm);
       color: var(--text-muted);

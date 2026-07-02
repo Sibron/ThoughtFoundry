@@ -68,10 +68,12 @@ async function invoke<T>(name: string, body: Record<string, unknown>): Promise<T
 
 export async function processNote(
   noteId: string,
-  model?: 'claude-haiku-4-5' | 'claude-sonnet-4-6'
+  model?: 'claude-haiku-4-5' | 'claude-sonnet-4-6',
+  overrideCap?: boolean
 ): Promise<{ suggestion: NoteSuggestion; usage: AIUsage }> {
   const body: Record<string, unknown> = { noteId }
   if (model) body['model'] = model
+  if (overrideCap) body['overrideCap'] = true
   return invoke('process-note', body)
 }
 
@@ -153,9 +155,10 @@ export interface EnrichedLink {
  * so this stays cheap. Nothing is persisted — the caller reviews and links.
  */
 export async function enrichLinks(
-  pairs: { aId: string; bId: string }[]
+  pairs: { aId: string; bId: string }[],
+  opts: { model?: 'claude-haiku-4-5' | 'claude-sonnet-4-6'; overrideCap?: boolean } = {}
 ): Promise<{ links: EnrichedLink[]; usage: AIUsage }> {
-  return invoke('enrich-links', { pairs })
+  return invoke('enrich-links', { pairs, ...opts })
 }
 
 export async function generateChapter(input: {
@@ -163,11 +166,13 @@ export async function generateChapter(input: {
   themeId?: string
   angle?: string
   model?: 'claude-sonnet-4-6' | 'claude-haiku-4-5' | 'claude-opus-4-7'
+  overrideCap?: boolean
 }): Promise<{ plan: ChapterPlan; usage: AIUsage }> {
   const body: Record<string, unknown> = { noteIds: input.noteIds }
-  if (input.themeId) body['themeId'] = input.themeId
-  if (input.angle)   body['angle']   = input.angle
-  if (input.model)   body['model']   = input.model
+  if (input.themeId)     body['themeId']     = input.themeId
+  if (input.angle)       body['angle']       = input.angle
+  if (input.model)       body['model']       = input.model
+  if (input.overrideCap) body['overrideCap'] = true
   return invoke('generate-chapter', body)
 }
 
@@ -182,8 +187,9 @@ export async function runSpark(input: {
   query: string
   outputType: 'reflectie' | 'coaching' | 'beslissing' | 'blogdraft' | 'gesprekskader'
   model?: 'claude-haiku-4-5' | 'claude-sonnet-4-6'
+  overrideCap?: boolean
 }): Promise<SparkResult> {
-  return invoke('spark', input as Record<string, unknown>)
+  return invoke('spark', input as unknown as Record<string, unknown>)
 }
 
 export interface DenkpartnerQuestion {
@@ -203,8 +209,9 @@ export async function runDenkpartner(input: {
   tag?: string
   themeId?: string
   model?: 'claude-haiku-4-5' | 'claude-sonnet-4-6'
+  overrideCap?: boolean
 }): Promise<DenkpartnerResult> {
-  return invoke('denkpartner', input as Record<string, unknown>)
+  return invoke('denkpartner', input as unknown as Record<string, unknown>)
 }
 
 export interface Cluster {
@@ -221,8 +228,10 @@ export interface ClustersResult {
   usage?: AIUsage
 }
 
-export async function detectClusters(): Promise<ClustersResult> {
-  return invoke('detect-clusters', {})
+export async function detectClusters(
+  opts: { model?: 'claude-haiku-4-5' | 'claude-sonnet-4-6'; overrideCap?: boolean } = {}
+): Promise<ClustersResult> {
+  return invoke('detect-clusters', { ...opts })
 }
 
 /**

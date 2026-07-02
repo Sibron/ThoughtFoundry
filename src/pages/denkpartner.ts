@@ -1,8 +1,8 @@
 import { runDenkpartner, type DenkpartnerQuestion } from '../lib/ai'
 import { fetchThemes, type Theme } from '../lib/themes'
-import { getCostStatus, renderCostNote } from '../lib/cost'
 import { insertNote } from '../lib/notes'
-import { startAiThinking, AI_PHASES } from '../lib/ai-thinking'
+import { AI_PHASES } from '../lib/ai-thinking'
+import { createAiAction } from '../lib/ai-action'
 import { renderTopbar, attachTopbar } from '../lib/nav'
 
 export async function renderDenkpartner(app: HTMLElement): Promise<void> {
@@ -36,10 +36,7 @@ export async function mountDenkpartner(root: HTMLElement): Promise<void> {
           </div>
         </fieldset>
 
-        <div class="dp-actions">
-          <button class="btn btn-primary" id="dp-run">Vragen genereren</button>
-          <span id="dp-cost" class="cost-note"></span>
-        </div>
+        <div class="dp-actions" id="dp-action-host"></div>
       </div>
 
       <div id="dp-questions" class="dp-questions" hidden></div>
@@ -62,11 +59,6 @@ export async function mountDenkpartner(root: HTMLElement): Promise<void> {
     themeSelect.innerHTML = themes.map(t => `<option value="${t.id}">${escHtml(t.name)}</option>`).join('')
   } catch { /* non-critical */ }
 
-  try {
-    const cost = await getCostStatus()
-    renderCostNote('dp-cost', cost)
-  } catch { /* non-critical */ }
-
   // Scope radio logic
   document.querySelectorAll<HTMLInputElement>('input[name="scope"]').forEach(radio => {
     radio.addEventListener('change', () => {
@@ -80,42 +72,43 @@ export async function mountDenkpartner(root: HTMLElement): Promise<void> {
     })
   })
 
-  document.getElementById('dp-run')?.addEventListener('click', onRun)
+  createAiAction(document.getElementById('dp-action-host')!, {
+    label: 'Vragen genereren',
+    defaultModel: 'claude-haiku-4-5',
+    expectedOutputTokens: 700,
+    // Server sends up to 50 notes (~350 chars each) as context.
+    estimateInputChars: () => 18_000,
+    phases: AI_PHASES.denkpartner,
+    beforeRun: () => {
+      const scope = document.querySelector<HTMLInputElement>('input[name="scope"]:checked')?.value ?? 'all'
+      const tag = (document.getElementById('scope-tag') as HTMLInputElement).value.trim()
+      const themeId = (document.getElementById('scope-theme') as HTMLSelectElement).value
+      if (scope === 'tag' && !tag) { showToast('Voer een tag in'); return false }
+      if (scope === 'theme' && !themeId) { showToast('Selecteer een thema'); return false }
+      return true
+    },
+    run: async (model, overrideCap) => {
+      const scope = (document.querySelector<HTMLInputElement>('input[name="scope"]:checked')?.value ?? 'all') as 'all' | 'tag' | 'theme'
+      const tag = (document.getElementById('scope-tag') as HTMLInputElement).value.trim()
+      const themeId = (document.getElementById('scope-theme') as HTMLSelectElement).value
 
-  async function onRun(): Promise<void> {
-    const scope = (document.querySelector<HTMLInputElement>('input[name="scope"]:checked')?.value ?? 'all') as 'all' | 'tag' | 'theme'
-    const tag = (document.getElementById('scope-tag') as HTMLInputElement).value.trim()
-    const themeId = (document.getElementById('scope-theme') as HTMLSelectElement).value
-
-    if (scope === 'tag' && !tag) { showToast('Voer een tag in'); return }
-    if (scope === 'theme' && !themeId) { showToast('Selecteer een thema'); return }
-
-    const btn = document.getElementById('dp-run') as HTMLButtonElement
-    btn.disabled = true
-    btn.textContent = 'AI denkt na…'
-    const stopThinking = startAiThinking(btn, AI_PHASES.denkpartner)
-
-    try {
-      const result = await runDenkpartner({ scope, tag: scope === 'tag' ? tag : undefined, themeId: scope === 'theme' ? themeId : undefined })
+      const result = await runDenkpartner({
+        scope,
+        tag: scope === 'tag' ? tag : undefined,
+        themeId: scope === 'theme' ? themeId : undefined,
+        model, overrideCap
+      })
 
       if (!result.questions.length) {
         showToast(result.message ?? 'Geen vragen gegenereerd.')
-        return
+        return result.usage
       }
 
       questions = result.questions
       renderQuestions(questions)
-
-      const freshCost = await getCostStatus()
-      renderCostNote('dp-cost', freshCost)
-    } catch (err) {
-      showToast(`Denkpartner mislukt: ${errMsg(err)}`)
-    } finally {
-      stopThinking()
-      btn.disabled = false
-      btn.textContent = 'Vragen genereren'
-    }
-  }
+      return result.usage
+    },
+  })
 
   function renderQuestions(qs: DenkpartnerQuestion[]): void {
     const el = document.getElementById('dp-questions') as HTMLDivElement

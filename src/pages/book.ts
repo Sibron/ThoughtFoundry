@@ -3,8 +3,8 @@ import { fetchThemes, fetchAllNoteThemes, type Theme } from '../lib/themes'
 import { fetchChapters, saveChapter, deleteChapter, type Chapter } from '../lib/chapters'
 import { fetchBooks, createBook, updateBook, deleteBook, type Book } from '../lib/books'
 import { generateChapter, type ChapterPlan } from '../lib/ai'
-import { getCostStatus, formatUsd } from '../lib/cost'
-import { startAiThinking, AI_PHASES } from '../lib/ai-thinking'
+import { AI_PHASES } from '../lib/ai-thinking'
+import { createAiAction, type AiActionHandle } from '../lib/ai-action'
 import { renderTopbar, attachTopbar, isAiEnabled } from '../lib/nav'
 import { SECTIONS } from '../lib/sections'
 import { mountProjects } from './projects'
@@ -34,6 +34,7 @@ export async function mountBook(root: HTMLElement): Promise<void> {
   let chapters: Chapter[] = []
   let books: Book[] = []
   let activeTab: 'projects' | 'chapters' | 'books' = 'chapters'
+  let genAction: AiActionHandle | null = null
 
   try {
     [notes, themes, noteThemes, chapters, books] = await Promise.all([
@@ -105,8 +106,8 @@ export async function mountBook(root: HTMLElement): Promise<void> {
         <div class="book-notes-list" id="book-notes-list"></div>
 
         <div class="book-actions">
-          <button class="btn btn-primary" id="generate-btn" disabled>Genereer hoofdstuk</button>
           <span id="generate-info" class="muted"></span>
+          <div id="generate-action-host"></div>
         </div>
       </section>
 
@@ -130,10 +131,32 @@ export async function mountBook(root: HTMLElement): Promise<void> {
     const preselectedTheme = urlParams.get('theme')
     if (preselectedTheme) themeSelect.value = preselectedTheme
     themeSelect.addEventListener('change', () => renderNoteList())
+
+    genAction = createAiAction(document.getElementById('generate-action-host')!, {
+      label: 'Genereer hoofdstuk',
+      defaultModel: 'claude-sonnet-4-6',
+      expectedOutputTokens: 1200,
+      // Each selected note contributes its summary/content excerpt (~400 chars).
+      estimateInputChars: () => selectedNoteIds().length * 400 + 1500,
+      phases: AI_PHASES.book,
+      beforeRun: () => {
+        if (selectedNoteIds().length < 2) { showToast('Selecteer minimaal 2 nota\'s'); return false }
+        if (!isAiEnabled()) { showToast('Zet AI aan in Instellingen om hoofdstukken te genereren'); return false }
+        return true
+      },
+      run: async (model, overrideCap) => {
+        const ids = selectedNoteIds()
+        const themeId = (document.getElementById('book-theme') as HTMLSelectElement).value || undefined
+        const angle = (document.getElementById('book-angle') as HTMLInputElement).value.trim() || undefined
+        const { plan, usage } = await generateChapter({ noteIds: ids, themeId, angle, model, overrideCap })
+        showPlanEditor(plan, ids, themeId ?? null)
+        showToast('Hoofdstuk gegenereerd')
+        return usage
+      },
+    })
+
     renderNoteList()
     renderSaved()
-
-    document.getElementById('generate-btn')?.addEventListener('click', onGenerate)
   }
 
   function renderBooksTab(): void {
@@ -420,47 +443,12 @@ export async function mountBook(root: HTMLElement): Promise<void> {
 
   function updateGenerateState(): void {
     const ids = selectedNoteIds()
-    const btn = document.getElementById('generate-btn') as HTMLButtonElement
     const info = document.getElementById('generate-info')!
-    btn.disabled = ids.length < 2
     info.textContent = ids.length < 2
       ? 'Selecteer minimaal 2 nota\'s.'
       : `${ids.length} nota's geselecteerd.`
-  }
-
-  async function onGenerate(): Promise<void> {
-    const ids = selectedNoteIds()
-    if (ids.length < 2) return
-    if (!isAiEnabled()) { showToast('Zet AI aan in Instellingen om hoofdstukken te genereren'); return }
-
-    const status = await getCostStatus()
-    if (status.block) {
-      if (!confirm(`Maandelijkse cap (${formatUsd(status.capUsd)}) bereikt. Doorgaan?`)) return
-    } else if (status.warn) {
-      if (!confirm(`Je zit op ${(status.ratio * 100).toFixed(0)}% van je budget. Doorgaan?`)) return
-    }
-
-    const themeId = (document.getElementById('book-theme') as HTMLSelectElement).value || undefined
-    const angle = (document.getElementById('book-angle') as HTMLInputElement).value.trim() || undefined
-
-    const btn = document.getElementById('generate-btn') as HTMLButtonElement
-    btn.disabled = true
-    btn.textContent = 'AI denkt na…'
-    const stopThinking = startAiThinking(btn, AI_PHASES.book)
-
-    try {
-      const { plan, usage } = await generateChapter({
-        noteIds: ids, themeId, angle, model: 'claude-sonnet-4-6'
-      })
-      showPlanEditor(plan, ids, themeId ?? null)
-      showToast(`Hoofdstuk gegenereerd (${formatUsd(usage.costUsd)})`)
-    } catch (err) {
-      showToast(`Mislukt: ${errMsg(err)}`)
-    } finally {
-      stopThinking()
-      btn.disabled = false
-      btn.textContent = 'Genereer hoofdstuk'
-    }
+    genAction?.setDisabled(ids.length < 2)
+    genAction?.refreshEstimate()
   }
 
   function showPlanEditor(plan: ChapterPlan, allIds: string[], themeId: string | null): void {

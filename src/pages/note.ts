@@ -33,7 +33,7 @@ import { openLinkModal } from '../lib/link-modal'
 import { SECTIONS } from '../lib/sections'
 import { rankBySimilarity } from '../lib/similarity'
 import { fetchNeighbors } from '../lib/semantic'
-import { processNote } from '../lib/ai'
+import { processNote, AiBudgetError } from '../lib/ai'
 import { renderTopbar, attachTopbar, isAiEnabled } from '../lib/nav'
 import { navigateTo } from '../router'
 
@@ -206,6 +206,7 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
         ${isAiEnabled() ? `
         <div class="note-ai">
           <button class="btn btn-ghost btn-sm" id="ai-prefill">AI-suggesties ophalen</button>
+          <label class="muted note-ai-model"><input type="checkbox" id="ai-prefill-sonnet" /> Sonnet (beter, ~3× duurder)</label>
           <span class="muted">Vult titel, samenvatting, tags en sectie voor. Niets wordt opgeslagen tot je opslaat.</span>
           <div class="ai-theme-suggestions" id="ai-theme-suggestions"></div>
         </div>` : ''}
@@ -575,7 +576,17 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
       btn.disabled = true
       btn.textContent = 'Bezig…'
       try {
-        const { suggestion } = await processNote(id)
+        const model = (document.getElementById('ai-prefill-sonnet') as HTMLInputElement | null)?.checked
+          ? 'claude-sonnet-4-6' as const : 'claude-haiku-4-5' as const
+        let result: Awaited<ReturnType<typeof processNote>>
+        try {
+          result = await processNote(id, model)
+        } catch (err) {
+          if (err instanceof AiBudgetError && confirm(`${err.message}. Toch doorgaan?`)) {
+            result = await processNote(id, model, true)
+          } else { throw err }
+        }
+        const { suggestion } = result
         const set = (sel: string, v: string) => { (document.getElementById(sel) as HTMLInputElement | HTMLTextAreaElement).value = v }
         if (suggestion.title) set('f-title', suggestion.title)
         if (suggestion.summary) set('f-summary', suggestion.summary)
