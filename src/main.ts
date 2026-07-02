@@ -10,6 +10,7 @@ import { warmSnapshots } from './lib/snapshots'
 import { createRouter, navigateTo } from './router'
 import { renderSetup } from './pages/setup'
 import { renderLogin } from './pages/login'
+import { renderVandaag } from './pages/vandaag'
 import { renderCapture } from './pages/capture'
 import { renderInbox } from './pages/inbox'
 import { renderNoteDetail } from './pages/note'
@@ -63,13 +64,14 @@ if (!isConfigured) {
   createRouter({
     '/': async () => {
       const session = await getSession()
-      navigateTo(session ? '/capture' : '/login')
+      navigateTo(session ? '/vandaag' : '/login')
     },
     '/login': async () => {
       const session = await getSession()
-      if (session) { navigateTo('/capture'); return }
+      if (session) { navigateTo('/vandaag'); return }
       renderLogin(app)
     },
+    '/vandaag':  () => guard(renderVandaag),
     '/capture':  () => guard(renderCapture),
     '/inbox':    () => guard(renderInbox),
     '/note':     () => guard(renderNoteDetail),

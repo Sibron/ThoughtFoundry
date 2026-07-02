@@ -47,7 +47,8 @@ function mount(body: HTMLDivElement, projects: BookProject[]): void {
       title: p.title,
       core_question: p.core_question,
       description: p.description ?? '',
-      status: p.status
+      status: p.status,
+      target_date: p.target_date
     }),
     renderForm,
     parseForm: (form) => {
@@ -56,7 +57,8 @@ function mount(body: HTMLDivElement, projects: BookProject[]): void {
         title: get('pf-title'),
         core_question: get('pf-question'),
         description: get('pf-desc') || undefined,
-        status: (form.querySelector('[name="pf-status"]:checked') as HTMLInputElement)?.value as ProjectStatus ?? 'exploring'
+        status: (form.querySelector('[name="pf-status"]:checked') as HTMLInputElement)?.value as ProjectStatus ?? 'exploring',
+        target_date: get('pf-target') || null
       }
       if (!input.title || !input.core_question) { showToast('Titel en kernvraag zijn verplicht'); return null }
       return input
@@ -263,6 +265,10 @@ function renderForm(data: ProjectForm, editing: boolean): string {
         <textarea id="pf-desc" rows="3">${esc(data.description ?? '')}</textarea>
       </div>
       <div class="crud-field">
+        <label class="crud-label" for="pf-target">Streefdatum (optioneel)</label>
+        <input id="pf-target" type="date" value="${esc(data.target_date ?? '')}" />
+      </div>
+      <div class="crud-field">
         <span class="crud-label">Status</span>
         <div class="pf-status-btns">
           ${statuses.map(s => {
@@ -284,7 +290,7 @@ function renderForm(data: ProjectForm, editing: boolean): string {
 }
 
 function emptyForm(): ProjectForm {
-  return { title: '', core_question: '', description: '', status: 'exploring' }
+  return { title: '', core_question: '', description: '', status: 'exploring', target_date: null }
 }
 
 function injectProjectStyles(): void {
