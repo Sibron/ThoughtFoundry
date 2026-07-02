@@ -104,6 +104,7 @@ export async function mountSpark(root: HTMLElement): Promise<void> {
       document.getElementById('spark-result')!.hidden = false
       document.getElementById('result-meta')!.innerHTML =
         `Synthese op basis van <strong>${result.matchCount}</strong> passende nota${result.matchCount === 1 ? '' : "'s"}` +
+        (result.retrieval ? ` · gevonden via ${result.retrieval === 'semantisch' ? 'betekenis' : 'woorden'}` : '') +
         (result.usage ? ` · ${formatUsd(result.usage.costUsd)}` : '')
 
       document.getElementById('result-body')!.innerHTML = renderMarkdown(result.synthesis)
