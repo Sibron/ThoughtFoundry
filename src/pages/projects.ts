@@ -5,8 +5,7 @@ import {
 } from '../lib/projects'
 import { fetchNotesByIds, type Note } from '../lib/notes'
 import { renderTopbar, attachTopbar, isAiEnabled } from '../lib/nav'
-import { getPersona } from '../lib/persona'
-import { supabase } from '../lib/supabase'
+import { runGapAnalysis, AiBudgetError } from '../lib/ai'
 import { getCostStatus } from '../lib/cost'
 import { createCrudList, injectCrudStyles, showToast, esc, errMsg, type CrudListConfig, type CrudDetailCtx } from '../lib/crud-list'
 
@@ -157,7 +156,7 @@ async function mountDetail(project: BookProject, host: HTMLElement, ctx: CrudDet
       gapResult = null
       render()
       try {
-        gapResult = await runGapAnalysis(project)
+        gapResult = await runGapAnalysisFlow(project)
       } catch (err) {
         gapResult = `Fout: ${errMsg(err)}`
       }
@@ -199,30 +198,22 @@ function renderGapTab(loading: boolean, result: string | null): string {
   `
 }
 
-async function runGapAnalysis(project: BookProject): Promise<string> {
-  const { data: { session } } = await supabase.auth.getSession()
-  if (!session) throw new Error('Niet aangemeld')
-
-  const persona = getPersona()
-  const { data: urlData } = supabase.storage.from('_').getPublicUrl('')
-  const supabaseUrl = (urlData.publicUrl as string).split('/storage')[0]
-
-  const resp = await fetch(`${supabaseUrl}/functions/v1/gap-analysis`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${session.access_token}`
-    },
-    body: JSON.stringify({ projectId: project.id, persona })
-  })
-
-  if (!resp.ok) {
-    const err = await resp.json().catch(() => ({ error: resp.statusText }))
-    throw new Error(err.error ?? resp.statusText)
+async function runGapAnalysisFlow(project: BookProject): Promise<string> {
+  try {
+    const { analysis } = await runGapAnalysis({ projectId: project.id })
+    return analysis || 'Geen resultaat ontvangen'
+  } catch (err) {
+    // Server-side budget block: the cap is a threshold, not a wall — one
+    // explicit confirm re-runs the call with overrideCap.
+    if (err instanceof AiBudgetError) {
+      if (!confirm(`${err.message}. Toch doorgaan?`)) {
+        throw new Error('Geannuleerd — maandbudget bereikt')
+      }
+      const { analysis } = await runGapAnalysis({ projectId: project.id, overrideCap: true })
+      return analysis || 'Geen resultaat ontvangen'
+    }
+    throw err
   }
-
-  const data = await resp.json()
-  return data.analysis ?? data.text ?? 'Geen resultaat ontvangen'
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────

@@ -6,8 +6,10 @@
 import { corsHeaders, jsonResponse } from '../_shared/cors.ts'
 import { callAnthropic, estimateCost } from '../_shared/anthropic.ts'
 import { getUserClient, requireUserId, logUsage } from '../_shared/supabase.ts'
+import { enforceBudget } from '../_shared/budget.ts'
 
 interface SparkRequest {
+  overrideCap?: boolean
   query: string
   outputType: 'reflectie' | 'coaching' | 'beslissing' | 'blogdraft' | 'gesprekskader'
   persona?: string
@@ -46,6 +48,11 @@ Deno.serve(async (req: Request) => {
 
   try { await requireUserId(supabase) }
   catch { return jsonResponse({ error: 'Unauthorized' }, 401) }
+
+  // Monthly budget cap — real since M1. 402 + {spend, cap} unless the
+  // client explicitly confirmed the overrun (overrideCap: true).
+  const blocked = await enforceBudget(supabase, body)
+  if (blocked) return blocked
 
   // Fetch all processed notes
   const { data: notesData, error: notesErr } = await supabase
