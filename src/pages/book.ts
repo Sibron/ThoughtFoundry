@@ -1,12 +1,13 @@
-import { fetchAllNotes, type Note } from '../lib/notes'
+import { fetchAllNotes, getNoteTitle, type Note } from '../lib/notes'
 import { fetchThemes, fetchAllNoteThemes, type Theme } from '../lib/themes'
-import { fetchChapters, saveChapter, deleteChapter, type Chapter } from '../lib/chapters'
+import { fetchChapters, saveChapter, deleteChapter, fetchSections, fetchSectionStats, type Chapter, type ChapterSectionStats } from '../lib/chapters'
 import { fetchBooks, createBook, updateBook, deleteBook, type Book } from '../lib/books'
 import { generateChapter, type ChapterPlan } from '../lib/ai'
 import { AI_PHASES } from '../lib/ai-thinking'
 import { createAiAction, type AiActionHandle } from '../lib/ai-action'
 import { isAiEnabled } from '../lib/nav'
 import { SECTIONS } from '../lib/sections'
+import { navigateTo } from '../router'
 import { mountProjects } from './projects'
 
 export async function mountBook(root: HTMLElement): Promise<void> {
@@ -26,6 +27,8 @@ export async function mountBook(root: HTMLElement): Promise<void> {
   let activeTab: 'projects' | 'chapters' | 'books' = 'chapters'
   let genAction: AiActionHandle | null = null
 
+  let sectionStats = new Map<string, ChapterSectionStats>()
+
   try {
     [notes, themes, noteThemes, chapters, books] = await Promise.all([
       fetchAllNotes('verwerkt'),
@@ -34,6 +37,7 @@ export async function mountBook(root: HTMLElement): Promise<void> {
       fetchChapters(),
       fetchBooks()
     ])
+    sectionStats = await fetchSectionStats().catch(() => new Map())
   } catch (err) {
     document.getElementById('book-body')!.innerHTML =
       `<div class="book-error">Laden mislukt: ${escHtml(errMsg(err))}</div>`
@@ -458,7 +462,10 @@ export async function mountBook(root: HTMLElement): Promise<void> {
       </label>
 
       <div class="plan-sections" id="plan-sections">
-        ${plan.sections.map((s, i) => renderSectionEditor(s, i)).join('')}
+        ${plan.sections.map((s, i) => renderSectionEditor(s, i, (id) => {
+          const n = notes.find(x => x.id === id)
+          return n ? getNoteTitle(n, 48) : id.slice(0, 8) + '…'
+        })).join('')}
       </div>
 
       <div class="plan-actions">
@@ -504,7 +511,12 @@ export async function mountBook(root: HTMLElement): Promise<void> {
       el.innerHTML = '<p class="muted">Nog geen hoofdstukken opgeslagen.</p>'
       return
     }
-    el.innerHTML = chapters.map(c => `
+    el.innerHTML = chapters.map(c => {
+      const stats = sectionStats.get(c.id)
+      const badge = stats
+        ? `<span class="saved-progress">${stats.written}/${stats.total} secties geschreven${stats.words ? ` · ${stats.words} w` : ''}</span>`
+        : ''
+      return `
       <article class="saved-row" data-id="${c.id}">
         <header>
           <h3>${escHtml(c.title)}</h3>
@@ -515,19 +527,35 @@ export async function mountBook(root: HTMLElement): Promise<void> {
           ${c.outline.map(s => `<li><strong>${escHtml(s.heading)}</strong> <span class="muted">— ${s.note_ids.length} nota's</span></li>`).join('')}
         </ul>
         <div class="saved-actions">
+          <button class="btn btn-primary saved-write">Schrijf →</button>
           <button class="btn btn-ghost saved-export">Exporteer .md</button>
           <button class="btn btn-danger saved-delete">Verwijder</button>
+          ${badge}
         </div>
       </article>
-    `).join('')
+    `}).join('')
 
     el.querySelectorAll<HTMLElement>('.saved-row').forEach(row => {
       const id = row.dataset['id']!
-      row.querySelector('.saved-export')?.addEventListener('click', () => {
+      row.querySelector('.saved-write')?.addEventListener('click', () => {
+        navigateTo('/studio?chapter=' + id)
+      })
+      row.querySelector('.saved-export')?.addEventListener('click', async () => {
         const c = chapters.find(x => x.id === id)
         if (!c) return
+        // Prose-first: written sections export their text, the rest fall back
+        // to the note-assembly of the outline.
+        let sections: { heading: string; intent: string; note_ids: string[]; content_md?: string | null }[] = c.outline
+        try {
+          const rows = await fetchSections(c.id)
+          if (rows.length > 0) {
+            sections = rows.map(r => ({
+              heading: r.heading, intent: r.intent ?? '', note_ids: r.note_ids, content_md: r.content_md
+            }))
+          }
+        } catch { /* un-migrated client — outline fallback */ }
         const md = renderMarkdown(
-          { title: c.title, summary: c.summary ?? '', sections: c.outline },
+          { title: c.title, summary: c.summary ?? '', sections },
           notes
         )
         downloadMarkdown(`${slugify(c.title) || 'hoofdstuk'}.md`, md)
@@ -561,7 +589,11 @@ export async function mountBook(root: HTMLElement): Promise<void> {
   }
 }
 
-function renderSectionEditor(s: { heading: string; intent: string; note_ids: string[] }, i: number): string {
+function renderSectionEditor(
+  s: { heading: string; intent: string; note_ids: string[] },
+  i: number,
+  labelOf: (id: string) => string
+): string {
   return `
     <div class="plan-section">
       <label class="field">
@@ -575,14 +607,17 @@ function renderSectionEditor(s: { heading: string; intent: string; note_ids: str
       <div class="field">
         <span class="field-label">Nota's (${s.note_ids.length})</span>
         <div class="plan-section-notes" data-section-notes="${i}">
-          ${s.note_ids.map(id => `<label class="chip-check"><input type="checkbox" value="${id}" checked/> ${id.slice(0, 8)}…</label>`).join('')}
+          ${s.note_ids.map(id => `<label class="chip-check"><input type="checkbox" value="${id}" checked/> ${escHtml(labelOf(id))}</label>`).join('')}
         </div>
       </div>
     </div>
   `
 }
 
-function renderMarkdown(plan: { title: string; summary: string; sections: { heading: string; intent: string; note_ids: string[] }[] }, notes: Note[]): string {
+function renderMarkdown(
+  plan: { title: string; summary: string; sections: { heading: string; intent: string; note_ids: string[]; content_md?: string | null }[] },
+  notes: Note[]
+): string {
   const byId: Record<string, Note> = {}
   notes.forEach(n => { byId[n.id] = n })
 
@@ -592,6 +627,12 @@ function renderMarkdown(plan: { title: string; summary: string; sections: { head
 
   plan.sections.forEach(s => {
     lines.push(`## ${s.heading}`, '')
+    // Prose-first: a section written in the studio exports its own text; an
+    // unwritten section falls back to assembling its attached notes.
+    if (s.content_md?.trim()) {
+      lines.push(s.content_md.trim(), '')
+      return
+    }
     if (s.intent) lines.push(`*${s.intent}*`, '')
     s.note_ids.forEach(id => {
       const n = byId[id]
@@ -908,8 +949,11 @@ function injectBookStyles(): void {
     .saved-actions {
       display: flex;
       gap: var(--s-2);
+      align-items: center;
+      flex-wrap: wrap;
     }
     .saved-actions .btn { width: auto; }
+    .saved-progress { font-size: var(--fs-sm); color: var(--accent); font-weight: 600; }
     .book-loading,
     .book-error,
     .book-empty {
