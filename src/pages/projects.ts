@@ -4,22 +4,12 @@ import {
   BOOK_STATUSES, type BookProject, type BookProjectInsert, type ProjectStatus
 } from '../lib/projects'
 import { fetchNotesByIds, type Note } from '../lib/notes'
-import { renderTopbar, attachTopbar, isAiEnabled } from '../lib/nav'
+import { isAiEnabled } from '../lib/nav'
 import { runGapAnalysis } from '../lib/ai'
 import { createAiAction } from '../lib/ai-action'
 import { createCrudList, injectCrudStyles, showToast, esc, errMsg, type CrudListConfig, type CrudDetailCtx } from '../lib/crud-list'
 
 type ProjectForm = BookProjectInsert & { status: ProjectStatus }
-
-export async function renderProjects(app: HTMLElement): Promise<void> {
-  app.innerHTML = `
-    ${renderTopbar('Projecten', 'projects')}
-    <div id="proj-root"></div>
-    <div class="toast" id="toast"></div>
-  `
-  attachTopbar()
-  await mountProjects(document.getElementById('proj-root')!)
-}
 
 export async function mountProjects(root: HTMLElement): Promise<void> {
   root.innerHTML = `

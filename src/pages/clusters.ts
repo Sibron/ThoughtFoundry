@@ -1,19 +1,8 @@
 import { detectClusters, type Cluster } from '../lib/ai'
 import { AI_PHASES } from '../lib/ai-thinking'
 import { createAiAction } from '../lib/ai-action'
-import { renderTopbar, attachTopbar } from '../lib/nav'
 import { insertNote, fetchNotesByIds, getNoteTitle } from '../lib/notes'
 import { createLink } from '../lib/links'
-
-export async function renderClusters(app: HTMLElement): Promise<void> {
-  app.innerHTML = `
-    ${renderTopbar('Clusters', 'clusters')}
-    <div id="clusters-root"></div>
-    <div class="toast" id="toast"></div>
-  `
-  attachTopbar()
-  await mountClusters(document.getElementById('clusters-root')!)
-}
 
 export async function mountClusters(root: HTMLElement): Promise<void> {
   root.innerHTML = `

@@ -7,7 +7,7 @@ import { pairKey } from '../lib/similarity'
 import { enrichLinks } from '../lib/ai'
 import { getCostStatus } from '../lib/cost'
 import { startAiThinking, AI_PHASES } from '../lib/ai-thinking'
-import { renderTopbar, attachTopbar, isAiEnabled } from '../lib/nav'
+import { isAiEnabled } from '../lib/nav'
 import { navigateTo } from '../router'
 
 interface GraphNode {
@@ -31,16 +31,6 @@ interface GraphEdge {
 
 const WIDTH = 1000
 const HEIGHT = 720
-
-export async function renderGraph(app: HTMLElement): Promise<void> {
-  app.innerHTML = `
-    ${renderTopbar('Graaf', 'graph')}
-    <div id="graph-root"></div>
-    <div class="toast" id="toast"></div>
-  `
-  attachTopbar()
-  await mountGraph(document.getElementById('graph-root')!)
-}
 
 export async function mountGraph(root: HTMLElement): Promise<void> {
   root.innerHTML = `

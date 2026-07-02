@@ -84,6 +84,14 @@ export async function renderInbox(app: HTMLElement): Promise<void> {
     })
   })
 
+  // Deep-links: /inbox?view=search|graph (used by the old /search and /graph
+  // routes, and by "Bekijk in graaf" style entries elsewhere).
+  const params = new URLSearchParams(window.location.hash.split('?')[1] ?? '')
+  const requestedView = params.get('view')
+  if (requestedView === 'search' || requestedView === 'graph') {
+    toggle.querySelector<HTMLButtonElement>(`[data-view="${requestedView}"]`)?.click()
+  }
+
   await mountInboxList(listView)
 }
 
@@ -107,7 +115,7 @@ export async function mountInboxList(root: HTMLElement): Promise<void> {
       </div>
       <div class="orphan-banner focus-hide" id="orphan-banner" hidden></div>
       <div class="inbox-toolbar">
-        <input type="text" id="inbox-filter" placeholder="Zoeken in content, titel, samenvatting…" class="inbox-filter" />
+        <input type="text" id="inbox-filter" placeholder="Filter deze lijst…" title="Filtert de geladen notities. Diep zoeken? Gebruik Zoek in de bovenbalk." class="inbox-filter" />
         <label class="inbox-select-all"><input type="checkbox" id="select-all" /> alles</label>
       </div>
       <div class="inbox-bulkbar" id="inbox-bulkbar" hidden>
@@ -171,21 +179,20 @@ export async function mountInboxList(root: HTMLElement): Promise<void> {
     })
   })
 
+  // Pure client-side filter over the already-loaded rows — instant, no
+  // refetch. Deep search (full corpus, relevance-ranked, semantic mode) lives
+  // behind the Zoek button in the topbar.
   filterInput.addEventListener('input', () => {
     if (searchDebounce) clearTimeout(searchDebounce)
-    searchDebounce = setTimeout(async () => {
-      searchText = filterInput.value.trim()
-      page = 0
-      allNotes = []
-      selected.clear()
-      updateBulkBar()
-      await loadNotes()
-    }, 280)
+    searchDebounce = setTimeout(() => {
+      searchText = filterInput.value.trim().toLowerCase()
+      renderList()
+    }, 120)
   })
 
   selectAllEl.addEventListener('change', () => {
     if (selectAllEl.checked) {
-      allNotes.forEach(n => selected.add(n.id))
+      visibleNotes().forEach(n => selected.add(n.id))
     } else {
       selected.clear()
     }
@@ -233,13 +240,13 @@ export async function mountInboxList(root: HTMLElement): Promise<void> {
         // Orphans = notes with no link and no theme. Filter a wide recent pool
         // client-side; no pagination (the pile is meant to be drained, not browsed).
         const connected = await ensureConnected()
-        const pool = await fetchNotes(0, 300, statusFilter, searchText || undefined, noteTypeFilter)
+        const pool = await fetchNotes(0, 300, statusFilter, undefined, noteTypeFilter)
         allNotes = pool.filter(n => !connected.has(n.id))
         loadMoreBtn.style.display = 'none'
         renderList()
         return
       }
-      const notes = await fetchNotes(page, 50, statusFilter, searchText || undefined, noteTypeFilter)
+      const notes = await fetchNotes(page, 50, statusFilter, undefined, noteTypeFilter)
       allNotes = page === 0 ? notes : [...allNotes, ...notes]
       loadMoreBtn.style.display = notes.length === 50 ? 'flex' : 'none'
       renderList()
@@ -276,15 +283,27 @@ export async function mountInboxList(root: HTMLElement): Promise<void> {
     } catch { /* best-effort */ }
   }
 
+  function visibleNotes(): Note[] {
+    if (!searchText) return allNotes
+    return allNotes.filter(n =>
+      [n.content, n.ai_title, n.ai_summary, ...(n.tags ?? [])]
+        .filter(Boolean)
+        .some(t => (t as string).toLowerCase().includes(searchText))
+    )
+  }
+
   function renderList(): void {
-    if (allNotes.length === 0) {
-      listEl.innerHTML = '<div class="inbox-empty">Geen notities gevonden.</div>'
+    const notes = visibleNotes()
+    if (notes.length === 0) {
+      listEl.innerHTML = searchText
+        ? '<div class="inbox-empty">Niets in de geladen lijst. Diep zoeken? Gebruik Zoek in de bovenbalk.</div>'
+        : '<div class="inbox-empty">Geen notities gevonden.</div>'
       selectAllEl.checked = false
       return
     }
-    listEl.innerHTML = allNotes.map(note => renderNoteRow(note, selected.has(note.id))).join('')
+    listEl.innerHTML = notes.map(note => renderNoteRow(note, selected.has(note.id))).join('')
     attachRowListeners()
-    selectAllEl.checked = allNotes.length > 0 && allNotes.every(n => selected.has(n.id))
+    selectAllEl.checked = notes.length > 0 && notes.every(n => selected.has(n.id))
   }
 
   function updateBulkBar(): void {

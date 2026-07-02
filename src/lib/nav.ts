@@ -34,7 +34,7 @@ export function renderGuidanceBanner(text: string, tone: 'anchor' | 'quiet' = 'q
 
 // ── Navigation ────────────────────────────────────────────────────────────
 
-export type NavKey = 'capture' | 'inbox' | 'search' | 'process' | 'graph' | 'book' | 'themes' | 'settings' | 'spark' | 'denkpartner' | 'clusters' | 'sources' | 'projects' | 'denktools' | 'library'
+export type NavKey = 'capture' | 'inbox' | 'process' | 'settings' | 'denktools' | 'library'
 
 /**
  * Render the slim sticky header + fixed bottom tab bar.
@@ -65,6 +65,7 @@ export function renderTopbar(title: string, active?: NavKey, extra = ''): string
       <span class="topbar-title">${title}</span>
       <div class="topbar-actions">
         ${extra}
+        <button class="topbar-btn" data-nav="zoek-overlay" id="zoek-overlay-btn" title="Zoek in al je notities">Zoek</button>
         <button class="topbar-btn" data-nav="focus-mode" aria-pressed="false" id="focus-mode-btn">Focus</button>
         <button class="topbar-btn" data-nav="toggle-theme" id="theme-toggle-btn">Donker</button>
       </div>
@@ -125,6 +126,13 @@ export function attachTopbar(): void {
       if (nav === 'meer') {
         const sheet = document.getElementById('nav-sheet')
         setSheetOpen(!!sheet?.hidden)
+        return
+      }
+      if (nav === 'zoek-overlay') {
+        // Dynamic import: keeps nav.ts free of a page dependency cycle and
+        // loads the overlay only when first used.
+        const { openSearchOverlay } = await import('./search-overlay')
+        void openSearchOverlay()
         return
       }
 

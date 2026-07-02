@@ -9,7 +9,7 @@ export async function renderThemeSections(app: HTMLElement): Promise<void> {
   const themeId = params.get('id')
 
   app.innerHTML = `
-    ${renderTopbar('Secties', 'themes')}
+    ${renderTopbar('Secties', 'library')}
     <div class="ts-body" id="ts-body">
       <div class="ts-loading">Laden…</div>
     </div>
