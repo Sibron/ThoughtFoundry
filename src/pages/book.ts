@@ -11,6 +11,7 @@ import { isAiEnabled } from '../lib/nav'
 import { SECTIONS } from '../lib/sections'
 import { navigateTo } from '../router'
 import { mountProjects } from './projects'
+import { showToast, showUndoToast, esc as escHtml, errMsg, formatDate } from '../lib/crud-list'
 
 export async function mountBook(root: HTMLElement): Promise<void> {
   root.innerHTML = `
@@ -351,17 +352,19 @@ export async function mountBook(root: HTMLElement): Promise<void> {
       onExportBook(row, id)
     })
 
-    row.querySelector<HTMLButtonElement>('[data-action="delete"]')?.addEventListener('click', async (e) => {
+    row.querySelector<HTMLButtonElement>('[data-action="delete"]')?.addEventListener('click', (e) => {
       e.preventDefault()
-      if (!confirm('Boek verwijderen? Hoofdstukken zelf blijven bestaan.')) return
-      try {
-        await deleteBook(id)
-        books = books.filter(x => x.id !== id)
-        renderBooksTab()
-        showToast('Verwijderd')
-      } catch (err) {
-        showToast(`Mislukt: ${errMsg(err)}`)
-      }
+      // Soft-delete: the row disappears now, the API delete only runs after
+      // the undo window closes. Hoofdstukken zelf blijven bestaan.
+      const removed = books.find(x => x.id === id)
+      books = books.filter(x => x.id !== id)
+      renderBooksTab()
+      showUndoToast('Boek verwijderd',
+        async () => { try { await deleteBook(id) } catch (err) { showToast(`Verwijderen mislukt: ${errMsg(err)}`) } },
+        () => {
+          if (removed) books = [removed, ...books]
+          renderBooksTab()
+        })
     })
   }
 
@@ -579,16 +582,16 @@ export async function mountBook(root: HTMLElement): Promise<void> {
         const md = renderChapterMarkdown({ title: c.title, summary: c.summary ?? '', sections }, notes)
         downloadMarkdown(`${slugify(c.title) || 'hoofdstuk'}.md`, md)
       })
-      row.querySelector('.saved-delete')?.addEventListener('click', async () => {
-        if (!confirm('Hoofdstuk verwijderen?')) return
-        try {
-          await deleteChapter(id)
-          chapters = chapters.filter(x => x.id !== id)
-          renderSaved()
-          showToast('Verwijderd')
-        } catch (err) {
-          showToast(`Mislukt: ${errMsg(err)}`)
-        }
+      row.querySelector('.saved-delete')?.addEventListener('click', () => {
+        const removed = chapters.find(x => x.id === id)
+        chapters = chapters.filter(x => x.id !== id)
+        renderSaved()
+        showUndoToast('Hoofdstuk verwijderd',
+          async () => { try { await deleteChapter(id) } catch (err) { showToast(`Verwijderen mislukt: ${errMsg(err)}`) } },
+          () => {
+            if (removed) chapters = [removed, ...chapters]
+            renderSaved()
+          })
       })
     })
   }
@@ -637,25 +640,9 @@ function renderSectionEditor(
 
 
 
-function showToast(msg: string): void {
-  const toast = document.getElementById('toast') as HTMLDivElement | null
-  if (!toast) return
-  toast.textContent = msg
-  toast.classList.add('show')
-  setTimeout(() => toast.classList.remove('show'), 2500)
-}
 
-function escHtml(str: string): string {
-  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
-}
 
-function errMsg(err: unknown): string {
-  return err instanceof Error ? err.message : 'onbekende fout'
-}
 
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString('nl-NL', { day: 'numeric', month: 'short', year: 'numeric' })
-}
 
 function injectBookStyles(): void {
   if (document.getElementById('book-styles')) return

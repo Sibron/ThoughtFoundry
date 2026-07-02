@@ -1,7 +1,7 @@
 import { createSource, updateSource, deleteSource, SOURCE_TYPES, SOURCE_TYPE_ORDER, type Source, type SourceInsert, type SourceType } from '../lib/sources'
 import { type Note } from '../lib/notes'
 import { loadSourcesSnapshot } from '../lib/snapshots'
-import { createCrudList, injectCrudStyles, showToast, esc, errMsg, type CrudListConfig } from '../lib/crud-list'
+import { createCrudList, injectCrudStyles, showToast, showUndoToast, esc, errMsg, type CrudListConfig } from '../lib/crud-list'
 
 type SourceForm = SourceInsert & { type: SourceType }
 
@@ -149,13 +149,16 @@ function mount(body: HTMLDivElement, sources: Source[], allNotes: Note[]): void 
       `
       document.getElementById('src-back')?.addEventListener('click', () => ctx.back())
       document.getElementById('src-edit-btn')?.addEventListener('click', () => ctx.edit(source))
-      document.getElementById('src-delete-btn')?.addEventListener('click', async () => {
-        if (!confirm(`Bron "${source.title}" verwijderen? Nota's die eraan gekoppeld zijn verliezen de koppeling, maar blijven bestaan.`)) return
-        try {
-          await deleteSource(source.id)
-          showToast('Bron verwijderd')
-          ctx.remove(source.id)
-        } catch { showToast('Verwijderen mislukt') }
+      document.getElementById('src-delete-btn')?.addEventListener('click', () => {
+        // Soft-delete: back to the list now, API delete after the undo window.
+        // Gekoppelde nota's verliezen alleen de koppeling.
+        ctx.remove(source.id)
+        showUndoToast(`Bron "${source.title}" verwijderd`,
+          async () => {
+            try { await deleteSource(source.id) }
+            catch { showToast('Verwijderen mislukt'); void reload() }
+          },
+          () => { void reload() })
       })
     }
   }

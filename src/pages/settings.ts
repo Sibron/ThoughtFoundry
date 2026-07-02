@@ -15,6 +15,7 @@ import { saveUserSetting, getReviewWeekday } from '../lib/user-settings'
 const WEEKDAYS = ['Zondag', 'Maandag', 'Dinsdag', 'Woensdag', 'Donderdag', 'Vrijdag', 'Zaterdag']
 import { fetchThemes, updateTheme, type Theme } from '../lib/themes'
 import { getDensity, setDensity, getMotion, setMotion, getTheme, setTheme, getFocusMode, setFocusMode, type Theme as DisplayTheme } from '../lib/display'
+import { showToast, esc as escHtml, errMsg } from '../lib/crud-list'
 
 export async function renderSettings(app: HTMLElement): Promise<void> {
   app.innerHTML = `
@@ -542,21 +543,8 @@ export async function renderSettings(app: HTMLElement): Promise<void> {
   })
 }
 
-function showToast(msg: string): void {
-  const toast = document.getElementById('toast') as HTMLDivElement | null
-  if (!toast) return
-  toast.textContent = msg
-  toast.classList.add('show')
-  setTimeout(() => toast.classList.remove('show'), 2500)
-}
 
-function escHtml(str: string): string {
-  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
-}
 
-function errMsg(err: unknown): string {
-  return err instanceof Error ? err.message : 'onbekende fout'
-}
 
 function formatRelative(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime()

@@ -3,6 +3,7 @@ import { fetchThemes, type Theme } from '../lib/themes'
 import { insertNote } from '../lib/notes'
 import { AI_PHASES } from '../lib/ai-thinking'
 import { createAiAction } from '../lib/ai-action'
+import { showToast, esc as escHtml, errMsg } from '../lib/crud-list'
 
 export async function mountDenkpartner(root: HTMLElement): Promise<void> {
   root.innerHTML = `
@@ -162,21 +163,8 @@ export async function mountDenkpartner(root: HTMLElement): Promise<void> {
   }
 }
 
-function showToast(msg: string): void {
-  const toast = document.getElementById('toast') as HTMLDivElement | null
-  if (!toast) return
-  toast.textContent = msg
-  toast.classList.add('show')
-  setTimeout(() => toast.classList.remove('show'), 2500)
-}
 
-function escHtml(str: string): string {
-  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
-}
 
-function errMsg(err: unknown): string {
-  return err instanceof Error ? err.message : 'onbekende fout'
-}
 
 function injectDpStyles(): void {
   if (document.getElementById('dp-styles')) return

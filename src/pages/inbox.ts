@@ -15,6 +15,7 @@ import { mountSearch } from './search'
 import { mountGraph } from './graph'
 import { mountConnections } from './connections'
 import { injectShellStyles } from './denktools'
+import { esc as escHtml, errMsg, showToast } from '../lib/crud-list'
 
 export async function renderInbox(app: HTMLElement): Promise<void> {
   app.innerHTML = `
@@ -458,25 +459,8 @@ function relativeDate(iso: string): string {
   return d.toLocaleDateString('nl-NL', { day: 'numeric', month: 'short', year: 'numeric' })
 }
 
-function escHtml(str: string): string {
-  return str
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-}
 
-function errMsg(err: unknown): string {
-  return err instanceof Error ? err.message : 'onbekende fout'
-}
 
-function showToast(msg: string): void {
-  const toast = document.getElementById('toast') as HTMLDivElement | null
-  if (!toast) return
-  toast.textContent = msg
-  toast.classList.add('show')
-  setTimeout(() => toast.classList.remove('show'), 2500)
-}
 
 function showToastWithUndo(msg: string, onUndo: () => void): void {
   const toast = document.getElementById('toast') as HTMLDivElement | null
