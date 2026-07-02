@@ -2,6 +2,7 @@ import { fetchNotes, fetchNotesByIds, getNoteTitle, type Note } from '../lib/not
 import { rankByQuery } from '../lib/similarity'
 import { embedText, matchNotes, hasEmbeddings } from '../lib/semantic'
 import { navigateTo } from '../router'
+import { formatDate, esc as escHtml, errMsg } from '../lib/crud-list'
 
 // Fast full-text search across content / title / summary. The single most
 // important re-finding tool: "I know I wrote this down somewhere" must always
@@ -197,17 +198,8 @@ function queryWords(q: string): string[] {
   return Array.from(new Set(q.toLowerCase().split(/\s+/).map(w => w.trim()).filter(w => w.length >= 2)))
 }
 
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString('nl-NL', { day: 'numeric', month: 'short', year: 'numeric' })
-}
 
-function escHtml(str: string): string {
-  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
-}
 
-function errMsg(err: unknown): string {
-  return err instanceof Error ? err.message : 'onbekende fout'
-}
 
 function injectSearchStyles(): void {
   if (document.getElementById('search-styles')) return

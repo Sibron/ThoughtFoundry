@@ -2,6 +2,7 @@ import { runSpark } from '../lib/ai'
 import { formatUsd } from '../lib/cost'
 import { AI_PHASES } from '../lib/ai-thinking'
 import { createAiAction } from '../lib/ai-action'
+import { showToast, esc as escHtml } from '../lib/crud-list'
 
 const OUTPUT_TYPES = [
   { value: 'reflectie',     label: 'Persoonlijke reflectie' },
@@ -109,17 +110,7 @@ export async function mountSpark(root: HTMLElement): Promise<void> {
   })
 }
 
-function showToast(msg: string): void {
-  const toast = document.getElementById('toast') as HTMLDivElement | null
-  if (!toast) return
-  toast.textContent = msg
-  toast.classList.add('show')
-  setTimeout(() => toast.classList.remove('show'), 2500)
-}
 
-function escHtml(str: string): string {
-  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
-}
 
 function inlineMd(text: string): string {
   return escHtml(text)

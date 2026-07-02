@@ -12,6 +12,7 @@ import { getCostStatus, getMonthlyCap, setMonthlyCap, formatUsd, type CostStatus
 import { startAiThinking, AI_PHASES } from '../lib/ai-thinking'
 import { renderTopbar, attachTopbar } from '../lib/nav'
 import { navigateTo } from '../router'
+import { showToast, esc as escHtml, errMsg, formatDate } from '../lib/crud-list'
 
 export async function renderProcess(app: HTMLElement): Promise<void> {
   app.innerHTML = `
@@ -507,30 +508,13 @@ function showToastWithUndo(
   }, 5000)
 }
 
-function showToast(msg: string): void {
-  if (_undoTimer) { clearTimeout(_undoTimer); _undoTimer = null }
-  const toast = document.getElementById('toast') as HTMLDivElement | null
-  if (!toast) return
-  toast.textContent = msg
-  toast.classList.add('show')
-  setTimeout(() => toast.classList.remove('show'), 2500)
-}
 
 function parseCsv(s: string): string[] {
   return s.split(',').map(x => x.trim()).filter(Boolean)
 }
 
-function escHtml(str: string): string {
-  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
-}
 
-function errMsg(err: unknown): string {
-  return err instanceof Error ? err.message : 'onbekende fout'
-}
 
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString('nl-NL', { day: 'numeric', month: 'short', year: 'numeric' })
-}
 
 function injectProcessStyles(): void {
   if (document.getElementById('process-styles')) return

@@ -9,6 +9,7 @@ import { getCostStatus } from '../lib/cost'
 import { startAiThinking, AI_PHASES } from '../lib/ai-thinking'
 import { isAiEnabled } from '../lib/nav'
 import { navigateTo } from '../router'
+import { showToast, esc as escHtml, errMsg } from '../lib/crud-list'
 
 interface GraphNode {
   id: string
@@ -1056,13 +1057,6 @@ function runLayout(nodes: GraphNode[], edges: GraphEdge[], iterations: number): 
   }
 }
 
-function showToast(msg: string): void {
-  const toast = document.getElementById('toast') as HTMLDivElement | null
-  if (!toast) return
-  toast.textContent = msg
-  toast.classList.add('show')
-  setTimeout(() => toast.classList.remove('show'), 2500)
-}
 
 // A toast that offers a single undo action for a few seconds before fading.
 function showUndoToast(msg: string, onUndo: () => void): void {
@@ -1095,13 +1089,7 @@ function pointerMidpoint(pts: Map<number, { x: number; y: number }>): { x: numbe
   return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }
 }
 
-function escHtml(str: string): string {
-  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
-}
 
-function errMsg(err: unknown): string {
-  return err instanceof Error ? err.message : 'onbekende fout'
-}
 
 function injectGraphStyles(): void {
   if (document.getElementById('graph-styles')) return

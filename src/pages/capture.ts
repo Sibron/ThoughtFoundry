@@ -8,6 +8,7 @@ import { findSurprisingPair, pairKey, rankBySimilarity, type SurprisingPair } fr
 import { embedNote } from '../lib/ai'
 import { renderTopbar, attachTopbar, renderGuidanceBanner } from '../lib/nav'
 import { navigateTo } from '../router'
+import { esc as escHtml, showToast } from '../lib/crud-list'
 
 const DRAFT_KEY = 'capture_draft'
 
@@ -592,9 +593,6 @@ async function refreshOnlineIndicator(): Promise<void> {
   }
 }
 
-function escHtml(str: string): string {
-  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
-}
 
 function relTime(iso: string): string {
   const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000)
@@ -606,12 +604,6 @@ function relTime(iso: string): string {
   return `${Math.floor(days / 365)} jaar geleden`
 }
 
-function showToast(msg: string): void {
-  const toast = document.getElementById('toast') as HTMLDivElement
-  toast.textContent = msg
-  toast.classList.add('show')
-  setTimeout(() => toast.classList.remove('show'), 2500)
-}
 
 function injectCaptureStyles(): void {
   if (document.getElementById('capture-styles')) return

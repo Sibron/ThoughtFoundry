@@ -3,6 +3,7 @@ import { fetchThemes, type Theme } from '../lib/themes'
 import { fetchNotesByTheme } from '../lib/notes'
 import { renderTopbar, attachTopbar } from '../lib/nav'
 import { navigateTo } from '../router'
+import { esc as escHtml, errMsg } from '../lib/crud-list'
 
 export async function renderThemeSections(app: HTMLElement): Promise<void> {
   const params = new URLSearchParams(window.location.hash.split('?')[1] ?? '')
@@ -107,13 +108,7 @@ export async function renderThemeSections(app: HTMLElement): Promise<void> {
   })
 }
 
-function escHtml(str: string): string {
-  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
-}
 
-function errMsg(err: unknown): string {
-  return err instanceof Error ? err.message : 'onbekende fout'
-}
 
 function injectStyles(): void {
   if (document.getElementById('theme-sections-styles')) return

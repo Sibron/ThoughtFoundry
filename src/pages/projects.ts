@@ -11,7 +11,7 @@ import { runGapAnalysis } from '../lib/ai'
 import { createAiAction } from '../lib/ai-action'
 import { openNotePicker } from '../lib/note-picker'
 import { navigateTo } from '../router'
-import { createCrudList, injectCrudStyles, showToast, esc, errMsg, type CrudListConfig, type CrudDetailCtx } from '../lib/crud-list'
+import { createCrudList, injectCrudStyles, showToast, showUndoToast, esc, errMsg, type CrudListConfig, type CrudDetailCtx } from '../lib/crud-list'
 
 type ProjectForm = BookProjectInsert & { status: ProjectStatus }
 
@@ -150,13 +150,16 @@ async function mountDetail(project: BookProject, host: HTMLElement, ctx: CrudDet
 
     document.getElementById('proj-back')?.addEventListener('click', () => ctx.back())
     document.getElementById('pd-edit-btn')?.addEventListener('click', () => ctx.edit(project))
-    document.getElementById('pd-delete-btn')?.addEventListener('click', async () => {
-      if (!confirm(`Project "${project.title}" verwijderen? Nota's blijven bestaan.`)) return
-      try {
-        await deleteProject(project.id)
-        showToast('Project verwijderd')
-        ctx.remove(project.id)
-      } catch { showToast('Verwijderen mislukt') }
+    document.getElementById('pd-delete-btn')?.addEventListener('click', () => {
+      // Soft-delete: back to the list now, API delete after the undo window.
+      // Nota's blijven bestaan.
+      ctx.remove(project.id)
+      showUndoToast(`Project "${project.title}" verwijderd`,
+        async () => {
+          try { await deleteProject(project.id) }
+          catch { showToast('Verwijderen mislukt'); await reloadProjects() }
+        },
+        () => { void reloadProjects() })
     })
 
     document.querySelectorAll<HTMLButtonElement>('[data-tab]').forEach(btn => {

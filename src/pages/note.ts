@@ -37,6 +37,7 @@ import { fetchNeighbors } from '../lib/semantic'
 import { processNote, AiBudgetError } from '../lib/ai'
 import { renderTopbar, attachTopbar, isAiEnabled } from '../lib/nav'
 import { navigateTo, navigateBack } from '../router'
+import { esc as escHtml, errMsg, formatDate, showToast, showUndoToast } from '../lib/crud-list'
 
 const STATUS_LABELS: Record<NoteStatus, string> = {
   inbox: 'Inbox',
@@ -591,10 +592,17 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
     document.getElementById('show-in-graph')?.addEventListener('click', () =>
       navigateTo(`/inbox?view=graph&focus=${id}`))
 
-    document.getElementById('delete-btn')?.addEventListener('click', async () => {
-      if (!confirm('Deze nota definitief verwijderen?')) return
-      try { await deleteNote(id); navigateTo('/inbox') }
-      catch (err) { showToast(`Verwijderen mislukt: ${errMsg(err)}`) }
+    document.getElementById('delete-btn')?.addEventListener('click', () => {
+      // Soft-delete: the editor makes way immediately; the API delete only
+      // runs after the undo window closes (undo restores the form in place).
+      const body = document.querySelector('.note-body') as HTMLElement
+      body.innerHTML = '<div class="note-loading">Nota verwijderd…</div>'
+      showUndoToast('Nota verwijderd',
+        async () => {
+          try { await deleteNote(id); navigateBack('/inbox') }
+          catch (err) { showToast(`Verwijderen mislukt: ${errMsg(err)}`); renderForm() }
+        },
+        () => renderForm())
     })
 
     document.getElementById('ai-prefill')?.addEventListener('click', async (e) => {
@@ -646,25 +654,9 @@ function noteIdFromHash(): string | null {
   return new URLSearchParams(hash.slice(qIndex + 1)).get('id')
 }
 
-function escHtml(str: string): string {
-  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
-}
 
-function errMsg(err: unknown): string {
-  return err instanceof Error ? err.message : 'onbekende fout'
-}
 
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString('nl-NL', { day: 'numeric', month: 'short', year: 'numeric' })
-}
 
-function showToast(msg: string): void {
-  const toast = document.getElementById('toast') as HTMLDivElement | null
-  if (!toast) return
-  toast.textContent = msg
-  toast.classList.add('show')
-  setTimeout(() => toast.classList.remove('show'), 2500)
-}
 
 function injectNoteStyles(): void {
   if (document.getElementById('note-styles')) return
