@@ -235,6 +235,28 @@ export async function detectClusters(
   return invoke('detect-clusters', { ...opts })
 }
 
+export type WriteSectionMode = 'draft' | 'rewrite' | 'tighten' | 'continue'
+
+/**
+ * AI writing assist for one studio section. Returns a PROPOSAL (plain
+ * markdown prose) — the caller decides whether to apply it, and snapshots a
+ * revision first.
+ */
+export async function writeSection(input: {
+  sectionId?: string
+  heading?: string
+  intent?: string
+  noteIds?: string[]
+  mode: WriteSectionMode
+  selection?: string
+  currentText?: string
+  instruction?: string
+  model?: 'claude-haiku-4-5' | 'claude-sonnet-4-6'
+  overrideCap?: boolean
+}): Promise<{ text: string; usage: AIUsage }> {
+  return invoke('write-section', input as unknown as Record<string, unknown>)
+}
+
 /**
  * Gap-analyse for a book project: white spots, missing counter-arguments,
  * unelaborated questions, corpus risk. Goes through the same invoke wrapper
