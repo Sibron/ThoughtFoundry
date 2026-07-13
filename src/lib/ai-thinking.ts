@@ -74,4 +74,10 @@ export const AI_PHASES = {
     'Clusters vormen…',
     'Resultaten verwerken…',
   ],
+  analyzeSource: [
+    'Bron ophalen…',
+    'Inhoud lezen…',
+    'Inzichten destilleren…',
+    'Voorstel opstellen…',
+  ],
 }

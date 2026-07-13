@@ -257,6 +257,46 @@ export async function writeSection(input: {
   return invoke('write-section', input as unknown as Record<string, unknown>)
 }
 
+export interface SourceInsightProposal {
+  content: string
+  core_idea?: string
+  tags: string[]
+}
+
+export interface SourceProposal {
+  title: string
+  author: string | null
+  source_type: 'book' | 'article' | 'paper' | 'podcast' | 'video' | 'course' | 'other'
+  summary: string
+  insights: SourceInsightProposal[]
+}
+
+export interface AnalyzeSourceResult {
+  proposal?: SourceProposal
+  /** Content couldn't be retrieved server-side — offer a paste-it-yourself textarea. */
+  needsManualText?: boolean
+  reason?: 'no_captions' | 'fetch_failed' | 'empty_content'
+  meta?: { title: string | null; author: string | null; url: string; source_type: string }
+  retrieval?: 'captions' | 'pasted' | 'html'
+  contentChars?: number
+  usage?: AIUsage
+}
+
+/**
+ * Analyze an external source (website or YouTube URL, or manually pasted
+ * text) and get a PROPOSAL back: source metadata + potential insight notes.
+ * Nothing is persisted server-side — the capture page shows a review panel
+ * and saves the accepted insights to the Vangbak itself.
+ */
+export async function analyzeSource(input: {
+  url?: string
+  pastedText?: string
+  model?: 'claude-haiku-4-5' | 'claude-sonnet-4-6'
+  overrideCap?: boolean
+}): Promise<AnalyzeSourceResult> {
+  return invoke('analyze-source', input as unknown as Record<string, unknown>)
+}
+
 /**
  * Gap-analyse for a book project: white spots, missing counter-arguments,
  * unelaborated questions, corpus risk. Goes through the same invoke wrapper
