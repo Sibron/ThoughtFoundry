@@ -1,11 +1,13 @@
 import { insertNote, queueOfflineNote, flushOfflineQueue, offlineQueueSize, fetchNotes, fetchNotesByIds, fetchRandomNote, fetchOnThisDay, getNoteTitle, type NoteInsert, type Note } from '../lib/notes'
 import { fetchSemanticBridges, hasEmbeddings, fetchDismissedPairKeys, type BridgePair } from '../lib/semantic'
-import { fetchSources, type Source } from '../lib/sources'
+import { fetchSources, createSource, SOURCE_TYPES, SOURCE_TYPE_ORDER, type Source, type SourceType } from '../lib/sources'
 import { fetchLinks, createLink } from '../lib/links'
 import { openLinkModal } from '../lib/link-modal'
 import { fetchAllNoteThemes } from '../lib/themes'
 import { findSurprisingPair, pairKey, rankBySimilarity, type SurprisingPair } from '../lib/similarity'
-import { embedNote } from '../lib/ai'
+import { embedNote, analyzeSource, type AnalyzeSourceResult, type SourceProposal } from '../lib/ai'
+import { createAiAction } from '../lib/ai-action'
+import { AI_PHASES } from '../lib/ai-thinking'
 import { renderTopbar, attachTopbar, renderGuidanceBanner } from '../lib/nav'
 import { navigateTo } from '../router'
 import { esc as escHtml, showToast } from '../lib/crud-list'
@@ -45,6 +47,19 @@ export async function renderCapture(app: HTMLElement): Promise<void> {
       ></textarea>
       <p class="duplicate-hint" id="duplicate-hint"></p>
       <div class="related-card" id="related-card" hidden></div>
+
+      <details class="capture-extra" id="analyse-details">
+        <summary class="capture-extra-toggle">Bron analyseren (AI)</summary>
+        <div class="analyze-fields">
+          <input type="url" id="analyze-url" placeholder="Plak een URL (website of YouTube-video)…" />
+          <div class="analyze-fallback" id="analyze-fallback" hidden>
+            <p class="analyze-hint" id="analyze-hint"></p>
+            <textarea id="analyze-pasted" rows="5" placeholder="Plak hier het transcript of de tekst…"></textarea>
+          </div>
+          <div id="analyze-action"></div>
+          <div class="analyze-proposal" id="analyze-proposal" hidden></div>
+        </div>
+      </details>
 
       <details class="capture-extra" id="meer-details">
         <summary class="capture-extra-toggle">Meer velden</summary>
@@ -434,6 +449,11 @@ export async function renderCapture(app: HTMLElement): Promise<void> {
     })
   })
 
+  // "Bron analyseren (AI)" — paste a URL (website/YouTube), get a PROPOSAL of
+  // potential insights back, review with checkboxes, save the accepted ones to
+  // the Vangbak as literature notes linked to a fresh source record.
+  setupSourceAnalysis()
+
   // Online/offline indicator + auto-flush on reconnect
   await refreshOnlineIndicator()
   await refreshRecent()
@@ -527,6 +547,198 @@ function showRelatedCard(saved: Note, pool: Note[]): void {
     }
     card.hidden = true
   })
+}
+
+/**
+ * Wires the "Bron analyseren (AI)" section: URL in → analyze-source proposal →
+ * review panel (checkboxes, editable) → createSource + one literature note per
+ * accepted insight, straight into the Vangbak. When the server can't retrieve
+ * the content (blocked page, video without captions) a paste-it-yourself
+ * textarea appears and the same button re-analyzes with the pasted text.
+ */
+function setupSourceAnalysis(): void {
+  const analyseDetails = document.getElementById('analyse-details') as HTMLDetailsElement
+  const urlEl = document.getElementById('analyze-url') as HTMLInputElement
+  const fallbackEl = document.getElementById('analyze-fallback') as HTMLDivElement
+  const hintEl = document.getElementById('analyze-hint') as HTMLParagraphElement
+  const pastedEl = document.getElementById('analyze-pasted') as HTMLTextAreaElement
+  const proposalEl = document.getElementById('analyze-proposal') as HTMLDivElement
+  const actionHost = document.getElementById('analyze-action') as HTMLDivElement
+
+  // Server-side metadata (oEmbed title/author) from a needsManualText round —
+  // kept so the eventual proposal still carries it after a manual paste.
+  let meta: AnalyzeSourceResult['meta'] | null = null
+
+  const isHttpUrl = (raw: string): boolean => {
+    try {
+      const u = new URL(raw)
+      return u.protocol === 'http:' || u.protocol === 'https:'
+    } catch { return false }
+  }
+
+  // Share-target / draft prefill: a shared URL lands one tap away from analysis.
+  const draft = loadDraftObj()
+  if (draft.url && isHttpUrl(draft.url)) {
+    urlEl.value = draft.url
+    analyseDetails.open = true
+  }
+
+  const showFallback = (reason?: string): void => {
+    hintEl.textContent = reason === 'no_captions'
+      ? 'Geen ondertitels gevonden bij deze video. Plak het transcript hieronder en analyseer opnieuw.'
+      : 'Kon de inhoud niet ophalen (mogelijk afgeschermd). Plak de tekst hieronder en analyseer opnieuw.'
+    fallbackEl.hidden = false
+    pastedEl.focus()
+  }
+
+  const action = createAiAction(actionHost, {
+    label: 'Analyseer bron',
+    expectedOutputTokens: 1500,
+    // The page size is unknown before the fetch — assume the server-side
+    // content budget unless the user pasted the text themselves.
+    estimateInputChars: () => pastedEl.value.trim().length || 18_000,
+    phases: AI_PHASES.analyzeSource,
+    beforeRun: () => {
+      const url = urlEl.value.trim()
+      const pasted = pastedEl.value.trim()
+      if (!url && !pasted) { showToast('Plak eerst een URL'); return false }
+      if (url && !isHttpUrl(url)) { showToast('Dat lijkt geen geldige URL (http/https)'); return false }
+      return true
+    },
+    run: async (model, overrideCap) => {
+      proposalEl.hidden = true
+      const res = await analyzeSource({
+        url: urlEl.value.trim() || undefined,
+        pastedText: pastedEl.value.trim() || undefined,
+        model,
+        overrideCap,
+      })
+      if (res.needsManualText) {
+        meta = res.meta ?? null
+        showFallback(res.reason)
+        return undefined
+      }
+      fallbackEl.hidden = true
+      if (res.proposal) renderProposal(res.proposal)
+      return res.usage
+    },
+  })
+  pastedEl.addEventListener('input', () => action.refreshEstimate())
+
+  function resetAnalysis(): void {
+    proposalEl.hidden = true
+    proposalEl.innerHTML = ''
+    fallbackEl.hidden = true
+    urlEl.value = ''
+    pastedEl.value = ''
+    meta = null
+    action.refreshEstimate()
+  }
+
+  function renderProposal(p: SourceProposal): void {
+    proposalEl.innerHTML = `
+      <p class="analyze-proposal-label">Voorstel — kies wat naar de Vangbak gaat</p>
+      <div class="analyze-source-head">
+        <input type="text" id="ap-title" value="${escHtml(p.title)}" placeholder="Titel" />
+        <div class="analyze-source-row">
+          <input type="text" id="ap-author" value="${escHtml(p.author ?? '')}" placeholder="Auteur" />
+          <select id="ap-type">
+            ${SOURCE_TYPE_ORDER.map(t =>
+              `<option value="${t}"${t === p.source_type ? ' selected' : ''}>${SOURCE_TYPES[t].label}</option>`
+            ).join('')}
+          </select>
+        </div>
+        <textarea id="ap-summary" rows="2" placeholder="Samenvatting">${escHtml(p.summary)}</textarea>
+      </div>
+      ${p.insights.length === 0 ? '<p class="analyze-hint">Geen bruikbare inzichten gevonden in deze bron.</p>' : ''}
+      <ul class="analyze-insights">
+        ${p.insights.map((ins, i) => `
+          <li class="analyze-insight">
+            <input type="checkbox" class="ap-check" data-idx="${i}" checked />
+            <div class="analyze-insight-body">
+              <textarea class="ap-content" data-idx="${i}" rows="3">${escHtml(ins.content)}</textarea>
+              ${ins.core_idea || ins.tags.length > 0
+                ? `<p class="analyze-insight-meta">${escHtml(ins.core_idea ?? '')}${
+                    ins.tags.length > 0 ? `${ins.core_idea ? ' · ' : ''}${ins.tags.map(t => '#' + escHtml(t)).join(' ')}` : ''
+                  }</p>`
+                : ''}
+            </div>
+          </li>`).join('')}
+      </ul>
+      <div class="analyze-proposal-footer">
+        <button class="btn btn-primary" id="ap-save"></button>
+        <button class="btn btn-ghost btn-sm" id="ap-cancel">Annuleer</button>
+      </div>
+    `
+    proposalEl.hidden = false
+
+    const saveBtn = proposalEl.querySelector('#ap-save') as HTMLButtonElement
+    const checks = Array.from(proposalEl.querySelectorAll<HTMLInputElement>('.ap-check'))
+
+    const updateCount = (): void => {
+      const n = checks.filter(c => c.checked).length
+      saveBtn.textContent = n === 1 ? 'Bewaar 1 inzicht in Vangbak' : `Bewaar ${n} inzichten in Vangbak`
+      saveBtn.disabled = n === 0
+    }
+    checks.forEach(c => c.addEventListener('change', updateCount))
+    updateCount()
+
+    proposalEl.querySelector('#ap-cancel')?.addEventListener('click', () => {
+      proposalEl.hidden = true
+      proposalEl.innerHTML = ''
+    })
+
+    saveBtn.addEventListener('click', async () => {
+      const selected = checks.filter(c => c.checked).map(c => Number(c.dataset['idx']))
+      if (selected.length === 0) return
+      saveBtn.disabled = true
+
+      try {
+        const title = (proposalEl.querySelector('#ap-title') as HTMLInputElement).value.trim() || 'Onbekende bron'
+        const author = (proposalEl.querySelector('#ap-author') as HTMLInputElement).value.trim()
+        const type = (proposalEl.querySelector('#ap-type') as HTMLSelectElement).value as SourceType
+        const summary = (proposalEl.querySelector('#ap-summary') as HTMLTextAreaElement).value.trim()
+        const analyzedUrl = urlEl.value.trim() || meta?.url || ''
+
+        const src = await createSource({
+          title,
+          author: author || undefined,
+          type,
+          url: analyzedUrl || undefined,
+          summary: summary || undefined,
+        })
+
+        let saved = 0
+        for (const idx of selected) {
+          const contentEl = proposalEl.querySelector(`.ap-content[data-idx="${idx}"]`) as HTMLTextAreaElement | null
+          const content = contentEl?.value.trim()
+          if (!content) continue
+          const ins = p.insights[idx]
+          const note = await insertNote({
+            content,
+            note_type: 'literature',
+            core_idea: ins?.core_idea || undefined,
+            tags: ins && ins.tags.length > 0 ? ins.tags : undefined,
+            source_id: src.id,
+            source_url: analyzedUrl || undefined,
+            source_title: title,
+            source_author: author || undefined,
+          })
+          // Keep the semantic substrate current — free and fire-and-forget.
+          void embedNote(note.id).catch(() => {})
+          saved++
+        }
+
+        showToast(saved === 1 ? '1 inzicht opgeslagen in Vangbak' : `${saved} inzichten opgeslagen in Vangbak`)
+        resetAnalysis()
+        await refreshRecent()
+      } catch (err) {
+        showToast('Opslaan mislukt. Probeer opnieuw.')
+        console.error(err)
+        saveBtn.disabled = false
+      }
+    })
+  }
 }
 
 function restoreDraft(els: {
@@ -683,6 +895,88 @@ function injectCaptureStyles(): void {
       gap: var(--s-3);
       padding: var(--s-3) var(--s-4);
     }
+    .analyze-fields {
+      display: flex;
+      flex-direction: column;
+      gap: var(--s-3);
+      padding: var(--s-3) var(--s-4);
+    }
+    .analyze-fields textarea { padding: var(--s-2); }
+    .analyze-fallback {
+      display: flex;
+      flex-direction: column;
+      gap: var(--s-2);
+    }
+    .analyze-hint {
+      font-size: var(--fs-sm);
+      color: var(--text-muted);
+      margin: 0;
+    }
+    .analyze-proposal {
+      display: flex;
+      flex-direction: column;
+      gap: var(--s-3);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--accent);
+      border-radius: var(--r-sm);
+      padding: var(--s-3);
+    }
+    .analyze-proposal-label {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin: 0;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .analyze-source-head {
+      display: flex;
+      flex-direction: column;
+      gap: var(--s-2);
+    }
+    .analyze-source-row {
+      display: flex;
+      gap: var(--s-2);
+    }
+    .analyze-source-row input { flex: 1; min-width: 0; }
+    .analyze-insights {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: var(--s-2);
+      margin: 0;
+      padding: 0;
+    }
+    .analyze-insight {
+      display: flex;
+      align-items: flex-start;
+      gap: var(--s-2);
+    }
+    .analyze-insight input[type="checkbox"] {
+      margin-top: var(--s-2);
+      flex-shrink: 0;
+    }
+    .analyze-insight-body {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: var(--s-1);
+    }
+    .analyze-insight-body textarea { width: 100%; font-size: var(--fs-sm); }
+    .analyze-insight-meta {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin: 0;
+    }
+    .analyze-proposal-footer {
+      display: flex;
+      gap: var(--s-2);
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .analyze-proposal-footer .btn { width: auto; }
     .capture-use-for { font-size: var(--fs-sm); }
     .capture-source-select { font-size: var(--fs-sm); }
     .capture-footer {
