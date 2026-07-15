@@ -282,6 +282,21 @@ export interface AnalyzeSourceResult {
   usage?: AIUsage
 }
 
+export interface SupadataUsage {
+  limit: number | null
+  used: number | null
+  remaining: number | null
+}
+
+/**
+ * Current Supadata credit usage for the app's shared key (drives the "x / 100
+ * credits" counter on the capture page). Returns `usage: null` when no key is
+ * configured or the lookup fails — the caller simply hides the counter.
+ */
+export async function fetchSupadataUsage(): Promise<{ usage: SupadataUsage | null; plan?: string | null }> {
+  return invoke('supadata-usage', {})
+}
+
 /**
  * Analyze an external source (website or YouTube URL, or manually pasted
  * text) and get a PROPOSAL back: source metadata + potential insight notes.
