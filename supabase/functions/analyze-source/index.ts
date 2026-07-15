@@ -116,7 +116,7 @@ Deno.serve(async (req: Request) => {
     source_type: kind === 'youtube' ? 'video' : 'article'
   }
   let content = ''
-  let retrieval: 'captions' | 'pasted' | 'html' = 'pasted'
+  let retrieval: 'captions' | 'pasted' | 'html' | 'supadata' = 'pasted'
 
   if (kind === 'youtube' && url) {
     const videoId = extractYoutubeId(url)
@@ -127,12 +127,20 @@ Deno.serve(async (req: Request) => {
       content = pastedText
       retrieval = 'pasted'
     } else {
-      const transcript = videoId ? await fetchYoutubeTranscript(videoId) : null
+      // 1) Free scrape (works occasionally, costs nothing). 2) Supadata, if a
+      // SUPADATA_API_KEY secret is set — reliable from datacenter IPs and even
+      // transcribes caption-less videos via Whisper. 3) Manual paste.
+      let transcript = videoId ? await fetchYoutubeTranscript(videoId) : null
+      let via: typeof retrieval = 'captions'
+      if (!transcript || transcript.length < 200) {
+        const supa = await fetchSupadataTranscript(url.toString())
+        if (supa && supa.length >= 200) { transcript = supa; via = 'supadata' }
+      }
       if (!transcript || transcript.length < 200) {
         return jsonResponse({ needsManualText: true, reason: 'no_captions', meta })
       }
       content = transcript
-      retrieval = 'captions'
+      retrieval = via
     }
   } else if (kind === 'website' && url) {
     const page = await fetchWebsite(url.toString())
@@ -306,6 +314,38 @@ async function fetchYoutubeOembed(watchUrl: string): Promise<{ title: string; au
     if (typeof data.title !== 'string') return null
     return { title: data.title, author: typeof data.author_name === 'string' ? data.author_name : null }
   } catch {
+    return null
+  }
+}
+
+// Optional paid fallback: Supadata resolves transcripts from a residential
+// network (YouTube blocks datacenter IPs like Supabase's) and falls back to
+// Whisper for caption-less videos. No-ops to null when SUPADATA_API_KEY is
+// unset, so the function keeps working (manual-paste) without it.
+async function fetchSupadataTranscript(youtubeUrl: string): Promise<string | null> {
+  const key = Deno.env.get('SUPADATA_API_KEY')
+  if (!key) return null
+  try {
+    const res = await fetch(
+      `https://api.supadata.ai/v1/transcript?url=${encodeURIComponent(youtubeUrl)}&text=true`,
+      { headers: { 'x-api-key': key }, signal: AbortSignal.timeout(60_000) }
+    )
+    if (!res.ok) {
+      console.error('[supadata] error', JSON.stringify({ status: res.status, body: (await res.text()).slice(0, 300) }))
+      return null
+    }
+    const data = await res.json()
+    // With text=true `content` is a plain string; keep the segmented shape as a
+    // fallback in case the flag is ignored.
+    let text = ''
+    if (typeof data.content === 'string') text = data.content
+    else if (Array.isArray(data.content)) {
+      text = data.content.map((c: { text?: string }) => c.text ?? '').join(' ')
+    }
+    text = text.replace(/\s+/g, ' ').trim()
+    return text.length > 0 ? text : null
+  } catch (err) {
+    console.error('[supadata] fetch failed', err instanceof Error ? err.message : String(err))
     return null
   }
 }

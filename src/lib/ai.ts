@@ -277,7 +277,7 @@ export interface AnalyzeSourceResult {
   needsManualText?: boolean
   reason?: 'no_captions' | 'fetch_failed' | 'empty_content'
   meta?: { title: string | null; author: string | null; url: string; source_type: string }
-  retrieval?: 'captions' | 'pasted' | 'html'
+  retrieval?: 'captions' | 'pasted' | 'html' | 'supadata'
   contentChars?: number
   usage?: AIUsage
 }
