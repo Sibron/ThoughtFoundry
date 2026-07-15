@@ -54,7 +54,7 @@ const PRICING: Record<AnthropicModel, { input: number; output: number }> = {
 function estimateCost(model: AnthropicModel, i: number, o: number): number {
   const p = PRICING[model]; return (i * p.input + o * p.output) / 1_000_000
 }
-async function callAnthropic(opts: { apiKey: string; model: AnthropicModel; system: string; messages: { role: 'user' | 'assistant'; content: string }[]; maxTokens?: number }) {
+async function callAnthropic(opts: { apiKey: string; model: AnthropicModel; system: string; messages: { role: 'user' | 'assistant'; content: string }[]; maxTokens?: number; operation?: string }) {
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: { 'x-api-key': opts.apiKey, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
@@ -111,7 +111,14 @@ interface AnalyzeRequest {
   pastedText?: string
   persona?: string
   model?: 'claude-haiku-4-5' | 'claude-sonnet-4-6'
+  // Two-stage flow. Omitted → legacy one-shot (retrieval + insights, back-compat
+  // for older clients). 'frame' → retrieval + summary + tailored angles. 'insights'
+  // → generate insights from provided pastedText, steered by count + angles.
+  stage?: 'frame' | 'insights'
+  count?: 'auto' | 'few' | 'medium' | 'many'
+  angles?: string[]
 }
+
 interface Proposal {
   title: string
   author: string | null
@@ -119,6 +126,7 @@ interface Proposal {
   summary: string
   insights: { content: string; core_idea?: string; tags?: string[] }[]
 }
+
 interface SourceMeta {
   title: string | null
   author: string | null
@@ -127,9 +135,12 @@ interface SourceMeta {
 }
 
 const VALID_SOURCE_TYPES = new Set(['book', 'article', 'paper', 'podcast', 'video', 'course', 'other'])
+
+// The AI sees at most this many chars of source content (~5k tokens on Haiku).
 const CONTENT_CHAR_BUDGET = 18_000
 const MAX_HTML_BYTES = 1_500_000
 const FETCH_TIMEOUT_MS = 12_000
+
 const BROWSER_UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36'
 
@@ -163,6 +174,49 @@ Regels voor de insights:
 - Formuleer in de stijl van een eigen notitie: direct, inhoudelijk, prikkelend.
 - "core_idea" is één zin die de kern vangt.`
 
+// Stage 'frame': inkaderen vóór de gebruiker kiest welke inzichten eruit komen.
+const FRAMING_SYSTEM_PROMPT = `Je bent een kennis-assistent voor een persoonlijk denksysteem (ThoughtFoundry).
+De gebruiker capteert atomische ideeën over o.a. autisme/neurodiversiteit, relaties, coaching, management en persoonlijke ontwikkeling.
+
+Jouw taak: een externe bron (artikel of videotranscript) kort inkaderen, vóórdat de gebruiker kiest welke inzichten eruit gedestilleerd worden.
+
+Schrijf alle teksten in het Nederlands.
+
+Antwoord ALLEEN met geldige JSON, in dit exacte formaat:
+{
+  "summary": "2-4 zinnen: waar gaat deze bron over",
+  "angles": ["3 tot 6 concrete invalshoeken/thema's die ECHT in deze bron zitten, elk 2-5 woorden"]
+}
+
+Regels:
+- "angles" zijn de mogelijke richtingen waarin de gebruiker inzichten kan laten destilleren — concreet en specifiek voor DEZE bron, geen algemene categorieën.
+- Verzin geen invalshoeken die niet in de bron voorkomen.`
+
+// Stage 'insights': destilleren, met aantal + invalshoeken uit de user-prompt.
+const INSIGHTS_SYSTEM_PROMPT = `Je bent een kennis-assistent voor een persoonlijk denksysteem (ThoughtFoundry).
+De gebruiker capteert atomische ideeën over o.a. autisme/neurodiversiteit, relaties, coaching, management en persoonlijke ontwikkeling.
+
+Jouw taak: uit de inhoud van één externe bron (artikel of videotranscript) de potentiële inzichten destilleren als losse gedachte-notities.
+
+Schrijf alle teksten in het Nederlands.
+
+Antwoord ALLEEN met geldige JSON, in dit exacte formaat:
+{
+  "insights": [
+    {
+      "content": "een zelfstandige, atomaire gedachte-notitie van 1-4 zinnen",
+      "core_idea": "de kern in één zin",
+      "tags": ["max 5 tags, lowercase, single-word of-met-streepje"]
+    }
+  ]
+}
+
+Regels voor de insights:
+- Elk inzicht is een ZELFSTANDIGE gedachte-notitie: een idee, claim of vraag die op zichzelf leesbaar is zonder de bron erbij. Geen citaten, geen samenvattingspuntjes, geen "de video zegt dat...".
+- Formuleer in de stijl van een eigen notitie: direct, inhoudelijk, prikkelend.
+- "core_idea" is één zin die de kern vangt.
+- Liever minder sterke inzichten dan zwakke opvulling.`
+
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
   if (req.method !== 'POST')   return jsonResponse({ error: 'Method not allowed' }, 405)
@@ -193,6 +247,7 @@ Deno.serve(async (req: Request) => {
   const blocked = await enforceBudget(supabase, body)
   if (blocked) return blocked
 
+  // ---- Gather content + metadata -------------------------------------------
   const kind = url ? detectUrlKind(url) : null
   let meta: SourceMeta = {
     title: null,
@@ -212,6 +267,9 @@ Deno.serve(async (req: Request) => {
       content = pastedText
       retrieval = 'pasted'
     } else {
+      // 1) Free scrape (works occasionally, costs nothing). 2) Supadata, if a
+      // SUPADATA_API_KEY secret is set — reliable from datacenter IPs and even
+      // transcribes caption-less videos via Whisper. 3) Manual paste.
       let transcript = videoId ? await fetchYoutubeTranscript(videoId) : null
       let via: typeof retrieval = 'captions'
       if (!transcript || transcript.length < 200) {
@@ -241,6 +299,7 @@ Deno.serve(async (req: Request) => {
       retrieval = 'html'
     }
   } else {
+    // No URL — pure pasted text; Claude decides the source_type.
     content = pastedText
     retrieval = 'pasted'
     meta = { ...meta, source_type: 'article' }
@@ -248,59 +307,145 @@ Deno.serve(async (req: Request) => {
 
   content = content.slice(0, CONTENT_CHAR_BUDGET)
 
-  const userPrompt = buildUserPrompt(meta, content, retrieval)
-  const system = [body.persona?.trim(), SYSTEM_PROMPT].filter(Boolean).join('\n\n')
+  // ---- AI analysis ----------------------------------------------------------
+  const stage = body.stage // undefined = legacy one-shot, else 'frame' | 'insights'
+
+  const system = [
+    body.persona?.trim(),
+    stage === 'frame' ? FRAMING_SYSTEM_PROMPT
+      : stage === 'insights' ? INSIGHTS_SYSTEM_PROMPT
+      : SYSTEM_PROMPT
+  ].filter(Boolean).join('\n\n')
+
+  const userPrompt = stage === 'frame' ? buildFramingPrompt(meta, content, retrieval)
+    : stage === 'insights' ? buildInsightsPrompt(meta, content, retrieval, body.count, body.angles)
+    : buildUserPrompt(meta, content, retrieval)
 
   let result
   try {
     result = await callAnthropic({
-      apiKey, model, system,
+      apiKey,
+      model,
+      system,
       messages: [{ role: 'user', content: userPrompt }],
-      maxTokens: 2000
+      maxTokens: stage === 'frame' ? 700 : 2500,
+      operation: stage === 'frame' ? 'analyze-source-frame'
+        : stage === 'insights' ? 'analyze-source-insights'
+        : 'analyze-source'
     })
   } catch (err) {
     return jsonResponse({ error: err instanceof Error ? err.message : 'AI call failed' }, 502)
   }
 
+  const cost = estimateCost(model, result.inputTokens, result.outputTokens)
+  const usage = { inputTokens: result.inputTokens, outputTokens: result.outputTokens, costUsd: cost }
+  await logUsage(supabase, {
+    userId,
+    model,
+    operation: stage === 'frame' ? 'analyze-source-frame'
+      : stage === 'insights' ? 'analyze-source-insights'
+      : 'analyze-source',
+    inputTokens: result.inputTokens,
+    outputTokens: result.outputTokens,
+    costUsd: cost
+  })
+
+  // ---- Stage 'frame': summary + tailored angles ----------------------------
+  if (stage === 'frame') {
+    let framing: { summary: string; angles: string[] }
+    try {
+      const parsed = parseJsonFromResponse<{ summary?: unknown; angles?: unknown }>(result.text)
+      framing = {
+        summary: typeof parsed.summary === 'string' ? parsed.summary.trim() : '',
+        angles: (Array.isArray(parsed.angles) ? parsed.angles : [])
+          .filter((a): a is string => typeof a === 'string' && a.trim().length > 0)
+          .map(a => a.trim())
+          .slice(0, 6)
+      }
+    } catch {
+      return jsonResponse({ error: 'AI returned invalid JSON', raw: result.text }, 502)
+    }
+    return jsonResponse({
+      meta: { title: meta.title, author: meta.author, url: meta.url, source_type: meta.source_type },
+      content,
+      retrieval,
+      framing,
+      contentChars: content.length,
+      usage
+    })
+  }
+
+  // ---- Stage 'insights': variable-count list, steered by angles -------------
+  if (stage === 'insights') {
+    let insights: { content: string; core_idea?: string; tags: string[] }[]
+    try {
+      const parsed = parseJsonFromResponse<{ insights?: unknown }>(result.text)
+      insights = sanitizeInsights(parsed.insights)
+    } catch {
+      return jsonResponse({ error: 'AI returned invalid JSON', raw: result.text }, 502)
+    }
+    return jsonResponse({ insights, retrieval, contentChars: content.length, usage })
+  }
+
+  // ---- Legacy one-shot (no stage): full proposal ---------------------------
   let proposal: Proposal
   try {
     proposal = parseJsonFromResponse<Proposal>(result.text)
   } catch {
     return jsonResponse({ error: 'AI returned invalid JSON', raw: result.text }, 502)
   }
-
   proposal.title = (meta.title ?? proposal.title ?? '').toString().slice(0, 200) || 'Onbekende bron'
   proposal.author = meta.author ?? (proposal.author ? String(proposal.author) : null)
   if (!VALID_SOURCE_TYPES.has(proposal.source_type ?? '')) proposal.source_type = meta.source_type
   proposal.summary = (proposal.summary ?? '').toString()
-  proposal.insights = (proposal.insights ?? [])
-    .filter(i => i && typeof i.content === 'string' && i.content.trim().length > 0)
-    .slice(0, 8)
+  proposal.insights = sanitizeInsights(proposal.insights).slice(0, 8)
+
+  return jsonResponse({ proposal, retrieval, contentChars: content.length, usage })
+})
+
+// Normalize a raw model `insights` array: drop empties, trim, lowercase tags
+// (max 5), cap the list at 15 so "Veel"/"Auto" aren't clipped.
+function sanitizeInsights(raw: unknown): { content: string; core_idea?: string; tags: string[] }[] {
+  return (Array.isArray(raw) ? raw : [])
+    .filter((i): i is { content: string; core_idea?: unknown; tags?: unknown } =>
+      !!i && typeof i === 'object' && typeof (i as { content?: unknown }).content === 'string' &&
+      (i as { content: string }).content.trim().length > 0)
+    .slice(0, 15)
     .map(i => ({
-      content: i.content.trim(),
+      content: (i.content as string).trim(),
       core_idea: typeof i.core_idea === 'string' ? i.core_idea.trim() : undefined,
       tags: (Array.isArray(i.tags) ? i.tags : [])
         .filter((t): t is string => typeof t === 'string' && t.trim().length > 0)
         .map(t => t.trim().toLowerCase())
         .slice(0, 5)
     }))
-
-  const cost = estimateCost(model, result.inputTokens, result.outputTokens)
-  await logUsage(supabase, {
-    userId, model, operation: 'analyze-source',
-    inputTokens: result.inputTokens, outputTokens: result.outputTokens, costUsd: cost
-  })
-
-  return jsonResponse({
-    proposal,
-    retrieval,
-    contentChars: content.length,
-    usage: { inputTokens: result.inputTokens, outputTokens: result.outputTokens, costUsd: cost }
-  })
-})
+}
 
 function buildUserPrompt(meta: SourceMeta, content: string, retrieval: string): string {
   const kindLabel = retrieval === 'captions' ? 'videotranscript (automatische ondertitels — kan spreektaal en fouten bevatten)'
+    : retrieval === 'html' ? 'tekst van een webpagina (kan restjes navigatie bevatten)'
+    : 'door de gebruiker geplakte tekst'
+
+  const metaLines = [
+    meta.url ? `URL: ${meta.url}` : null,
+    meta.title ? `Titel: ${meta.title}` : null,
+    meta.author ? `Auteur/maker: ${meta.author}` : null
+  ].filter(Boolean).join('\n')
+
+  return `## Bron
+
+${metaLines || '(geen metadata bekend)'}
+
+Inhoud (${kindLabel}):
+
+${content}
+
+Analyseer deze bron en geef je voorstel als JSON.`
+}
+
+function sourceBlock(meta: SourceMeta, content: string, retrieval: string): string {
+  const kindLabel = retrieval === 'captions' || retrieval === 'supadata'
+    ? 'videotranscript (automatische ondertitels — kan spreektaal en fouten bevatten)'
     : retrieval === 'html' ? 'tekst van een webpagina (kan restjes navigatie bevatten)'
     : 'door de gebruiker geplakte tekst'
   const metaLines = [
@@ -308,14 +453,54 @@ function buildUserPrompt(meta: SourceMeta, content: string, retrieval: string): 
     meta.title ? `Titel: ${meta.title}` : null,
     meta.author ? `Auteur/maker: ${meta.author}` : null
   ].filter(Boolean).join('\n')
-  return `## Bron\n\n${metaLines || '(geen metadata bekend)'}\n\nInhoud (${kindLabel}):\n\n${content}\n\nAnalyseer deze bron en geef je voorstel als JSON.`
+  return `## Bron\n\n${metaLines || '(geen metadata bekend)'}\n\nInhoud (${kindLabel}):\n\n${content}`
 }
 
+function buildFramingPrompt(meta: SourceMeta, content: string, retrieval: string): string {
+  return `${sourceBlock(meta, content, retrieval)}
+
+Vat de bron samen en geef de mogelijke invalshoeken als JSON.`
+}
+
+function buildInsightsPrompt(
+  meta: SourceMeta,
+  content: string,
+  retrieval: string,
+  count: AnalyzeRequest['count'],
+  angles: string[] | undefined
+): string {
+  const countInstr = count === 'few' ? 'Geef 2 tot 3 inzichten: alleen de allersterkste.'
+    : count === 'medium' ? 'Geef 4 tot 6 inzichten.'
+    : count === 'many' ? 'Geef 7 tot 10 inzichten.'
+    : 'Geef zoveel inzichten als de bron rechtvaardigt: soms 2, soms 12 of meer. Forceer geen vast aantal — laat de rijkdom van de bron het aantal bepalen.'
+
+  const clean = (Array.isArray(angles) ? angles : [])
+    .filter(a => typeof a === 'string' && a.trim().length > 0)
+    .map(a => a.trim())
+  const angleInstr = clean.length > 0
+    ? `Richt de inzichten specifiek op deze invalshoeken: ${clean.join('; ')}. Negeer wat daarbuiten valt.`
+    : 'Kies zelf de sterkste invalshoeken uit de bron.'
+
+  return `${sourceBlock(meta, content, retrieval)}
+
+${countInstr}
+${angleInstr}
+
+Geef je inzichten als JSON.`
+}
+
+// ---- URL handling -----------------------------------------------------------
+
+// Cheap SSRF guard: this function is an authenticated fetch proxy, so refuse
+// obviously internal targets. Not a full defense (no DNS resolution), but the
+// edge runtime has no privileged internal network to speak of.
 function isSafeUrl(url: URL): boolean {
   if (url.protocol !== 'http:' && url.protocol !== 'https:') return false
   const host = url.hostname.toLowerCase()
   if (host === 'localhost' || host.endsWith('.local') || host.endsWith('.internal')) return false
+  // IPv6 literal
   if (host.startsWith('[') || host.includes(':')) return false
+  // IPv4 literal in a private/reserved range
   const m = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/)
   if (m) {
     const [a, b] = [Number(m[1]), Number(m[2])]
@@ -352,6 +537,8 @@ function extractYoutubeId(url: URL): string | null {
   return id && /^[A-Za-z0-9_-]{6,}$/.test(id) ? id : null
 }
 
+// ---- YouTube retrieval --------------------------------------------------------
+
 async function fetchYoutubeOembed(watchUrl: string): Promise<{ title: string; author: string | null } | null> {
   try {
     const res = await fetch(
@@ -367,6 +554,10 @@ async function fetchYoutubeOembed(watchUrl: string): Promise<{ title: string; au
   }
 }
 
+// Optional paid fallback: Supadata resolves transcripts from a residential
+// network (YouTube blocks datacenter IPs like Supabase's) and falls back to
+// Whisper for caption-less videos. No-ops to null when SUPADATA_API_KEY is
+// unset, so the function keeps working (manual-paste) without it.
 async function fetchSupadataTranscript(youtubeUrl: string): Promise<string | null> {
   const key = Deno.env.get('SUPADATA_API_KEY')
   if (!key) return null
@@ -380,6 +571,8 @@ async function fetchSupadataTranscript(youtubeUrl: string): Promise<string | nul
       return null
     }
     const data = await res.json()
+    // With text=true `content` is a plain string; keep the segmented shape as a
+    // fallback in case the flag is ignored.
     let text = ''
     if (typeof data.content === 'string') text = data.content
     else if (Array.isArray(data.content)) {
@@ -393,6 +586,7 @@ async function fetchSupadataTranscript(youtubeUrl: string): Promise<string | nul
   }
 }
 
+// Unofficial caption scrape — every step degrades to null (→ needsManualText).
 async function fetchYoutubeTranscript(videoId: string): Promise<string | null> {
   try {
     const res = await fetch(`https://www.youtube.com/watch?v=${videoId}`, {
@@ -412,6 +606,7 @@ async function fetchYoutubeTranscript(videoId: string): Promise<string | null> {
     if (!track?.baseUrl) return null
     const baseUrl = track.baseUrl.replace(/\\u0026/g, '&')
 
+    // Prefer json3 (structured); fall back to the default XML format.
     const json3 = await fetchCaptionJson3(baseUrl)
     if (json3) return json3
     return await fetchCaptionXml(baseUrl)
@@ -423,6 +618,7 @@ async function fetchYoutubeTranscript(videoId: string): Promise<string | null> {
 function pickCaptionTrack(
   tracks: { baseUrl?: string; languageCode?: string; kind?: string }[]
 ): { baseUrl?: string } | null {
+  // Language preference nl → en → first; human captions beat auto-generated (asr).
   const byLang = (lang: string) => tracks.filter(t => (t.languageCode ?? '').startsWith(lang))
   for (const pool of [byLang('nl'), byLang('en'), tracks]) {
     if (pool.length === 0) continue
@@ -466,6 +662,9 @@ async function fetchCaptionXml(baseUrl: string): Promise<string | null> {
   }
 }
 
+// Extract the JSON array that follows a marker like `"captionTracks":` using a
+// bracket scanner that respects strings/escapes — regex alone breaks on nested
+// brackets inside caption names.
 function extractJsonArrayAfter(html: string, marker: string): string | null {
   const start = html.indexOf(marker)
   if (start === -1) return null
@@ -489,6 +688,8 @@ function extractJsonArrayAfter(html: string, marker: string): string | null {
   }
   return null
 }
+
+// ---- Website retrieval --------------------------------------------------------
 
 async function fetchWebsite(pageUrl: string): Promise<{
   title: string | null
@@ -522,6 +723,8 @@ async function fetchWebsite(pageUrl: string): Promise<{
   }
 }
 
+// <meta property="og:title" content="..."> / <meta name="author" content="...">
+// — attribute order varies per site, so match both orders.
 function metaContent(html: string, key: string): string | null {
   const k = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   const patterns = [

@@ -5,7 +5,7 @@ import { fetchLinks, createLink } from '../lib/links'
 import { openLinkModal } from '../lib/link-modal'
 import { fetchAllNoteThemes } from '../lib/themes'
 import { findSurprisingPair, pairKey, rankBySimilarity, type SurprisingPair } from '../lib/similarity'
-import { embedNote, analyzeSource, fetchSupadataUsage, type AnalyzeSourceResult, type SourceProposal } from '../lib/ai'
+import { embedNote, frameSource, generateSourceInsights, fetchSupadataUsage, type FrameSourceResult, type SourceFraming, type SourceInsightProposal, type SourceCount } from '../lib/ai'
 import { createAiAction } from '../lib/ai-action'
 import { AI_PHASES } from '../lib/ai-thinking'
 import { renderTopbar, attachTopbar, renderGuidanceBanner } from '../lib/nav'
@@ -58,6 +58,7 @@ export async function renderCapture(app: HTMLElement): Promise<void> {
           </div>
           <div id="analyze-action"></div>
           <p class="analyze-usage" id="analyze-usage" hidden></p>
+          <div class="analyze-proposal" id="analyze-questions" hidden></div>
           <div class="analyze-proposal" id="analyze-proposal" hidden></div>
         </div>
       </details>
@@ -585,9 +586,12 @@ function setupSourceAnalysis(): void {
   }
   void refreshUsage()
 
-  // Server-side metadata (oEmbed title/author) from a needsManualText round —
-  // kept so the eventual proposal still carries it after a manual paste.
-  let meta: AnalyzeSourceResult['meta'] | null = null
+  // Retrieved source state, held between the two stages. `content` is the text
+  // the frame stage fetched; the insights stage reuses it (no re-fetch/credit).
+  let meta: FrameSourceResult['meta'] | null = null
+  let content: string | null = null
+
+  const questionsEl = document.getElementById('analyze-questions') as HTMLDivElement
 
   const isHttpUrl = (raw: string): boolean => {
     try {
@@ -611,13 +615,14 @@ function setupSourceAnalysis(): void {
     pastedEl.focus()
   }
 
+  // Stage 1: retrieve + frame the source, then show the question panel.
   const action = createAiAction(actionHost, {
     label: 'Analyseer bron',
-    expectedOutputTokens: 1500,
+    expectedOutputTokens: 600,
     // The page size is unknown before the fetch — assume the server-side
     // content budget unless the user pasted the text themselves.
     estimateInputChars: () => pastedEl.value.trim().length || 18_000,
-    phases: AI_PHASES.analyzeSource,
+    phases: AI_PHASES.sourceFrame,
     beforeRun: () => {
       const url = urlEl.value.trim()
       const pasted = pastedEl.value.trim()
@@ -627,13 +632,14 @@ function setupSourceAnalysis(): void {
     },
     run: async (model, overrideCap) => {
       proposalEl.hidden = true
-      const res = await analyzeSource({
+      questionsEl.hidden = true
+      const res = await frameSource({
         url: urlEl.value.trim() || undefined,
         pastedText: pastedEl.value.trim() || undefined,
         model,
         overrideCap,
       })
-      // A YouTube analysis may have spent a Supadata credit — refresh the counter.
+      // A YouTube frame may have spent a Supadata credit — refresh the counter.
       void refreshUsage()
       if (res.needsManualText) {
         meta = res.meta ?? null
@@ -641,7 +647,9 @@ function setupSourceAnalysis(): void {
         return undefined
       }
       fallbackEl.hidden = true
-      if (res.proposal) renderProposal(res.proposal)
+      meta = res.meta ?? null
+      content = res.content ?? ''
+      renderQuestions(res.framing ?? { summary: '', angles: [] })
       return res.usage
     },
   })
@@ -650,31 +658,104 @@ function setupSourceAnalysis(): void {
   function resetAnalysis(): void {
     proposalEl.hidden = true
     proposalEl.innerHTML = ''
+    questionsEl.hidden = true
+    questionsEl.innerHTML = ''
     fallbackEl.hidden = true
     urlEl.value = ''
     pastedEl.value = ''
     meta = null
+    content = null
     action.refreshEstimate()
   }
 
-  function renderProposal(p: SourceProposal): void {
-    proposalEl.innerHTML = `
-      <p class="analyze-proposal-label">Voorstel — kies wat naar de Vangbak gaat</p>
+  const COUNT_OPTIONS: { value: SourceCount; label: string }[] = [
+    { value: 'auto',   label: 'Auto' },
+    { value: 'few',    label: 'Weinig (2-3)' },
+    { value: 'medium', label: 'Gemiddeld (4-6)' },
+    { value: 'many',   label: 'Veel (7-10)' },
+  ]
+
+  // Stage 2 panel: editable source header + count/focus questions + a second AI
+  // action that generates the insight list from the already-retrieved content.
+  function renderQuestions(framing: SourceFraming): void {
+    const title = meta?.title ?? ''
+    const author = meta?.author ?? ''
+    const type = (meta?.source_type && SOURCE_TYPE_ORDER.includes(meta.source_type as SourceType))
+      ? meta.source_type as SourceType : 'article'
+
+    questionsEl.innerHTML = `
+      <p class="analyze-proposal-label">Bron — verfijn en genereer</p>
       <div class="analyze-source-head">
-        <input type="text" id="ap-title" value="${escHtml(p.title)}" placeholder="Titel" />
+        <input type="text" id="ap-title" value="${escHtml(title)}" placeholder="Titel" />
         <div class="analyze-source-row">
-          <input type="text" id="ap-author" value="${escHtml(p.author ?? '')}" placeholder="Auteur" />
+          <input type="text" id="ap-author" value="${escHtml(author)}" placeholder="Auteur" />
           <select id="ap-type">
             ${SOURCE_TYPE_ORDER.map(t =>
-              `<option value="${t}"${t === p.source_type ? ' selected' : ''}>${SOURCE_TYPES[t].label}</option>`
+              `<option value="${t}"${t === type ? ' selected' : ''}>${SOURCE_TYPES[t].label}</option>`
             ).join('')}
           </select>
         </div>
-        <textarea id="ap-summary" rows="2" placeholder="Samenvatting">${escHtml(p.summary)}</textarea>
+        <textarea id="ap-summary" rows="2" placeholder="Samenvatting">${escHtml(framing.summary)}</textarea>
       </div>
-      ${p.insights.length === 0 ? '<p class="analyze-hint">Geen bruikbare inzichten gevonden in deze bron.</p>' : ''}
+      <div class="analyze-q">
+        <span class="analyze-q-label">Aantal inzichten</span>
+        <div class="analyze-chip-grid">
+          ${COUNT_OPTIONS.map((o, i) => `
+            <label class="analyze-chip${i === 0 ? ' selected' : ''}">
+              <input type="radio" name="analyze-count" value="${o.value}" ${i === 0 ? 'checked' : ''} />${escHtml(o.label)}
+            </label>`).join('')}
+        </div>
+      </div>
+      ${framing.angles.length > 0 ? `
+      <div class="analyze-q">
+        <span class="analyze-q-label">Focus — invalshoeken uit deze bron</span>
+        <div class="analyze-chip-grid">
+          ${framing.angles.map((a, i) => `
+            <label class="analyze-chip selected">
+              <input type="checkbox" class="angle-check" data-angle="${escHtml(a)}" value="${i}" checked />${escHtml(a)}
+            </label>`).join('')}
+        </div>
+      </div>` : '<p class="analyze-hint">Geen specifieke invalshoeken gevonden — de AI kiest zelf de sterkste.</p>'}
+      <div id="analyze-insight-action"></div>
+    `
+    questionsEl.hidden = false
+
+    // Chip visual state: single-select radios (count), multi-select checks (angles).
+    questionsEl.querySelectorAll<HTMLInputElement>('input[name="analyze-count"]').forEach(radio => {
+      radio.addEventListener('change', () => {
+        questionsEl.querySelectorAll<HTMLInputElement>('input[name="analyze-count"]').forEach(r =>
+          (r.closest('.analyze-chip') as HTMLElement | null)?.classList.toggle('selected', r.checked))
+      })
+    })
+    questionsEl.querySelectorAll<HTMLInputElement>('.angle-check').forEach(cb => {
+      cb.addEventListener('change', () =>
+        (cb.closest('.analyze-chip') as HTMLElement | null)?.classList.toggle('selected', cb.checked))
+    })
+
+    const insightHost = questionsEl.querySelector('#analyze-insight-action') as HTMLDivElement
+    createAiAction(insightHost, {
+      label: 'Genereer inzichten',
+      expectedOutputTokens: 2200,
+      estimateInputChars: () => (content?.length ?? 0) || 4000,
+      phases: AI_PHASES.analyzeSource,
+      run: async (model, overrideCap) => {
+        const count = ((questionsEl.querySelector('input[name="analyze-count"]:checked') as HTMLInputElement | null)?.value ?? 'auto') as SourceCount
+        const angles = Array.from(questionsEl.querySelectorAll<HTMLInputElement>('.angle-check:checked'))
+          .map(c => c.dataset['angle'] ?? '').filter(Boolean)
+        const res = await generateSourceInsights({ content: content ?? '', count, angles, model, overrideCap })
+        renderInsights(res.insights ?? [])
+        return res.usage
+      },
+    })
+  }
+
+  // Stage 2 result: the insight list + save-to-Vangbak footer.
+  function renderInsights(insights: SourceInsightProposal[]): void {
+    proposalEl.innerHTML = `
+      <p class="analyze-proposal-label">Voorstel — kies wat naar de Vangbak gaat</p>
+      ${insights.length === 0 ? '<p class="analyze-hint">Geen bruikbare inzichten gevonden. Pas de focus aan en genereer opnieuw.</p>' : ''}
       <ul class="analyze-insights">
-        ${p.insights.map((ins, i) => `
+        ${insights.map((ins, i) => `
           <li class="analyze-insight">
             <input type="checkbox" class="ap-check" data-idx="${i}" checked />
             <div class="analyze-insight-body">
@@ -716,10 +797,11 @@ function setupSourceAnalysis(): void {
       saveBtn.disabled = true
 
       try {
-        const title = (proposalEl.querySelector('#ap-title') as HTMLInputElement).value.trim() || 'Onbekende bron'
-        const author = (proposalEl.querySelector('#ap-author') as HTMLInputElement).value.trim()
-        const type = (proposalEl.querySelector('#ap-type') as HTMLSelectElement).value as SourceType
-        const summary = (proposalEl.querySelector('#ap-summary') as HTMLTextAreaElement).value.trim()
+        // Header lives in the questions panel (still in the DOM above).
+        const title = (questionsEl.querySelector('#ap-title') as HTMLInputElement).value.trim() || 'Onbekende bron'
+        const author = (questionsEl.querySelector('#ap-author') as HTMLInputElement).value.trim()
+        const type = (questionsEl.querySelector('#ap-type') as HTMLSelectElement).value as SourceType
+        const summary = (questionsEl.querySelector('#ap-summary') as HTMLTextAreaElement).value.trim()
         const analyzedUrl = urlEl.value.trim() || meta?.url || ''
 
         const src = await createSource({
@@ -733,11 +815,11 @@ function setupSourceAnalysis(): void {
         let saved = 0
         for (const idx of selected) {
           const contentEl = proposalEl.querySelector(`.ap-content[data-idx="${idx}"]`) as HTMLTextAreaElement | null
-          const content = contentEl?.value.trim()
-          if (!content) continue
-          const ins = p.insights[idx]
+          const c = contentEl?.value.trim()
+          if (!c) continue
+          const ins = insights[idx]
           const note = await insertNote({
-            content,
+            content: c,
             note_type: 'literature',
             core_idea: ins?.core_idea || undefined,
             tags: ins && ins.tags.length > 0 ? ins.tags : undefined,
@@ -968,6 +1050,43 @@ function injectCaptureStyles(): void {
       gap: var(--s-2);
     }
     .analyze-source-row input { flex: 1; min-width: 0; }
+    .analyze-q {
+      display: flex;
+      flex-direction: column;
+      gap: var(--s-1);
+    }
+    .analyze-q-label {
+      font-size: var(--fs-sm);
+      color: var(--text-muted);
+    }
+    .analyze-chip-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: var(--s-2);
+    }
+    .analyze-chip {
+      position: relative;
+      border: 1px solid var(--border);
+      border-radius: var(--r-sm);
+      background: var(--bg);
+      color: var(--text-muted);
+      padding: 4px var(--s-3);
+      font-size: var(--fs-sm);
+      cursor: pointer;
+      user-select: none;
+    }
+    .analyze-chip.selected {
+      border-color: var(--accent);
+      color: var(--accent);
+      background: var(--surface);
+      font-weight: 600;
+    }
+    .analyze-chip input {
+      position: absolute;
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
     .analyze-insights {
       list-style: none;
       display: flex;
