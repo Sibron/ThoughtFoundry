@@ -80,4 +80,9 @@ export const AI_PHASES = {
     'Inzichten destilleren…',
     'Voorstel opstellen…',
   ],
+  sourceFrame: [
+    'Bron ophalen…',
+    'Inhoud lezen…',
+    'Invalshoeken bepalen…',
+  ],
 }

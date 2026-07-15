@@ -282,6 +282,26 @@ export interface AnalyzeSourceResult {
   usage?: AIUsage
 }
 
+export type SourceCount = 'auto' | 'few' | 'medium' | 'many'
+
+export interface SourceFraming {
+  summary: string
+  /** Tailored angles/themes found in this source — become the focus toggles. */
+  angles: string[]
+}
+
+export interface FrameSourceResult {
+  needsManualText?: boolean
+  reason?: 'no_captions' | 'fetch_failed' | 'empty_content'
+  meta?: { title: string | null; author: string | null; url: string; source_type: string }
+  /** Retrieved source text, held client-side and sent back to the insights stage. */
+  content?: string
+  retrieval?: 'captions' | 'pasted' | 'html' | 'supadata'
+  framing?: SourceFraming
+  contentChars?: number
+  usage?: AIUsage
+}
+
 export interface SupadataUsage {
   limit: number | null
   used: number | null
@@ -310,6 +330,37 @@ export async function analyzeSource(input: {
   overrideCap?: boolean
 }): Promise<AnalyzeSourceResult> {
   return invoke('analyze-source', input as unknown as Record<string, unknown>)
+}
+
+/**
+ * Stage 1 of the two-step flow: retrieve the source (website/YouTube, or pasted
+ * text) and get back its content + a summary + tailored focus angles. The
+ * client holds `content` and passes it to generateSourceInsights. Returns
+ * `needsManualText` when retrieval fails (same paste-it-yourself fallback).
+ */
+export async function frameSource(input: {
+  url?: string
+  pastedText?: string
+  model?: 'claude-haiku-4-5' | 'claude-sonnet-4-6'
+  overrideCap?: boolean
+}): Promise<FrameSourceResult> {
+  return invoke('analyze-source', { ...input, stage: 'frame' } as unknown as Record<string, unknown>)
+}
+
+/**
+ * Stage 2: generate the insight list from already-retrieved content, steered by
+ * the chosen count and focus angles. `content` is sent as `pastedText` so no
+ * re-retrieval (and no extra Supadata credit) happens.
+ */
+export async function generateSourceInsights(input: {
+  content: string
+  count: SourceCount
+  angles: string[]
+  model?: 'claude-haiku-4-5' | 'claude-sonnet-4-6'
+  overrideCap?: boolean
+}): Promise<{ insights: SourceInsightProposal[]; usage?: AIUsage }> {
+  const { content, ...rest } = input
+  return invoke('analyze-source', { ...rest, stage: 'insights', pastedText: content } as unknown as Record<string, unknown>)
 }
 
 /**
