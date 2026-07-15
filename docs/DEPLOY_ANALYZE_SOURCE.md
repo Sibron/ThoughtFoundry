@@ -1,9 +1,21 @@
 # Deploy: bron analyseren (`analyze-source`)
 
-Eén nieuwe edge function. Geen migraties, geen nieuwe secrets — de functie
-gebruikt de bestaande `ANTHROPIC_API_KEY`. De frontend (Capture → "Bron
-analyseren (AI)") werkt pas nadat deze functie live staat; tot die tijd geeft
-de knop een nette foutmelding.
+Eén edge function. Geen migraties. Vereist de bestaande `ANTHROPIC_API_KEY`.
+De frontend (Capture → "Bron analyseren (AI)") werkt pas nadat deze functie
+live staat; tot die tijd geeft de knop een nette foutmelding.
+
+## Optioneel: automatische YouTube-transcripten (`SUPADATA_API_KEY`)
+
+YouTube blokkeert het ophalen van ondertitels vanaf datacenter-IP's (zoals die
+van Supabase), dus zónder deze secret vraagt de app je bij YouTube-video's om
+het transcript handmatig te plakken. Zet je een `SUPADATA_API_KEY`, dan haalt
+de functie het transcript automatisch op via [Supadata](https://supadata.ai)
+(gratis tier ~100 video's/maand; transcribeert via Whisper zelfs video's zónder
+ondertitels). Websites werken sowieso automatisch.
+
+Instellen: dashboard → project → **Edge Functions** → **Secrets** → nieuwe
+secret `SUPADATA_API_KEY` met je Supadata-key. De functie no-opt netjes zonder
+deze secret, dus je kunt 'm later toevoegen zonder de code te wijzigen.
 
 ## Optie A — CLI
 
@@ -189,7 +201,7 @@ Deno.serve(async (req: Request) => {
     source_type: kind === 'youtube' ? 'video' : 'article'
   }
   let content = ''
-  let retrieval: 'captions' | 'pasted' | 'html' = 'pasted'
+  let retrieval: 'captions' | 'pasted' | 'html' | 'supadata' = 'pasted'
 
   if (kind === 'youtube' && url) {
     const videoId = extractYoutubeId(url)
@@ -200,12 +212,17 @@ Deno.serve(async (req: Request) => {
       content = pastedText
       retrieval = 'pasted'
     } else {
-      const transcript = videoId ? await fetchYoutubeTranscript(videoId) : null
+      let transcript = videoId ? await fetchYoutubeTranscript(videoId) : null
+      let via: typeof retrieval = 'captions'
+      if (!transcript || transcript.length < 200) {
+        const supa = await fetchSupadataTranscript(url.toString())
+        if (supa && supa.length >= 200) { transcript = supa; via = 'supadata' }
+      }
       if (!transcript || transcript.length < 200) {
         return jsonResponse({ needsManualText: true, reason: 'no_captions', meta })
       }
       content = transcript
-      retrieval = 'captions'
+      retrieval = via
     }
   } else if (kind === 'website' && url) {
     const page = await fetchWebsite(url.toString())
@@ -346,6 +363,32 @@ async function fetchYoutubeOembed(watchUrl: string): Promise<{ title: string; au
     if (typeof data.title !== 'string') return null
     return { title: data.title, author: typeof data.author_name === 'string' ? data.author_name : null }
   } catch {
+    return null
+  }
+}
+
+async function fetchSupadataTranscript(youtubeUrl: string): Promise<string | null> {
+  const key = Deno.env.get('SUPADATA_API_KEY')
+  if (!key) return null
+  try {
+    const res = await fetch(
+      `https://api.supadata.ai/v1/transcript?url=${encodeURIComponent(youtubeUrl)}&text=true`,
+      { headers: { 'x-api-key': key }, signal: AbortSignal.timeout(60_000) }
+    )
+    if (!res.ok) {
+      console.error('[supadata] error', JSON.stringify({ status: res.status, body: (await res.text()).slice(0, 300) }))
+      return null
+    }
+    const data = await res.json()
+    let text = ''
+    if (typeof data.content === 'string') text = data.content
+    else if (Array.isArray(data.content)) {
+      text = data.content.map((c: { text?: string }) => c.text ?? '').join(' ')
+    }
+    text = text.replace(/\s+/g, ' ').trim()
+    return text.length > 0 ? text : null
+  } catch (err) {
+    console.error('[supadata] fetch failed', err instanceof Error ? err.message : String(err))
     return null
   }
 }
