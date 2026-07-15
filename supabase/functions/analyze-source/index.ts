@@ -20,6 +20,12 @@ interface AnalyzeRequest {
   pastedText?: string
   persona?: string
   model?: 'claude-haiku-4-5' | 'claude-sonnet-4-6'
+  // Two-stage flow. Omitted → legacy one-shot (retrieval + insights, back-compat
+  // for older clients). 'frame' → retrieval + summary + tailored angles. 'insights'
+  // → generate insights from provided pastedText, steered by count + angles.
+  stage?: 'frame' | 'insights'
+  count?: 'auto' | 'few' | 'medium' | 'many'
+  angles?: string[]
 }
 
 interface Proposal {
@@ -76,6 +82,49 @@ Regels voor de insights:
 - Elk inzicht is een ZELFSTANDIGE gedachte-notitie: een idee, claim of vraag die op zichzelf leesbaar is zonder de bron erbij. Geen citaten, geen samenvattingspuntjes, geen "de video zegt dat...".
 - Formuleer in de stijl van een eigen notitie: direct, inhoudelijk, prikkelend.
 - "core_idea" is één zin die de kern vangt.`
+
+// Stage 'frame': inkaderen vóór de gebruiker kiest welke inzichten eruit komen.
+const FRAMING_SYSTEM_PROMPT = `Je bent een kennis-assistent voor een persoonlijk denksysteem (ThoughtFoundry).
+De gebruiker capteert atomische ideeën over o.a. autisme/neurodiversiteit, relaties, coaching, management en persoonlijke ontwikkeling.
+
+Jouw taak: een externe bron (artikel of videotranscript) kort inkaderen, vóórdat de gebruiker kiest welke inzichten eruit gedestilleerd worden.
+
+Schrijf alle teksten in het Nederlands.
+
+Antwoord ALLEEN met geldige JSON, in dit exacte formaat:
+{
+  "summary": "2-4 zinnen: waar gaat deze bron over",
+  "angles": ["3 tot 6 concrete invalshoeken/thema's die ECHT in deze bron zitten, elk 2-5 woorden"]
+}
+
+Regels:
+- "angles" zijn de mogelijke richtingen waarin de gebruiker inzichten kan laten destilleren — concreet en specifiek voor DEZE bron, geen algemene categorieën.
+- Verzin geen invalshoeken die niet in de bron voorkomen.`
+
+// Stage 'insights': destilleren, met aantal + invalshoeken uit de user-prompt.
+const INSIGHTS_SYSTEM_PROMPT = `Je bent een kennis-assistent voor een persoonlijk denksysteem (ThoughtFoundry).
+De gebruiker capteert atomische ideeën over o.a. autisme/neurodiversiteit, relaties, coaching, management en persoonlijke ontwikkeling.
+
+Jouw taak: uit de inhoud van één externe bron (artikel of videotranscript) de potentiële inzichten destilleren als losse gedachte-notities.
+
+Schrijf alle teksten in het Nederlands.
+
+Antwoord ALLEEN met geldige JSON, in dit exacte formaat:
+{
+  "insights": [
+    {
+      "content": "een zelfstandige, atomaire gedachte-notitie van 1-4 zinnen",
+      "core_idea": "de kern in één zin",
+      "tags": ["max 5 tags, lowercase, single-word of-met-streepje"]
+    }
+  ]
+}
+
+Regels voor de insights:
+- Elk inzicht is een ZELFSTANDIGE gedachte-notitie: een idee, claim of vraag die op zichzelf leesbaar is zonder de bron erbij. Geen citaten, geen samenvattingspuntjes, geen "de video zegt dat...".
+- Formuleer in de stijl van een eigen notitie: direct, inhoudelijk, prikkelend.
+- "core_idea" is één zin die de kern vangt.
+- Liever minder sterke inzichten dan zwakke opvulling.`
 
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
@@ -168,8 +217,18 @@ Deno.serve(async (req: Request) => {
   content = content.slice(0, CONTENT_CHAR_BUDGET)
 
   // ---- AI analysis ----------------------------------------------------------
-  const userPrompt = buildUserPrompt(meta, content, retrieval)
-  const system = [body.persona?.trim(), SYSTEM_PROMPT].filter(Boolean).join('\n\n')
+  const stage = body.stage // undefined = legacy one-shot, else 'frame' | 'insights'
+
+  const system = [
+    body.persona?.trim(),
+    stage === 'frame' ? FRAMING_SYSTEM_PROMPT
+      : stage === 'insights' ? INSIGHTS_SYSTEM_PROMPT
+      : SYSTEM_PROMPT
+  ].filter(Boolean).join('\n\n')
+
+  const userPrompt = stage === 'frame' ? buildFramingPrompt(meta, content, retrieval)
+    : stage === 'insights' ? buildInsightsPrompt(meta, content, retrieval, body.count, body.angles)
+    : buildUserPrompt(meta, content, retrieval)
 
   let result
   try {
@@ -178,58 +237,98 @@ Deno.serve(async (req: Request) => {
       model,
       system,
       messages: [{ role: 'user', content: userPrompt }],
-      maxTokens: 2000,
-      operation: 'analyze-source'
+      maxTokens: stage === 'frame' ? 700 : 2500,
+      operation: stage === 'frame' ? 'analyze-source-frame'
+        : stage === 'insights' ? 'analyze-source-insights'
+        : 'analyze-source'
     })
   } catch (err) {
     return jsonResponse({ error: err instanceof Error ? err.message : 'AI call failed' }, 502)
   }
 
+  const cost = estimateCost(model, result.inputTokens, result.outputTokens)
+  const usage = { inputTokens: result.inputTokens, outputTokens: result.outputTokens, costUsd: cost }
+  await logUsage(supabase, {
+    userId,
+    model,
+    operation: stage === 'frame' ? 'analyze-source-frame'
+      : stage === 'insights' ? 'analyze-source-insights'
+      : 'analyze-source',
+    inputTokens: result.inputTokens,
+    outputTokens: result.outputTokens,
+    costUsd: cost
+  })
+
+  // ---- Stage 'frame': summary + tailored angles ----------------------------
+  if (stage === 'frame') {
+    let framing: { summary: string; angles: string[] }
+    try {
+      const parsed = parseJsonFromResponse<{ summary?: unknown; angles?: unknown }>(result.text)
+      framing = {
+        summary: typeof parsed.summary === 'string' ? parsed.summary.trim() : '',
+        angles: (Array.isArray(parsed.angles) ? parsed.angles : [])
+          .filter((a): a is string => typeof a === 'string' && a.trim().length > 0)
+          .map(a => a.trim())
+          .slice(0, 6)
+      }
+    } catch {
+      return jsonResponse({ error: 'AI returned invalid JSON', raw: result.text }, 502)
+    }
+    return jsonResponse({
+      meta: { title: meta.title, author: meta.author, url: meta.url, source_type: meta.source_type },
+      content,
+      retrieval,
+      framing,
+      contentChars: content.length,
+      usage
+    })
+  }
+
+  // ---- Stage 'insights': variable-count list, steered by angles -------------
+  if (stage === 'insights') {
+    let insights: { content: string; core_idea?: string; tags: string[] }[]
+    try {
+      const parsed = parseJsonFromResponse<{ insights?: unknown }>(result.text)
+      insights = sanitizeInsights(parsed.insights)
+    } catch {
+      return jsonResponse({ error: 'AI returned invalid JSON', raw: result.text }, 502)
+    }
+    return jsonResponse({ insights, retrieval, contentChars: content.length, usage })
+  }
+
+  // ---- Legacy one-shot (no stage): full proposal ---------------------------
   let proposal: Proposal
   try {
     proposal = parseJsonFromResponse<Proposal>(result.text)
   } catch {
     return jsonResponse({ error: 'AI returned invalid JSON', raw: result.text }, 502)
   }
-
-  // Sanitize the model output; oEmbed/HTML metadata is ground truth over it.
   proposal.title = (meta.title ?? proposal.title ?? '').toString().slice(0, 200) || 'Onbekende bron'
   proposal.author = meta.author ?? (proposal.author ? String(proposal.author) : null)
   if (!VALID_SOURCE_TYPES.has(proposal.source_type ?? '')) proposal.source_type = meta.source_type
   proposal.summary = (proposal.summary ?? '').toString()
-  proposal.insights = (proposal.insights ?? [])
-    .filter(i => i && typeof i.content === 'string' && i.content.trim().length > 0)
-    .slice(0, 8)
+  proposal.insights = sanitizeInsights(proposal.insights).slice(0, 8)
+
+  return jsonResponse({ proposal, retrieval, contentChars: content.length, usage })
+})
+
+// Normalize a raw model `insights` array: drop empties, trim, lowercase tags
+// (max 5), cap the list at 15 so "Veel"/"Auto" aren't clipped.
+function sanitizeInsights(raw: unknown): { content: string; core_idea?: string; tags: string[] }[] {
+  return (Array.isArray(raw) ? raw : [])
+    .filter((i): i is { content: string; core_idea?: unknown; tags?: unknown } =>
+      !!i && typeof i === 'object' && typeof (i as { content?: unknown }).content === 'string' &&
+      (i as { content: string }).content.trim().length > 0)
+    .slice(0, 15)
     .map(i => ({
-      content: i.content.trim(),
+      content: (i.content as string).trim(),
       core_idea: typeof i.core_idea === 'string' ? i.core_idea.trim() : undefined,
       tags: (Array.isArray(i.tags) ? i.tags : [])
         .filter((t): t is string => typeof t === 'string' && t.trim().length > 0)
         .map(t => t.trim().toLowerCase())
         .slice(0, 5)
     }))
-
-  const cost = estimateCost(model, result.inputTokens, result.outputTokens)
-  await logUsage(supabase, {
-    userId,
-    model,
-    operation: 'analyze-source',
-    inputTokens: result.inputTokens,
-    outputTokens: result.outputTokens,
-    costUsd: cost
-  })
-
-  return jsonResponse({
-    proposal,
-    retrieval,
-    contentChars: content.length,
-    usage: {
-      inputTokens: result.inputTokens,
-      outputTokens: result.outputTokens,
-      costUsd: cost
-    }
-  })
-})
+}
 
 function buildUserPrompt(meta: SourceMeta, content: string, retrieval: string): string {
   const kindLabel = retrieval === 'captions' ? 'videotranscript (automatische ondertitels — kan spreektaal en fouten bevatten)'
@@ -251,6 +350,52 @@ Inhoud (${kindLabel}):
 ${content}
 
 Analyseer deze bron en geef je voorstel als JSON.`
+}
+
+function sourceBlock(meta: SourceMeta, content: string, retrieval: string): string {
+  const kindLabel = retrieval === 'captions' || retrieval === 'supadata'
+    ? 'videotranscript (automatische ondertitels — kan spreektaal en fouten bevatten)'
+    : retrieval === 'html' ? 'tekst van een webpagina (kan restjes navigatie bevatten)'
+    : 'door de gebruiker geplakte tekst'
+  const metaLines = [
+    meta.url ? `URL: ${meta.url}` : null,
+    meta.title ? `Titel: ${meta.title}` : null,
+    meta.author ? `Auteur/maker: ${meta.author}` : null
+  ].filter(Boolean).join('\n')
+  return `## Bron\n\n${metaLines || '(geen metadata bekend)'}\n\nInhoud (${kindLabel}):\n\n${content}`
+}
+
+function buildFramingPrompt(meta: SourceMeta, content: string, retrieval: string): string {
+  return `${sourceBlock(meta, content, retrieval)}
+
+Vat de bron samen en geef de mogelijke invalshoeken als JSON.`
+}
+
+function buildInsightsPrompt(
+  meta: SourceMeta,
+  content: string,
+  retrieval: string,
+  count: AnalyzeRequest['count'],
+  angles: string[] | undefined
+): string {
+  const countInstr = count === 'few' ? 'Geef 2 tot 3 inzichten: alleen de allersterkste.'
+    : count === 'medium' ? 'Geef 4 tot 6 inzichten.'
+    : count === 'many' ? 'Geef 7 tot 10 inzichten.'
+    : 'Geef zoveel inzichten als de bron rechtvaardigt: soms 2, soms 12 of meer. Forceer geen vast aantal — laat de rijkdom van de bron het aantal bepalen.'
+
+  const clean = (Array.isArray(angles) ? angles : [])
+    .filter(a => typeof a === 'string' && a.trim().length > 0)
+    .map(a => a.trim())
+  const angleInstr = clean.length > 0
+    ? `Richt de inzichten specifiek op deze invalshoeken: ${clean.join('; ')}. Negeer wat daarbuiten valt.`
+    : 'Kies zelf de sterkste invalshoeken uit de bron.'
+
+  return `${sourceBlock(meta, content, retrieval)}
+
+${countInstr}
+${angleInstr}
+
+Geef je inzichten als JSON.`
 }
 
 // ---- URL handling -----------------------------------------------------------
