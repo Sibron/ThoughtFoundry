@@ -5,7 +5,7 @@ import { fetchLinks, createLink } from '../lib/links'
 import { openLinkModal } from '../lib/link-modal'
 import { fetchAllNoteThemes } from '../lib/themes'
 import { findSurprisingPair, pairKey, rankBySimilarity, type SurprisingPair } from '../lib/similarity'
-import { embedNote, analyzeSource, type AnalyzeSourceResult, type SourceProposal } from '../lib/ai'
+import { embedNote, analyzeSource, fetchSupadataUsage, type AnalyzeSourceResult, type SourceProposal } from '../lib/ai'
 import { createAiAction } from '../lib/ai-action'
 import { AI_PHASES } from '../lib/ai-thinking'
 import { renderTopbar, attachTopbar, renderGuidanceBanner } from '../lib/nav'
@@ -57,6 +57,7 @@ export async function renderCapture(app: HTMLElement): Promise<void> {
             <textarea id="analyze-pasted" rows="5" placeholder="Plak hier het transcript of de tekst…"></textarea>
           </div>
           <div id="analyze-action"></div>
+          <p class="analyze-usage" id="analyze-usage" hidden></p>
           <div class="analyze-proposal" id="analyze-proposal" hidden></div>
         </div>
       </details>
@@ -564,6 +565,25 @@ function setupSourceAnalysis(): void {
   const pastedEl = document.getElementById('analyze-pasted') as HTMLTextAreaElement
   const proposalEl = document.getElementById('analyze-proposal') as HTMLDivElement
   const actionHost = document.getElementById('analyze-action') as HTMLDivElement
+  const usageEl = document.getElementById('analyze-usage') as HTMLParagraphElement
+
+  // Supadata credit counter (YouTube-transcript quota). Hidden when no key is
+  // configured or the lookup fails, so nothing shows if the feature is off.
+  const refreshUsage = async (): Promise<void> => {
+    try {
+      const { usage } = await fetchSupadataUsage()
+      if (usage && usage.used != null && usage.limit != null) {
+        usageEl.textContent = `Supadata: ${usage.used} / ${usage.limit} credits deze maand`
+        usageEl.hidden = false
+      } else if (usage && usage.remaining != null) {
+        usageEl.textContent = `Supadata: nog ${usage.remaining} credits deze maand`
+        usageEl.hidden = false
+      } else {
+        usageEl.hidden = true
+      }
+    } catch { usageEl.hidden = true }
+  }
+  void refreshUsage()
 
   // Server-side metadata (oEmbed title/author) from a needsManualText round —
   // kept so the eventual proposal still carries it after a manual paste.
@@ -613,6 +633,8 @@ function setupSourceAnalysis(): void {
         model,
         overrideCap,
       })
+      // A YouTube analysis may have spent a Supadata credit — refresh the counter.
+      void refreshUsage()
       if (res.needsManualText) {
         meta = res.meta ?? null
         showFallback(res.reason)
@@ -912,6 +934,12 @@ function injectCaptureStyles(): void {
       color: var(--text-muted);
       margin: 0;
     }
+    .analyze-usage {
+      font-size: var(--fs-sm);
+      color: var(--text-muted);
+      margin: 0;
+    }
+    .analyze-usage:empty { display: none; }
     .analyze-proposal {
       display: flex;
       flex-direction: column;
