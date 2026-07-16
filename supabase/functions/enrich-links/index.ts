@@ -123,20 +123,25 @@ Deno.serve(async (req: Request) => {
   }
 
   // Validate: only pairs we actually sent, clamp type to the enum, coerce keep.
-  const sentKeys = new Set(validPairs.map(p => pairKey(p.aId, p.bId)))
+  // Canonicalize ids back to the orientation the caller sent — the model may
+  // echo a pair swapped, and the client matches on the exact ordered pair.
+  const sentByKey = new Map(validPairs.map(p => [pairKey(p.aId, p.bId), p]))
   const seen = new Set<string>()
   const links: EnrichedLink[] = (parsed.links ?? [])
     .filter(l => l && typeof l.a_id === 'string' && typeof l.b_id === 'string')
-    .map(l => ({
-      a_id: l.a_id,
-      b_id: l.b_id,
-      keep: l.keep !== false,
-      type: VALID_TYPES.has(l.type) ? l.type : 'related',
-      reason: typeof l.reason === 'string' ? l.reason.slice(0, 200) : ''
-    }))
+    .map(l => {
+      const sent = sentByKey.get(pairKey(l.a_id, l.b_id))
+      return {
+        a_id: sent?.aId ?? l.a_id,
+        b_id: sent?.bId ?? l.b_id,
+        keep: l.keep !== false,
+        type: VALID_TYPES.has(l.type) ? l.type : 'related',
+        reason: typeof l.reason === 'string' ? l.reason.slice(0, 200) : ''
+      }
+    })
     .filter(l => {
       const k = pairKey(l.a_id, l.b_id)
-      if (!sentKeys.has(k) || seen.has(k)) return false
+      if (!sentByKey.has(k) || seen.has(k)) return false
       seen.add(k)
       return true
     })

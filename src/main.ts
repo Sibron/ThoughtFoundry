@@ -89,10 +89,10 @@ if (!isConfigured) {
     '/themes':      redirect('/library?tab=themes'),
     '/sources':     redirect('/library?tab=sources'),
     '/book':        redirect('/library?tab=book'),
-    '/projects':    redirect('/library?tab=book'),
-    '/spark':       redirect('/denktools'),
-    '/denkpartner': redirect('/denktools'),
-    '/clusters':    redirect('/denktools')
+    '/projects':    redirect('/library?tab=book&booktab=projects'),
+    '/spark':       redirect('/denktools?tab=spark'),
+    '/denkpartner': redirect('/denktools?tab=denkpartner'),
+    '/clusters':    redirect('/denktools?tab=clusters')
   })
 }
 

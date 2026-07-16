@@ -317,6 +317,7 @@ export async function renderStudio(app: HTMLElement): Promise<void> {
     document.getElementById('sec-move-up')?.addEventListener('click', () => moveSection(-1))
     document.getElementById('sec-move-down')?.addEventListener('click', () => moveSection(1))
     document.getElementById('sec-delete')?.addEventListener('click', async () => {
+      // Native confirm() is deliberate: destructive, and revisions are the safety net.
       if (!confirm(`Sectie «${s.heading}» verwijderen?${s.content_md?.trim() ? ' De geschreven tekst gaat verloren.' : ''}`)) return
       try {
         await deleteSection(s.id)

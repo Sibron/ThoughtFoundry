@@ -15,7 +15,7 @@ import { mountSearch } from './search'
 import { mountGraph } from './graph'
 import { mountConnections } from './connections'
 import { injectShellStyles } from './denktools'
-import { esc as escHtml, errMsg, showToast } from '../lib/crud-list'
+import { esc as escHtml, errMsg, showToast, showUndoToast, formatRelative } from '../lib/crud-list'
 
 export async function renderInbox(app: HTMLElement): Promise<void> {
   app.innerHTML = `
@@ -333,19 +333,17 @@ export async function mountInboxList(root: HTMLElement): Promise<void> {
         renderList()
         updateBulkBar()
 
-        let undone = false
-        showToastWithUndo(`${ids.length} nota${ids.length === 1 ? '' : "'s"} verwijderd`, () => {
-          undone = true
-          allNotes = [...removed, ...allNotes].sort(
-            (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-          )
-          renderList()
-          updateBulkBar()
-        })
-        setTimeout(async () => {
-          if (undone) return
-          try { await bulkDelete(ids) } catch { showToast('Verwijderen mislukt.') }
-        }, 5000)
+        showUndoToast(`${ids.length} nota${ids.length === 1 ? '' : "'s"} verwijderd`,
+          async () => {
+            try { await bulkDelete(ids) } catch { showToast('Verwijderen mislukt.') }
+          },
+          () => {
+            allNotes = [...removed, ...allNotes].sort(
+              (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+            )
+            renderList()
+            updateBulkBar()
+          })
       } else {
         const newStatus: NoteStatus = action === 'archive' ? 'archief' : 'inbox'
         await bulkUpdateStatus(ids, newStatus)
@@ -375,9 +373,15 @@ export async function mountInboxList(root: HTMLElement): Promise<void> {
         selectAllEl.checked = allNotes.every(n => selected.has(n.id))
       })
 
-      row.querySelector('.row-header')?.addEventListener('click', () => {
+      const header = row.querySelector<HTMLElement>('.row-header')
+      header?.addEventListener('click', () => {
         const expanded = row.classList.toggle('expanded')
         row.querySelector('.row-detail')!.setAttribute('aria-hidden', String(!expanded))
+        header.setAttribute('aria-expanded', String(expanded))
+      })
+      // role="button" promises Enter/Space activation
+      header?.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); header.click() }
       })
 
       row.querySelector('.row-edit-btn')?.addEventListener('click', (e) => {
@@ -395,16 +399,14 @@ export async function mountInboxList(root: HTMLElement): Promise<void> {
         renderList()
         updateBulkBar()
 
-        let undone = false
-        showToastWithUndo('Nota verwijderd', () => {
-          undone = true
-          allNotes.splice(noteIdx, 0, note)
-          renderList()
-        })
-        setTimeout(async () => {
-          if (undone) return
-          try { await deleteNote(id) } catch { showToast('Verwijderen mislukt.') }
-        }, 5000)
+        showUndoToast('Nota verwijderd',
+          async () => {
+            try { await deleteNote(id) } catch { showToast('Verwijderen mislukt.') }
+          },
+          () => {
+            allNotes.splice(noteIdx, 0, note)
+            renderList()
+          })
       })
     })
   }
@@ -413,7 +415,7 @@ export async function mountInboxList(root: HTMLElement): Promise<void> {
 
 function renderNoteRow(note: Note, isSelected: boolean): string {
   const preview = note.ai_title ?? note.content.slice(0, 200)
-  const date = relativeDate(note.created_at)
+  const date = formatRelative(note.created_at)
   const badgeClass = `badge badge-${note.status}`
   const typeMeta = NOTE_TYPES[note.note_type ?? 'fleeting']
   const typeBadge = `<span class="note-type-badge" style="background:${typeMeta?.color ?? '#888'}">${escHtml(typeMeta?.label ?? note.note_type ?? '')}</span>`
@@ -445,33 +447,6 @@ function renderNoteRow(note: Note, isSelected: boolean): string {
       </div>
     </div>
   `
-}
-
-function relativeDate(iso: string): string {
-  const now = new Date()
-  const d = new Date(iso)
-  const diffMs = now.getTime() - d.getTime()
-  const diffDays = Math.floor(diffMs / 86400000)
-  if (diffDays === 0) return 'vandaag'
-  if (diffDays === 1) return 'gisteren'
-  if (diffDays < 7) return `${diffDays} dagen geleden`
-  if (diffDays < 30) return `${Math.floor(diffDays / 7)} weken geleden`
-  return d.toLocaleDateString('nl-NL', { day: 'numeric', month: 'short', year: 'numeric' })
-}
-
-
-
-
-function showToastWithUndo(msg: string, onUndo: () => void): void {
-  const toast = document.getElementById('toast') as HTMLDivElement | null
-  if (!toast) return
-  toast.innerHTML = `${escHtml(msg)} <button class="toast-undo">Ongedaan maken</button>`
-  toast.classList.add('show')
-  toast.querySelector<HTMLButtonElement>('.toast-undo')?.addEventListener('click', () => {
-    onUndo()
-    toast.classList.remove('show')
-  })
-  setTimeout(() => toast.classList.remove('show'), 5000)
 }
 
 function injectInboxStyles(): void {

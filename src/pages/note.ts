@@ -36,7 +36,7 @@ import { rankBySimilarity } from '../lib/similarity'
 import { fetchNeighbors } from '../lib/semantic'
 import { processNote, AiBudgetError } from '../lib/ai'
 import { renderTopbar, attachTopbar, isAiEnabled } from '../lib/nav'
-import { navigateTo, navigateBack } from '../router'
+import { navigateTo, navigateBack, setLeaveGuard, onRouteLeave } from '../router'
 import { esc as escHtml, errMsg, formatDate, showToast, showUndoToast } from '../lib/crud-list'
 
 const STATUS_LABELS: Record<NoteStatus, string> = {
@@ -101,7 +101,29 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
 
   let tagsState: string[] = [...(current.tags ?? [])]
 
+  // All edits live only in the DOM until Opslaan — guard every way out
+  // (bottom nav, back, related-note cards, reload) against silent loss.
+  let cleanSnapshot = ''
+
+  function formSnapshot(): string {
+    return JSON.stringify([collectUpdate(), checkedThemeIds().sort(), checkedProjectIds().sort()])
+  }
+
+  function isDirty(): boolean {
+    // The delete flow replaces the form (guard must not fire on its navigation).
+    if (!document.getElementById('f-content')) return false
+    return formSnapshot() !== cleanSnapshot
+  }
+
   renderForm()
+
+  setLeaveGuard(() => !isDirty() ||
+    confirm('Je hebt niet-opgeslagen wijzigingen. Weet je zeker dat je deze pagina wilt verlaten?'))
+  const onBeforeUnload = (e: BeforeUnloadEvent) => {
+    if (isDirty()) { e.preventDefault(); e.returnValue = '' }
+  }
+  window.addEventListener('beforeunload', onBeforeUnload)
+  onRouteLeave(() => window.removeEventListener('beforeunload', onBeforeUnload))
 
   function renderForm(): void {
     const body = document.querySelector('.note-body') as HTMLElement
@@ -253,6 +275,7 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
     wireActions()
     void loadRelatedNotes()
     void loadSuggestedLinks()
+    cleanSnapshot = formSnapshot()
   }
 
   // ── Suggested links ───────────────────────────────────────────────────────--
@@ -277,7 +300,12 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
 
     if (ranked.length === 0) {
       let pool: Note[] = []
-      try { pool = await fetchNotes(0, 300) } catch { return }
+      try { pool = await fetchNotes(0, 300) }
+      catch {
+        // Auxiliary panel — no retry button, but don't disguise failure as "geen suggesties".
+        box.innerHTML = '<span class="muted">Suggesties konden niet laden.</span>'
+        return
+      }
       const candidates = pool.filter(n => n.id !== id && !linkedSet.has(n.id))
       ranked = rankBySimilarity(current, candidates, 5)
         .map(({ note }) => ({ id: note.id, label: getNoteTitle(note, 60) }))
@@ -550,11 +578,19 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
     }
   }
 
+  function checkedThemeIds(): string[] {
+    return Array.from(document.querySelectorAll<HTMLInputElement>('.theme-check:checked')).map(c => c.value)
+  }
+
+  function checkedProjectIds(): string[] {
+    return Array.from(document.querySelectorAll<HTMLInputElement>('.project-check:checked')).map(c => c.value)
+  }
+
   async function save(extra?: Partial<NoteUpdate>): Promise<boolean> {
     const updates = { ...collectUpdate(), ...extra }
     if (!updates.content) { showToast('Uitwerking mag niet leeg zijn.'); return false }
-    const themeIds = Array.from(document.querySelectorAll<HTMLInputElement>('.theme-check:checked')).map(c => c.value)
-    const projectIds = Array.from(document.querySelectorAll<HTMLInputElement>('.project-check:checked')).map(c => c.value)
+    const themeIds = checkedThemeIds()
+    const projectIds = checkedProjectIds()
     try {
       const saved = await updateNote(id, updates)
       Object.assign(current, saved)
@@ -563,6 +599,7 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
       noteThemeIds = themeIds
       await setNoteProjects(id, projectIds)
       noteProjectIds = projectIds
+      cleanSnapshot = formSnapshot()
       return true
     } catch (err) {
       showToast(`Opslaan mislukt: ${errMsg(err)}`)

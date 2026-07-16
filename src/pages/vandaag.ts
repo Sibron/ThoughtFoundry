@@ -8,7 +8,7 @@
 // immediately; goal cards and week stats fill in when their queries land, and
 // render nothing (rather than an error wall) when offline.
 
-import { insertNote, queueOfflineNote, countByStatus, fetchConnectedNoteIds, fetchNotes } from '../lib/notes'
+import { insertNote, queueOfflineNote, countByStatus, fetchConnectedNoteIds, fetchAllNotes } from '../lib/notes'
 import { fetchProjects, fetchProjectNoteIds, BOOK_STATUSES, type BookProject } from '../lib/projects'
 import { fetchChaptersByProject, fetchSectionStats, type ChapterSectionStats } from '../lib/chapters'
 import { fetchWeekStats, countCreatedThisWeek } from '../lib/weekstats'
@@ -132,6 +132,10 @@ async function renderGoals(): Promise<void> {
     host.innerHTML = cards.join('')
     host.querySelectorAll<HTMLElement>('[data-goal-nav]').forEach(el => {
       el.addEventListener('click', () => navigateTo(el.dataset['goalNav']!))
+      // role="button" promises Enter/Space activation
+      el.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); el.click() }
+      })
     })
   } catch {
     host.innerHTML = '<p class="muted">Doelen konden niet laden.</p>'
@@ -157,17 +161,33 @@ function goalCard(
     words ? `${words} woorden` : null,
   ].filter(Boolean).join(' · ')
 
-  // One suggested next action per goal, cheapest signal first.
+  // One suggested next action per goal, cheapest signal first — and the card
+  // navigates to where that action actually happens.
+  const projectsTab = '/library?tab=book&booktab=projects'
   let action: string
-  if (noteCount === 0) action = 'Koppel je eerste noten aan dit project'
-  else if (chapterCount === 0 && isAiEnabled()) action = 'Genereer je eerste hoofdstuk uit projectnoten'
-  else if (chapterCount > 0 && words === 0) action = 'Open de schrijfstudio en schrijf je eerste sectie'
-  else if (inboxCount > 0 && isAiEnabled()) action = `Verwerk je vangbak (${inboxCount}) — voedt je projecten`
-  else if (isAiEnabled()) action = 'Schrijf verder, of vraag een gap-analyse'
-  else action = 'Blijf noten koppelen en verbinden'
+  let nav: string
+  if (noteCount === 0) {
+    action = 'Koppel je eerste noten aan dit project'
+    nav = projectsTab
+  } else if (chapterCount === 0 && isAiEnabled()) {
+    action = 'Genereer je eerste hoofdstuk uit projectnoten'
+    nav = `/library?tab=book&project=${p.id}`
+  } else if (chapterCount > 0 && words === 0) {
+    action = 'Open de schrijfstudio en schrijf je eerste sectie'
+    nav = '/library?tab=book&booktab=chapters'
+  } else if (inboxCount > 0 && isAiEnabled()) {
+    action = `Verwerk je vangbak (${inboxCount}) — voedt je projecten`
+    nav = '/process'
+  } else if (isAiEnabled()) {
+    action = 'Schrijf verder, of vraag een gap-analyse'
+    nav = projectsTab
+  } else {
+    action = 'Blijf noten koppelen en verbinden'
+    nav = projectsTab
+  }
 
   return `
-    <div class="vd-goal-card" data-goal-nav="/library?tab=book&booktab=projects" role="button" tabindex="0"
+    <div class="vd-goal-card" data-goal-nav="${nav}" role="button" tabindex="0"
          style="border-left: 3px solid ${status.color}">
       <div class="vd-goal-top">
         <span class="vd-goal-status" style="color:${status.color}">${esc(status.label)}</span>
@@ -221,7 +241,7 @@ async function renderWeek(): Promise<void> {
 
 async function countOrphans(): Promise<number> {
   const connected = await fetchConnectedNoteIds()
-  const pool = await fetchNotes(0, 300)
+  const pool = await fetchAllNotes()
   return pool.filter(n => n.status !== 'archief' && !connected.has(n.id)).length
 }
 

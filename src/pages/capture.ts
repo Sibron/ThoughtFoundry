@@ -9,8 +9,8 @@ import { embedNote, frameSource, generateSourceInsights, fetchSupadataUsage, typ
 import { createAiAction } from '../lib/ai-action'
 import { AI_PHASES } from '../lib/ai-thinking'
 import { renderTopbar, attachTopbar, renderGuidanceBanner } from '../lib/nav'
-import { navigateTo } from '../router'
-import { esc as escHtml, showToast } from '../lib/crud-list'
+import { navigateTo, onRouteLeave } from '../router'
+import { esc as escHtml, showToast, formatRelative } from '../lib/crud-list'
 
 const DRAFT_KEY = 'capture_draft'
 
@@ -28,11 +28,8 @@ export async function renderCapture(app: HTMLElement): Promise<void> {
   // Best-effort flush on render — the helper itself returns silently if offline.
   flushOfflineQueue().catch(() => { /* silent */ })
 
-  // Load sources for the picker (non-blocking)
+  // Sources for the picker — fetched below, once populateSources exists.
   let sources: Source[] = []
-  if (navigator.onLine) {
-    fetchSources().then(s => { sources = s }).catch(() => {})
-  }
 
   app.innerHTML = `
     ${renderTopbar('ThoughtFoundry', 'capture', '<span class="online-indicator" id="online-indicator" title=""></span>')}
@@ -192,7 +189,11 @@ export async function renderCapture(app: HTMLElement): Promise<void> {
     const draft = loadDraftObj()
     if (draft.sourceId) sourceIdEl.value = draft.sourceId
   }
-  setTimeout(populateSources, 800)
+  // Populate when the fetch actually lands (a fixed timeout loses the race on
+  // slow connections and would leave the picker empty until a full reload).
+  if (navigator.onLine) {
+    fetchSources().then(s => { sources = s; populateSources() }).catch(() => { /* picker stays minimal */ })
+  }
 
   // Load recent notes once for similarity checking (zero-cost, client-side only)
   let recentNotes: Note[] = []
@@ -334,7 +335,7 @@ export async function renderCapture(app: HTMLElement): Promise<void> {
   const showOnThisDay = async () => {
     lastSurfaceMode = 'onthisday'
     const note = await fetchOnThisDay().catch(() => null)
-    if (!renderSurfaced(note, note ? relTime(note.created_at) : '')) {
+    if (!renderSurfaced(note, note ? formatRelative(note.created_at) : '')) {
       showToast('Nog geen oudere nota om terug te halen')
     }
   }
@@ -470,6 +471,12 @@ export async function renderCapture(app: HTMLElement): Promise<void> {
   const onOffline = () => refreshOnlineIndicator()
   window.addEventListener('online', onOnline)
   window.addEventListener('offline', onOffline)
+  // Window listeners outlive the page's DOM — without this, every visit to
+  // Capture stacked another pair, so one reconnect flushed/toasted N times.
+  onRouteLeave(() => {
+    window.removeEventListener('online', onOnline)
+    window.removeEventListener('offline', onOffline)
+  })
 }
 
 function loadDraftObj(): Draft {
@@ -909,16 +916,6 @@ async function refreshOnlineIndicator(): Promise<void> {
   }
 }
 
-
-function relTime(iso: string): string {
-  const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000)
-  if (days < 1) return 'vandaag'
-  if (days === 1) return 'gisteren'
-  if (days < 14) return `${days} dagen geleden`
-  if (days < 60) return `${Math.floor(days / 7)} weken geleden`
-  if (days < 365) return `${Math.floor(days / 30)} maanden geleden`
-  return `${Math.floor(days / 365)} jaar geleden`
-}
 
 
 function injectCaptureStyles(): void {

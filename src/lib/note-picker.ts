@@ -9,6 +9,7 @@
 import { fetchNotes, fetchNotesByIds, getNoteTitle, type Note } from './notes'
 import { embedText, matchNotes, hasEmbeddings } from './semantic'
 import { showToast, esc, errMsg } from './crud-list'
+import { trapFocus } from './focus-trap'
 
 export interface NotePickerOptions {
   title: string
@@ -46,6 +47,7 @@ export function openNotePicker(opts: NotePickerOptions): void {
     </div>
   `
   document.body.appendChild(scrim)
+  const releaseFocus = trapFocus(scrim)
 
   const listEl = scrim.querySelector<HTMLDivElement>('#note-picker-list')!
   const countEl = scrim.querySelector<HTMLElement>('#note-picker-count')!
@@ -54,6 +56,7 @@ export function openNotePicker(opts: NotePickerOptions): void {
 
   const close = () => {
     document.removeEventListener('keydown', onKey)
+    releaseFocus()
     scrim.remove()
   }
   const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') close() }
