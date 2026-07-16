@@ -13,11 +13,10 @@ export default defineConfig({
       manifest: {
         name: 'ThoughtFoundry',
         short_name: 'ThoughtFoundry',
-        description: 'Personal idea collection system',
+        description: 'Persoonlijk systeem voor het vangen, verbinden en uitwerken van ideeën',
         theme_color: '#C94A24',
         background_color: '#F9F8F6',
         display: 'standalone',
-        orientation: 'portrait',
         start_url: base,
         scope: base,
         icons: [
@@ -34,7 +33,7 @@ export default defineConfig({
         // Long-press / right-click app-icon shortcuts.
         shortcuts: [
           { name: 'Nieuwe notitie', short_name: 'Nieuw', url: base + '#/capture' },
-          { name: 'Zoeken', short_name: 'Zoek', url: base + '#/search' }
+          { name: 'Zoeken', short_name: 'Zoek', url: base + '#/inbox?view=search' }
         ]
       },
       workbox: {
@@ -46,6 +45,22 @@ export default defineConfig({
             options: {
               cacheName: 'supabase-api',
               networkTimeoutSeconds: 10
+            }
+          },
+          // Brand fonts load from Google Fonts at runtime (see style.css) —
+          // cache them so offline launches keep the typography.
+          {
+            urlPattern: /^https:\/\/fonts\.googleapis\.com\//,
+            handler: 'StaleWhileRevalidate',
+            options: { cacheName: 'google-fonts-css' }
+          },
+          {
+            urlPattern: /^https:\/\/fonts\.gstatic\.com\//,
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'google-fonts-webfonts',
+              expiration: { maxEntries: 20, maxAgeSeconds: 60 * 60 * 24 * 365 },
+              cacheableResponse: { statuses: [0, 200] }
             }
           }
         ]

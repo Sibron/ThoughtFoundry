@@ -12,7 +12,7 @@ import { getCostStatus, getMonthlyCap, setMonthlyCap, formatUsd, type CostStatus
 import { startAiThinking, AI_PHASES } from '../lib/ai-thinking'
 import { renderTopbar, attachTopbar } from '../lib/nav'
 import { navigateTo } from '../router'
-import { showToast, esc as escHtml, errMsg, formatDate } from '../lib/crud-list'
+import { showToast, showUndoToast, esc as escHtml, errMsg, formatDate } from '../lib/crud-list'
 
 export async function renderProcess(app: HTMLElement): Promise<void> {
   app.innerHTML = `
@@ -125,23 +125,26 @@ export async function renderProcess(app: HTMLElement): Promise<void> {
     document.getElementById('archive-note')?.addEventListener('click', async () => {
       const prevStatus = note.status
       try {
+        // The archive itself is already saved; "commit" here just advances the
+        // queue, and undo restores the previous status.
         await updateNote(note.id, { status: 'archief' })
-        showToastWithUndo(
+        showUndoToast(
           'Gearchiveerd.',
-          'Ongedaan maken',
-          async () => {
-            try {
-              await updateNote(note.id, { status: prevStatus })
-              currentSuggestion = null
-              renderCurrent()
-            } catch {
-              showToast('Ongedaan maken mislukt')
-            }
-          },
           () => {
             cursor++
             currentSuggestion = null
             renderCurrent()
+          },
+          () => {
+            void (async () => {
+              try {
+                await updateNote(note.id, { status: prevStatus })
+                currentSuggestion = null
+                renderCurrent()
+              } catch {
+                showToast('Ongedaan maken mislukt')
+              }
+            })()
           }
         )
       } catch (err) {
@@ -291,9 +294,17 @@ export async function renderProcess(app: HTMLElement): Promise<void> {
       </div>
     `
 
+    // Snapshot the editable fields so Annuleer can warn before discarding edits.
+    const suggestSnapshot = () => ['s-title', 's-summary', 's-tags', 's-section']
+      .map(fid => (document.getElementById(fid) as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | null)?.value ?? '')
+      .join('\u0000')
+    const initialSuggest = suggestSnapshot()
+
     document.getElementById('accept-btn')?.addEventListener('click', () => acceptSuggestion(note))
     document.getElementById('accept-minimal')?.addEventListener('click', () => acceptSuggestion(note))
     document.getElementById('cancel-suggest')?.addEventListener('click', () => {
+      if (suggestSnapshot() !== initialSuggest &&
+        !confirm('Je bewerkingen aan deze suggestie gaan verloren. Toch annuleren?')) return
       currentSuggestion = null
       renderCurrent()
     })
@@ -444,6 +455,7 @@ export async function renderProcess(app: HTMLElement): Promise<void> {
       <button class="topbar-btn" id="cap-edit">cap bijwerken</button>
     `
     document.getElementById('cap-edit')?.addEventListener('click', () => {
+      // Native prompt() is deliberate: rare budget action, no custom modal needed.
       const v = prompt('Maandelijkse AI-cap in USD:', String(getMonthlyCap()))
       if (v == null) return
       const n = Number(v)
@@ -479,35 +491,6 @@ function loadResume(): ResumeState | null {
 function clearResume(): void {
   try { localStorage.removeItem(RESUME_KEY) } catch { /* ignore */ }
 }
-
-let _undoTimer: ReturnType<typeof setTimeout> | null = null
-
-function showToastWithUndo(
-  msg: string,
-  undoLabel: string,
-  onUndo: () => void,
-  onDismiss: () => void
-): void {
-  const toast = document.getElementById('toast') as HTMLDivElement | null
-  if (!toast) return
-  if (_undoTimer) { clearTimeout(_undoTimer); _undoTimer = null }
-
-  toast.innerHTML = `<span>${escHtml(msg)}</span><button class="toast-undo-btn" id="toast-undo">${escHtml(undoLabel)}</button>`
-  toast.classList.add('show')
-
-  document.getElementById('toast-undo')?.addEventListener('click', () => {
-    toast.classList.remove('show')
-    if (_undoTimer) { clearTimeout(_undoTimer); _undoTimer = null }
-    onUndo()
-  })
-
-  _undoTimer = setTimeout(() => {
-    toast.classList.remove('show')
-    _undoTimer = null
-    onDismiss()
-  }, 5000)
-}
-
 
 function parseCsv(s: string): string[] {
   return s.split(',').map(x => x.trim()).filter(Boolean)

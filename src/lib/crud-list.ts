@@ -138,9 +138,19 @@ export function createCrudList<T, F>(config: CrudListConfig<T, F>, items: T[]): 
 export function showToast(message: string): void {
   const t = document.getElementById('toast') as HTMLDivElement | null
   if (!t) return
+  ensureToastA11y(t)
   t.textContent = message
   t.classList.add('show')
   setTimeout(() => t.classList.remove('show'), 2500)
+}
+
+// Every page ships its own bare <div id="toast">; stamping the live-region
+// attributes here covers them all without touching each template.
+function ensureToastA11y(t: HTMLElement): void {
+  if (!t.hasAttribute('role')) {
+    t.setAttribute('role', 'status')
+    t.setAttribute('aria-live', 'polite')
+  }
 }
 
 export function esc(str: string): string {
@@ -155,32 +165,61 @@ export function formatDate(iso: string): string {
   return new Date(iso).toLocaleDateString('nl-NL', { day: 'numeric', month: 'short', year: 'numeric' })
 }
 
+/** Relative timestamp in het Nederlands — the one shared formatter for all pages. */
+export function formatRelative(iso: string): string {
+  const then = new Date(iso).getTime()
+  if (Number.isNaN(then)) return ''
+  const diffMs = Date.now() - then
+  const mins = Math.floor(diffMs / 60000)
+  if (mins < 1) return 'net'
+  if (mins < 60) return `${mins}m geleden`
+  const hours = Math.floor(mins / 60)
+  if (hours < 24) return `${hours}u geleden`
+  const days = Math.floor(hours / 24)
+  if (days === 1) return 'gisteren'
+  if (days < 7) return `${days} dagen geleden`
+  if (days < 60) return `${Math.floor(days / 7)} weken geleden`
+  if (days < 365) return `${Math.floor(days / 30)} maanden geleden`
+  const years = Math.floor(days / 365)
+  return years === 1 ? '1 jaar geleden' : `${years} jaar geleden`
+}
+
 /**
  * Soft-delete toast — the non-blocking replacement for confirm(): the UI
  * change has already happened; `onCommit` (the real API delete) runs after a
  * 6s grace period unless the user taps Ongedaan maken, which runs `onUndo`
  * (restore the UI) instead. Styling comes from the global .toast-undo rule.
  */
+// A newer undo toast replaces the older one; the older action must then commit
+// immediately (its undo window ends) rather than be silently lost.
+let commitPendingUndo: (() => void) | null = null
+
 export function showUndoToast(
   message: string,
   onCommit: () => void | Promise<void>,
   onUndo: () => void
 ): void {
+  commitPendingUndo?.()
+
   const toast = document.getElementById('toast') as HTMLDivElement | null
   if (!toast) { void onCommit(); return }
+  ensureToastA11y(toast)
   toast.innerHTML = `<span>${esc(message)}</span><button type="button" class="toast-undo">Ongedaan maken</button>`
   toast.classList.add('show')
   let done = false
   const finish = (commit: boolean) => {
     if (done) return
     done = true
+    clearTimeout(timer)
+    if (commitPendingUndo === commitThis) commitPendingUndo = null
     toast.classList.remove('show')
     setTimeout(() => { if (!toast.classList.contains('show')) toast.textContent = '' }, 250)
     if (commit) void onCommit()
   }
-  const timer = setTimeout(() => finish(true), 6000)
+  const commitThis = () => finish(true)
+  const timer = setTimeout(commitThis, 6000)
+  commitPendingUndo = commitThis
   toast.querySelector<HTMLButtonElement>('.toast-undo')?.addEventListener('click', () => {
-    clearTimeout(timer)
     finish(false)
     onUndo()
   })

@@ -15,7 +15,7 @@ import { saveUserSetting, getReviewWeekday } from '../lib/user-settings'
 const WEEKDAYS = ['Zondag', 'Maandag', 'Dinsdag', 'Woensdag', 'Donderdag', 'Vrijdag', 'Zaterdag']
 import { fetchThemes, updateTheme, type Theme } from '../lib/themes'
 import { getDensity, setDensity, getMotion, setMotion, getTheme, setTheme, getFocusMode, setFocusMode, type Theme as DisplayTheme } from '../lib/display'
-import { showToast, esc as escHtml, errMsg } from '../lib/crud-list'
+import { showToast, esc as escHtml, errMsg, formatRelative } from '../lib/crud-list'
 
 export async function renderSettings(app: HTMLElement): Promise<void> {
   app.innerHTML = `
@@ -241,7 +241,7 @@ export async function renderSettings(app: HTMLElement): Promise<void> {
 
     <section class="settings-section">
       <h2>Data-export</h2>
-      <p class="muted">Download al je nota's, thema's, koppelingen, hoofdstukken en boeken als JSON. Volledig portable; geen vendor lock-in.</p>
+      <p class="muted">Download al je nota's, thema's, bronnen, koppelingen, projecten, hoofdstukken en boeken als JSON. Volledig portable; geen vendor lock-in.</p>
       <button class="btn btn-primary" id="export-btn">Exporteer JSON</button>
     </section>
 
@@ -264,6 +264,7 @@ export async function renderSettings(app: HTMLElement): Promise<void> {
   })
 
   document.getElementById('settings-reset-config')?.addEventListener('click', async () => {
+    // Native confirm() is deliberate for these rare destructive actions.
     if (!confirm('Hiermee verwijder je de opgeslagen Supabase-verbinding uit deze browser. Je wordt daarna naar het setup-scherm gestuurd. Doorgaan?')) return
     await clearCache()
     clearSupabaseConfig()
@@ -458,13 +459,17 @@ export async function renderSettings(app: HTMLElement): Promise<void> {
         const noteCount = (parsed.notes ?? []).length
         const themeCount = (parsed.themes ?? []).length
         const linkCount = (parsed.note_links ?? []).length
-        const sourceCount = ((parsed as unknown as Record<string, unknown>)['sources'] as unknown[] ?? []).length
+        const sourceCount = (parsed.sources ?? []).length
+        const projectCount = (parsed.book_projects ?? []).length
+        const chapterCount = (parsed.chapters ?? []).length
         const previewEl = document.getElementById('import-preview') as HTMLDivElement
         const importBtn = document.getElementById('import-btn') as HTMLButtonElement
         previewEl.hidden = false
         const parts = [`${noteCount} nota${noteCount === 1 ? '' : "'s"}`]
         if (themeCount) parts.push(`${themeCount} thema's`)
         if (sourceCount) parts.push(`${sourceCount} bronnen`)
+        if (projectCount) parts.push(`${projectCount} projecten`)
+        if (chapterCount) parts.push(`${chapterCount} hoofdstukken`)
         if (linkCount) parts.push(`${linkCount} links`)
         previewEl.textContent = `Gevonden: ${parts.join(', ')}. Bestaande nota's (zelfde ID) worden overgeslagen.`
         importBtn.hidden = false
@@ -512,6 +517,8 @@ export async function renderSettings(app: HTMLElement): Promise<void> {
       const parts = [`${result.imported} nota${result.imported === 1 ? '' : "'s"}`]
       if (result.themes) parts.push(`${result.themes} thema's`)
       if (result.sources) parts.push(`${result.sources} bronnen`)
+      if (result.projects) parts.push(`${result.projects} projecten`)
+      if (result.chapters) parts.push(`${result.chapters} hoofdstukken`)
       if (result.links) parts.push(`${result.links} links`)
       if (result.skipped) parts.push(`${result.skipped} overgeslagen`)
       showToast(`Geïmporteerd: ${parts.join(', ')}`)
@@ -546,17 +553,6 @@ export async function renderSettings(app: HTMLElement): Promise<void> {
 
 
 
-function formatRelative(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime()
-  const min = Math.floor(diff / 60000)
-  if (min < 1)   return 'net'
-  if (min < 60)  return `${min}m geleden`
-  const hr = Math.floor(min / 60)
-  if (hr < 24)   return `${hr}u geleden`
-  const day = Math.floor(hr / 24)
-  if (day < 7)   return `${day}d geleden`
-  return new Date(iso).toLocaleDateString('nl-NL', { day: 'numeric', month: 'short' })
-}
 
 function injectSettingsStyles(): void {
   if (document.getElementById('settings-styles')) return

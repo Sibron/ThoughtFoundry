@@ -90,19 +90,37 @@ async function mountDetail(project: BookProject, host: HTMLElement, ctx: CrudDet
   let projectChapters: Chapter[] = []
   let chapterStats = new Map<string, ChapterSectionStats>()
 
+  // A failed load must not masquerade as "no notes/chapters yet".
+  let loadError = false
+
   async function loadNotes(): Promise<void> {
     try {
       noteIds = await fetchProjectNoteIds(project.id)
       notes = noteIds.length > 0 ? await fetchNotesByIds(noteIds) : []
-    } catch { /* show empty */ }
+    } catch { loadError = true }
   }
   async function loadChapters(): Promise<void> {
     try {
       projectChapters = await fetchChaptersByProject(project.id)
       chapterStats = await fetchSectionStats().catch(() => new Map())
-    } catch { /* show empty */ }
+    } catch { loadError = true }
   }
   await Promise.all([loadNotes(), loadChapters()])
+
+  if (loadError) {
+    host.innerHTML = `
+      <div class="crud-detail-wrap">
+        <button class="btn btn-ghost crud-back" id="pd-error-back">← Terug</button>
+        <div class="crud-detail">
+          <p class="muted">Laden mislukt. Controleer je verbinding.</p>
+          <button class="btn btn-ghost" id="pd-retry">Opnieuw proberen</button>
+        </div>
+      </div>
+    `
+    document.getElementById('pd-error-back')?.addEventListener('click', () => ctx.back())
+    document.getElementById('pd-retry')?.addEventListener('click', () => void mountDetail(project, host, ctx))
+    return
+  }
 
   /** Manuscript order: saved ordering first, then any chapters not yet ordered. */
   function orderedChapters(): Chapter[] {

@@ -201,7 +201,8 @@ export async function mountThemes(root: HTMLElement): Promise<void> {
     const name = nameEl.value.trim()
     if (!name) { showToast('Naam is verplicht'); return }
     if (themes.length >= 9) {
-      showToast(`Je hebt al ${themes.length} thema's — past dit onder een bestaand thema?`)
+      // Advisory only — creation still proceeds; the wording must make that clear.
+      showToast(`Tip: je hebt al ${themes.length} thema's — minder is vaak sterker. Het thema wordt wel aangemaakt.`)
     }
     const btn = document.getElementById('create-btn') as HTMLButtonElement
     btn.disabled = true

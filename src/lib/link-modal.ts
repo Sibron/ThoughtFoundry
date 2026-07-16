@@ -9,6 +9,7 @@
 import { createLink, LINK_TYPE_LABELS, type LinkType, type NoteLink } from './links'
 import { fetchNotes, getNoteTitle, type Note } from './notes'
 import { showToast, esc } from './crud-list'
+import { trapFocus } from './focus-trap'
 
 export interface LinkModalOptions {
   sourceId: string
@@ -64,11 +65,13 @@ export function openLinkModal(opts: LinkModalOptions): void {
     </div>
   `
   document.body.appendChild(scrim)
+  const releaseFocus = trapFocus(scrim)
 
   const confirmBtn = scrim.querySelector<HTMLButtonElement>('#link-modal-confirm')!
 
   const close = () => {
     document.removeEventListener('keydown', onKey)
+    releaseFocus()
     scrim.remove()
   }
   const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') close() }

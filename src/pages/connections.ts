@@ -77,7 +77,9 @@ export async function mountConnections(root: HTMLElement): Promise<void> {
           { model, overrideCap }
         )
         for (const l of links) {
+          // The model may echo a pair with a/b swapped — match both orientations.
           const card = listEl.querySelector<HTMLElement>(`[data-pair="${l.a_id}|${l.b_id}"]`)
+            ?? listEl.querySelector<HTMLElement>(`[data-pair="${l.b_id}|${l.a_id}"]`)
           if (!card) continue
           const select = card.querySelector<HTMLSelectElement>('.conn-type')
           if (select && l.keep) select.value = l.type

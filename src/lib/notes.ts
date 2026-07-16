@@ -67,7 +67,7 @@ export function getNoteTitle(note: { ai_title: string | null; content: string },
 
 const OFFLINE_QUEUE_KEY = 'offline_queue'
 
-// Every note column EXCEPT `embedding`. That column is a vector(1024) used only
+// Every note column EXCEPT `embedding`. That column is a vector(384) used only
 // by server-side semantic search — no client view reads it — yet `select('*')`
 // drags it along, where it accounts for ~60% of the notes payload (≈10 KB/row
 // over the wire). Listing columns explicitly keeps every note fetch lean and the
@@ -269,7 +269,7 @@ export async function fetchRandomNote(status?: NoteStatus): Promise<Note | null>
  * week. Returns null when there's nothing old enough to feel like a rediscovery.
  */
 export async function fetchOnThisDay(): Promise<Note | null> {
-  const notes = await fetchNotes(0, 300)
+  const notes = await fetchAllNotes()
   if (!notes.length) return null
   const now = new Date()
   const cutoff = Date.now() - 7 * 86400000
