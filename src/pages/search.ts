@@ -122,7 +122,7 @@ export async function mountSearch(root: HTMLElement): Promise<void> {
         b.setAttribute('aria-checked', String(b === btn))
       })
       modeHint.textContent = mode === 'meaning'
-        ? 'Vindt nota\'s met andere woorden maar dezelfde gedachte. Enter om te zoeken.'
+        ? 'Vindt notities met andere woorden maar dezelfde gedachte. Enter om te zoeken.'
         : ''
       input.focus()
       if (input.value.trim()) run()

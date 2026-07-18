@@ -42,7 +42,7 @@ export async function mountConnections(root: HTMLElement): Promise<void> {
         </div>
         <div class="conn-ai-host" id="conn-ai-host"></div>
       </header>
-      <p class="muted conn-intro">Paren die semantisch dicht bij elkaar liggen maar nog niet verbonden zijn en geen thema delen. Koppel wat klopt, wijs af wat niet klopt — afgewezen paren komen niet terug.</p>
+      <p class="muted conn-intro">Notities die qua betekenis dicht bij elkaar liggen maar nog niet verbonden zijn. Koppel wat klopt, wijs af wat niet klopt — afgewezen paren komen niet terug.</p>
       <div class="conn-list" id="conn-list"><div class="conn-loading">Laden…</div></div>
     </div>
   `
@@ -102,7 +102,7 @@ export async function mountConnections(root: HTMLElement): Promise<void> {
       if (!(await hasEmbeddings())) {
         listEl.innerHTML = `
           <div class="conn-empty">
-            <p>Semantische voorstellen hebben embeddings nodig.</p>
+            <p>Zet eerst «Zoeken op betekenis» aan — een eenmalige, gratis stap in Instellingen.</p>
             <button class="btn btn-ghost" id="conn-to-settings">Naar Instellingen →</button>
           </div>`
         document.getElementById('conn-to-settings')?.addEventListener('click', () => navigateTo('/settings'))
@@ -150,7 +150,7 @@ export async function mountConnections(root: HTMLElement): Promise<void> {
           ${pairSide(b)}
         </div>
         <div class="conn-meta">
-          <span class="conn-sim">${Math.round(p.similarity * 100)}% verwant</span>
+          <span class="conn-sim">${p.similarity >= 0.72 ? 'sterk verwant' : 'verrassend verwant'}</span>
           <span class="conn-reason" hidden></span>
         </div>
         <div class="conn-actions">
@@ -163,7 +163,7 @@ export async function mountConnections(root: HTMLElement): Promise<void> {
 
   function pairSide(n: Note): string {
     return `
-      <button type="button" class="conn-note" data-note="${n.id}" title="Open nota">
+      <button type="button" class="conn-note" data-note="${n.id}" title="Open notitie">
         <span class="conn-note-title">${esc(getNoteTitle(n, 60))}</span>
         <span class="conn-note-snippet">${esc(n.content.slice(0, 100))}${n.content.length > 100 ? '…' : ''}</span>
       </button>`

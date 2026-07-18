@@ -1,6 +1,6 @@
 import { navigateTo } from '../router'
 import { signOut } from './auth'
-import { getTheme, setTheme, getFocusMode, setFocusMode, type Theme } from './display'
+import { getFocusMode, setFocusMode } from './display'
 import { saveUserSetting, resetSettingsCache } from './user-settings'
 import { clearCache } from './cache'
 
@@ -18,6 +18,21 @@ export function isAiEnabled(): boolean {
 export function setAiEnabled(on: boolean): void {
   localStorage.setItem(AI_ENABLED_KEY, on ? 'true' : 'false')
   saveUserSetting({ ai_enabled: on }).catch(() => {})
+}
+
+// One app-wide quality preference replaces the per-action model picker that
+// used to appear on every AI surface — the user decides once, in Instellingen,
+// instead of eleven times mid-flow.
+const AI_QUALITY_KEY = 'ai_quality'
+
+export type AiQuality = 'fast' | 'better'
+
+export function getAiQuality(): AiQuality {
+  return localStorage.getItem(AI_QUALITY_KEY) === 'better' ? 'better' : 'fast'
+}
+
+export function setAiQuality(q: AiQuality): void {
+  localStorage.setItem(AI_QUALITY_KEY, q)
 }
 
 // ── Guidance Banner ───────────────────────────────────────────────────────
@@ -77,7 +92,6 @@ export function renderTopbar(title: string, active?: NavKey, extra = ''): string
         ${extra}
         <button class="topbar-btn" data-nav="zoek-overlay" id="zoek-overlay-btn" title="Zoek in al je notities">Zoek</button>
         <button class="topbar-btn" data-nav="focus-mode" aria-pressed="false" id="focus-mode-btn">Focus</button>
-        <button class="topbar-btn" data-nav="toggle-theme" id="theme-toggle-btn">Donker</button>
       </div>
     </header>
     <nav class="bottom-nav focus-hide ${colClass}" aria-label="Hoofdnavigatie">
@@ -121,13 +135,6 @@ export function attachTopbar(): void {
         navigateTo('/login')
         return
       }
-      if (nav === 'toggle-theme') {
-        const t = getTheme()
-        const next: Theme = t === 'auto' ? 'dark' : t === 'dark' ? 'light' : 'auto'
-        setTheme(next)
-        updateNavButtons()
-        return
-      }
       if (nav === 'focus-mode') {
         setFocusMode(!getFocusMode())
         updateNavButtons()
@@ -163,12 +170,6 @@ export function attachTopbar(): void {
 }
 
 function updateNavButtons(): void {
-  const themeBtn = document.getElementById('theme-toggle-btn')
-  if (themeBtn) {
-    const t = getTheme()
-    themeBtn.textContent = t === 'dark' ? 'Licht' : t === 'light' ? 'Auto' : 'Donker'
-    themeBtn.title = `Thema: ${t}`
-  }
   const focusBtn = document.getElementById('focus-mode-btn')
   if (focusBtn) {
     const on = getFocusMode()

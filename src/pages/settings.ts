@@ -1,7 +1,7 @@
 import { signOut } from '../lib/auth'
 import { supabase, clearSupabaseConfig } from '../lib/supabase'
 import { clearCache } from '../lib/cache'
-import { renderTopbar, attachTopbar, isAiEnabled, setAiEnabled } from '../lib/nav'
+import { renderTopbar, attachTopbar, isAiEnabled, setAiEnabled, getAiQuality, setAiQuality, type AiQuality } from '../lib/nav'
 import { navigateTo } from '../router'
 import { getMonthlyCap, setMonthlyCap, getCostStatus, formatUsd } from '../lib/cost'
 import { fetchRecentUsage, summarize, type UsageRow } from '../lib/usage'
@@ -84,7 +84,13 @@ export async function renderSettings(app: HTMLElement): Promise<void> {
         <span>AI inschakelen</span>
       </label>
       ${isAiEnabled()
-        ? ''
+        ? `<label class="field">
+        <span class="field-label">AI-kwaliteit (geldt voor alle AI-acties)</span>
+        <select id="ai-quality-select">
+          <option value="fast"${getAiQuality() === 'fast' ? ' selected' : ''}>Snel (standaard)</option>
+          <option value="better"${getAiQuality() === 'better' ? ' selected' : ''}>Beter (grondiger, ~3× duurder)</option>
+        </select>
+      </label>`
         : '<p class="muted">Zet dit pas aan als de edge functions en <code>ANTHROPIC_API_KEY</code> in Supabase geconfigureerd zijn.</p>'}
     </section>
 
@@ -157,8 +163,8 @@ export async function renderSettings(app: HTMLElement): Promise<void> {
     </section>
 
     <section class="settings-section">
-      <h2>Semantische verbindingen activeren</h2>
-      <p class="muted">Geeft elke nota eenmalig een betekenis-vingerafdruk (embedding, lokaal in Supabase — gratis, geen externe dienst, geen AI-tokens). Daarna vindt de app verwante nota's, ook met ander woordgebruik. Hervatbaar.</p>
+      <h2>Zoeken op betekenis</h2>
+      <p class="muted">Eenmalige, gratis stap. Daarna vindt de app verwante notities ook als ze andere woorden gebruiken — voor zoeken, voorgestelde verbindingen en de graaf. Hervatbaar.</p>
       <p id="embed-status" class="muted"></p>
       <div style="display:flex;gap:var(--s-2);flex-wrap:wrap">
         <button class="btn btn-primary" id="embed-start">Embeddings genereren</button>
@@ -168,7 +174,7 @@ export async function renderSettings(app: HTMLElement): Promise<void> {
     ` : ''}
 
     <section class="settings-section">
-      <h2>Nota-overzicht</h2>
+      <h2>Notitie-overzicht</h2>
       <ul class="stats-grid">
         <li><span class="stat-label">Inbox</span><span class="stat-value">${inboxCount}</span></li>
         <li><span class="stat-label">Verwerkt</span><span class="stat-value">${verwerktCount}</span></li>
@@ -191,11 +197,11 @@ export async function renderSettings(app: HTMLElement): Promise<void> {
     </section>
 
     <section class="settings-section">
-      <h2>AI-kostenplafond</h2>
-      <p class="muted">Maandelijkse waarschuwingsdrempel. Boven de cap krijg je een expliciete confirm.</p>
+      <h2>AI-maandbudget</h2>
+      <p class="muted">Je krijgt een waarschuwing bij 80% en een expliciete bevestigingsvraag boven het budget.</p>
       <div class="cost-row">
         <label class="field">
-          <span class="field-label">Cap (USD)</span>
+          <span class="field-label">Budget (USD)</span>
           <input type="number" id="cap-input" min="0" step="0.5" value="${getMonthlyCap()}" />
         </label>
         <button class="btn btn-primary" id="cap-save">Opslaan</button>
@@ -208,7 +214,8 @@ export async function renderSettings(app: HTMLElement): Promise<void> {
     </section>
 
     <section class="settings-section">
-      <h2>Recent AI-gebruik (laatste ${usage.length})</h2>
+      <details>
+      <summary><h2 style="display:inline">Recent AI-gebruik (laatste ${usage.length})</h2></summary>
       ${usage.length === 0 ? '<p class="muted">Nog geen AI-aanroepen.</p>' : `
         <div class="usage-summary">
           <div><span class="muted">Totaal in lijst:</span> <strong>${formatUsd(summary.totalCost)}</strong></div>
@@ -237,17 +244,18 @@ export async function renderSettings(app: HTMLElement): Promise<void> {
           </table>
         </div>
       `}
+      </details>
     </section>
 
     <section class="settings-section">
       <h2>Data-export</h2>
-      <p class="muted">Download al je nota's, thema's, bronnen, koppelingen, projecten, hoofdstukken en boeken als JSON. Volledig portable; geen vendor lock-in.</p>
+      <p class="muted">Download al je notities, thema's, bronnen, koppelingen, projecten, hoofdstukken en boeken als JSON. Volledig portable; geen vendor lock-in.</p>
       <button class="btn btn-primary" id="export-btn">Exporteer JSON</button>
     </section>
 
     <section class="settings-section">
       <h2>Data-import</h2>
-      <p class="muted">Importeer nota's vanuit een eerder geëxporteerd ThoughtFoundry JSON-bestand. Bestaande nota's (zelfde ID) worden overgeslagen.</p>
+      <p class="muted">Importeer notities vanuit een eerder geëxporteerd ThoughtFoundry JSON-bestand. Bestaande notities (zelfde ID) worden overgeslagen.</p>
       <label class="field">
         <span class="field-label">JSON-bestand kiezen</span>
         <input type="file" id="import-file" accept=".json,application/json" />
@@ -276,6 +284,11 @@ export async function renderSettings(app: HTMLElement): Promise<void> {
     setAiEnabled(on)
     showToast(on ? 'AI ingeschakeld' : 'AI uitgeschakeld')
     renderSettings(app) // re-render so nav + hints reflect the new state
+  })
+
+  document.getElementById('ai-quality-select')?.addEventListener('change', (e) => {
+    setAiQuality((e.target as HTMLSelectElement).value as AiQuality)
+    showToast('AI-kwaliteit bijgewerkt')
   })
 
   document.getElementById('density-select')?.addEventListener('change', (e) => {
@@ -413,7 +426,7 @@ export async function renderSettings(app: HTMLElement): Promise<void> {
       }
     }
 
-    statusEl.textContent = `Klaar: ${embedded} nota's geëmbed${note ? ` — ${note}` : ''}`
+    statusEl.textContent = `Klaar: ${embedded} notities geëmbed${note ? ` — ${note}` : ''}`
     startBtn.disabled = false
     startBtn.textContent = 'Embeddings genereren'
     stopBtn?.setAttribute('hidden', '')
@@ -465,13 +478,13 @@ export async function renderSettings(app: HTMLElement): Promise<void> {
         const previewEl = document.getElementById('import-preview') as HTMLDivElement
         const importBtn = document.getElementById('import-btn') as HTMLButtonElement
         previewEl.hidden = false
-        const parts = [`${noteCount} nota${noteCount === 1 ? '' : "'s"}`]
+        const parts = [`${noteCount} notitie${noteCount === 1 ? '' : "s"}`]
         if (themeCount) parts.push(`${themeCount} thema's`)
         if (sourceCount) parts.push(`${sourceCount} bronnen`)
         if (projectCount) parts.push(`${projectCount} projecten`)
         if (chapterCount) parts.push(`${chapterCount} hoofdstukken`)
         if (linkCount) parts.push(`${linkCount} links`)
-        previewEl.textContent = `Gevonden: ${parts.join(', ')}. Bestaande nota's (zelfde ID) worden overgeslagen.`
+        previewEl.textContent = `Gevonden: ${parts.join(', ')}. Bestaande notities (zelfde ID) worden overgeslagen.`
         importBtn.hidden = false
         pendingImport = parsed
       } catch {
@@ -514,7 +527,7 @@ export async function renderSettings(app: HTMLElement): Promise<void> {
     btn.textContent = 'Importeren…'
     try {
       const result = await importFromJson(pendingImport)
-      const parts = [`${result.imported} nota${result.imported === 1 ? '' : "'s"}`]
+      const parts = [`${result.imported} notitie${result.imported === 1 ? '' : "s"}`]
       if (result.themes) parts.push(`${result.themes} thema's`)
       if (result.sources) parts.push(`${result.sources} bronnen`)
       if (result.projects) parts.push(`${result.projects} projecten`)
@@ -528,7 +541,7 @@ export async function renderSettings(app: HTMLElement): Promise<void> {
         console.warn('Import errors:', result.errors)
         const linkErrors = result.errors.filter(e => e.startsWith('link')).length
         const summary = linkErrors > 0
-          ? `${linkErrors} link${linkErrors === 1 ? '' : 's'} kon niet worden geïmporteerd (ontbrekende nota's).`
+          ? `${linkErrors} link${linkErrors === 1 ? '' : 's'} kon niet worden geïmporteerd (ontbrekende notities).`
           : ''
         previewEl.hidden = false
         previewEl.innerHTML = `

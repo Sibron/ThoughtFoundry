@@ -63,7 +63,7 @@ export async function renderThemeSections(app: HTMLElement): Promise<void> {
                   ${escHtml(n.ai_title ?? '(geen titel)')}
                 </button>
               </li>`).join('')}</ul>`
-          : `<p class="ts-empty-hint">Nog geen nota's in deze sectie.</p>`
+          : `<p class="ts-empty-hint">Nog geen notities in deze sectie.</p>`
         }
       </div>
     `
@@ -93,7 +93,7 @@ export async function renderThemeSections(app: HTMLElement): Promise<void> {
         <h2>${escHtml(theme?.name ?? 'Onbekend thema')}</h2>
         <button class="ts-book-btn" id="ts-book-btn" title="Open boekwerkbank voor dit thema">Genereer hoofdstuk →</button>
       </div>
-      <p class="ts-subtitle">Nota's georganiseerd per sectie van het boek in wording</p>
+      <p class="ts-subtitle">Notities georganiseerd per sectie van het boek in wording</p>
     </div>
     <div class="ts-sections">
       ${sectionHtml}

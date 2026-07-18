@@ -35,12 +35,13 @@ import { SECTIONS } from '../lib/sections'
 import { rankBySimilarity } from '../lib/similarity'
 import { fetchNeighbors } from '../lib/semantic'
 import { processNote, AiBudgetError } from '../lib/ai'
+import { preferredModel } from '../lib/ai-action'
 import { renderTopbar, attachTopbar, isAiEnabled } from '../lib/nav'
 import { navigateTo, navigateBack, setLeaveGuard, onRouteLeave } from '../router'
 import { esc as escHtml, errMsg, formatDate, showToast, showUndoToast } from '../lib/crud-list'
 
 const STATUS_LABELS: Record<NoteStatus, string> = {
-  inbox: 'Inbox',
+  inbox: 'Vangbak',
   verwerkt: 'Verwerkt',
   archief: 'Archief'
 }
@@ -50,7 +51,7 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
   if (!id) { navigateTo('/inbox'); return }
 
   app.innerHTML = `
-    ${renderTopbar('Nota bewerken', 'inbox')}
+    ${renderTopbar('Notitie bewerken', 'inbox')}
     <div class="note-body"><div class="note-loading">Laden…</div></div>
     <div class="toast" id="toast"></div>
   `
@@ -83,7 +84,7 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
 
   if (!note) {
     document.querySelector('.note-body')!.innerHTML =
-      `<div class="note-error">Nota niet gevonden. <button class="btn-inline" id="back-inbox">Naar inbox</button></div>`
+      `<div class="note-error">Notitie niet gevonden. <button class="btn-inline" id="back-inbox">Naar inbox</button></div>`
     document.getElementById('back-inbox')?.addEventListener('click', () => navigateTo('/inbox'))
     return
   }
@@ -163,7 +164,7 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
     body.innerHTML = `
       <article class="note-card">
         <header class="note-head">
-          <h1 class="note-h1">Nota</h1>
+          <h1 class="note-h1">Notitie</h1>
           <span class="muted">Aangemaakt ${formatDate(current.created_at)}${current.processed_at ? ` · verwerkt ${formatDate(current.processed_at)}` : ''}</span>
         </header>
 
@@ -257,9 +258,9 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
           <summary class="note-group-toggle">Verbindingen</summary>
           <div class="note-group-fields">
             <fieldset class="field">
-              <legend class="field-label">Links (Zettelkasten)</legend>
+              <legend class="field-label">Verbonden notities</legend>
               <div class="link-list" id="link-list"></div>
-              <button class="btn btn-ghost btn-sm" type="button" id="link-add-open">+ Link toevoegen</button>
+              <button class="btn btn-ghost btn-sm" type="button" id="link-add-open">+ Verbinding toevoegen</button>
               <div class="ai-link-suggestions" id="ai-link-suggestions"></div>
               <div class="suggested-links" id="suggested-links"></div>
             </fieldset>
@@ -273,7 +274,6 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
         ${isAiEnabled() ? `
         <div class="note-ai">
           <button class="btn btn-ghost btn-sm" id="ai-prefill">AI-suggesties ophalen</button>
-          <label class="muted note-ai-model"><input type="checkbox" id="ai-prefill-sonnet" /> Sonnet (beter, ~3× duurder)</label>
           <span class="muted">Vult titel, samenvatting, tags en sectie voor. Niets wordt opgeslagen tot je opslaat.</span>
           <div class="ai-theme-suggestions" id="ai-theme-suggestions"></div>
         </div>` : ''}
@@ -337,8 +337,8 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
       .map(([k, v]) => `<option value="${k}"${k === 'related' ? ' selected' : ''}>${escHtml(v)}</option>`)
       .join('')
     const heading = semantic
-      ? 'Misschien verwant (semantisch):'
-      : 'Misschien verwant (op basis van woorden &amp; tags):'
+      ? 'Misschien verwant (op betekenis):'
+      : 'Misschien verwant (op woorden &amp; tags):'
     box.innerHTML = `
       <div class="ai-sugg-label">${heading}</div>
       ${ranked.map(r => `
@@ -449,7 +449,7 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
         <div class="link-row" data-link-id="${l.id}">
           <span class="link-dir">${dir}</span>
           <span class="link-label">${escHtml(label)}</span>
-          <select class="link-type" data-link-id="${l.id}"${l.source_id === id ? '' : ' disabled title="Richting wordt vanaf de bron-nota bepaald"'}>${typeOpts}</select>
+          <select class="link-type" data-link-id="${l.id}"${l.source_id === id ? '' : ' disabled title="Richting wordt vanaf de bron-notitie bepaald"'}>${typeOpts}</select>
           <button class="link-del btn-ghost btn-sm" data-link-id="${l.id}" title="Verwijder link">✕</button>
         </div>`
     }).join('')
@@ -653,8 +653,8 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
       // Soft-delete: the editor makes way immediately; the API delete only
       // runs after the undo window closes (undo restores the form in place).
       const body = document.querySelector('.note-body') as HTMLElement
-      body.innerHTML = '<div class="note-loading">Nota verwijderd…</div>'
-      showUndoToast('Nota verwijderd',
+      body.innerHTML = '<div class="note-loading">Notitie verwijderd…</div>'
+      showUndoToast('Notitie verwijderd',
         async () => {
           try { await deleteNote(id); navigateBack('/inbox') }
           catch (err) { showToast(`Verwijderen mislukt: ${errMsg(err)}`); renderForm() }
@@ -667,8 +667,7 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
       btn.disabled = true
       btn.textContent = 'Bezig…'
       try {
-        const model = (document.getElementById('ai-prefill-sonnet') as HTMLInputElement | null)?.checked
-          ? 'claude-sonnet-4-6' as const : 'claude-haiku-4-5' as const
+        const model = preferredModel()
         let result: Awaited<ReturnType<typeof processNote>>
         try {
           result = await processNote(id, model)

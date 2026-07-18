@@ -149,7 +149,7 @@ export async function importFromJson(payload: ExportPayload): Promise<ImportResu
           .from('sources').select('id').eq('id', sourceId).eq('user_id', userId).maybeSingle()
         if (!srcExists) {
           note['source_id'] = null
-          result.errors.push(`nota ${String(note['id'])}: bronkoppeling verwijderd (bron ontbreekt in export)`)
+          result.errors.push(`notitie ${String(note['id'])}: bronkoppeling verwijderd (bron ontbreekt in export)`)
         }
       }
     }

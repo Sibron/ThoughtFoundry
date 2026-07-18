@@ -166,7 +166,7 @@ export async function renderStudio(app: HTMLElement): Promise<void> {
       <div class="studio-ai">
         <div class="studio-ai-row">
           <select id="studio-ai-mode" aria-label="AI-hulp modus">
-            <option value="draft">Schrijf deze sectie (uit je nota's)</option>
+            <option value="draft">Schrijf deze sectie (uit je notities)</option>
             <option value="continue">Schrijf verder</option>
             <option value="rewrite">Herschrijf selectie/tekst</option>
             <option value="tighten">Maak strakker</option>
@@ -192,7 +192,7 @@ export async function renderStudio(app: HTMLElement): Promise<void> {
       defaultModel: 'claude-sonnet-4-6',
       expectedOutputTokens: 900,
       estimateInputChars: () => s.note_ids.length * 400 + (s.content_md?.length ?? 0) + 800,
-      phases: ['Nota\'s doornemen…', 'Toon vangen…', 'Proza schrijven…', 'Bijschaven…'],
+      phases: ['Notities doornemen…', 'Toon vangen…', 'Proza schrijven…', 'Bijschaven…'],
       beforeRun: () => {
         flushSave()
         const mode = modeEl.value as WriteSectionMode

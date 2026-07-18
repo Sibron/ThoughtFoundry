@@ -9,6 +9,7 @@ import { createLink, LINK_TYPE_LABELS, type LinkType } from '../lib/links'
 import { SECTIONS } from '../lib/sections'
 import { processNote, embedNote, type NoteSuggestion } from '../lib/ai'
 import { getCostStatus, getMonthlyCap, setMonthlyCap, formatUsd, type CostStatus } from '../lib/cost'
+import { preferredModel } from '../lib/ai-action'
 import { startAiThinking, AI_PHASES } from '../lib/ai-thinking'
 import { renderTopbar, attachTopbar } from '../lib/nav'
 import { navigateTo } from '../router'
@@ -34,7 +35,6 @@ export async function renderProcess(app: HTMLElement): Promise<void> {
   let cursor = 0
   let currentSuggestion: NoteSuggestion | null = null
   let cost: CostStatus
-  let useSonnet = false
 
   const SESSION_MAX_NOTES = 5
   const SESSION_MAX_MS = 25 * 60 * 1000
@@ -102,10 +102,6 @@ export async function renderProcess(app: HTMLElement): Promise<void> {
             <button class="btn btn-ghost" id="skip-note">Overslaan</button>
             <button class="btn btn-ghost" id="archive-note">Archiveren</button>
           </div>
-          <label class="pane-model">
-            <input type="checkbox" id="run-ai-sonnet" ${useSonnet ? 'checked' : ''} />
-            Gebruik Sonnet (beter, ~3× duurder)
-          </label>
         </section>
         <section class="process-suggest-pane" id="suggest-pane">
           <p class="pane-hint">Klik "AI-suggesties ophalen" om titel, samenvatting, tags en thema-matches te krijgen. Niets wordt opgeslagen tot je "Accepteer" klikt.</p>
@@ -114,9 +110,6 @@ export async function renderProcess(app: HTMLElement): Promise<void> {
     `
 
     document.getElementById('run-ai')?.addEventListener('click', runAi)
-    document.getElementById('run-ai-sonnet')?.addEventListener('change', (e) => {
-      useSonnet = (e.target as HTMLInputElement).checked
-    })
     document.getElementById('skip-note')?.addEventListener('click', () => {
       cursor++
       currentSuggestion = null
@@ -187,13 +180,13 @@ export async function renderProcess(app: HTMLElement): Promise<void> {
     btn.textContent = 'AI denkt na…'
     const stopThinking = startAiThinking(btn, AI_PHASES.process)
     try {
-      const { suggestion, usage } = await processNote(note.id, useSonnet ? 'claude-sonnet-4-6' : 'claude-haiku-4-5')
+      const { suggestion } = await processNote(note.id, preferredModel())
       currentSuggestion = suggestion
       await resolveRelatedLabels(suggestion.related_note_ids)
       renderSuggestion(note, suggestion)
       cost = await getCostStatus()
       renderCost(cost)
-      showToast(`AI klaar (${formatUsd(usage.costUsd)})`)
+      showToast('AI klaar — controleer de suggesties')
     } catch (err) {
       showToast(`AI mislukt: ${errMsg(err)}`)
       btn.disabled = false
@@ -241,7 +234,7 @@ export async function renderProcess(app: HTMLElement): Promise<void> {
 
       ${s.related_note_ids.length > 0 ? `
         <fieldset class="field">
-          <legend class="field-label">Verbindingen (Zettelkasten)</legend>
+          <legend class="field-label">Verbindingen</legend>
           <div class="related-list">
             ${s.related_note_ids.map(id => {
               const label = noteLabels.get(id) ?? id
@@ -398,7 +391,7 @@ export async function renderProcess(app: HTMLElement): Promise<void> {
         <h2>Sessie voltooid.</h2>
         <p class="muted">Goed gedaan. Stop hier.</p>
         <div class="empty-actions">
-          <button class="btn btn-primary" id="empty-capture">+ Nieuwe gedachte</button>
+          <button class="btn btn-primary" id="empty-capture">Nieuwe notitie</button>
           <button class="btn btn-ghost" id="empty-inbox">Naar Vangbak</button>
         </div>
       </div>
@@ -413,9 +406,9 @@ export async function renderProcess(app: HTMLElement): Promise<void> {
     shell.innerHTML = `
       <div class="process-empty">
         <h2>Vangbak is leeg</h2>
-        <p>Geen onverwerkte nota's. Leg een nieuwe gedachte vast, of bekijk verwerkte nota's in de Vangbak.</p>
+        <p>Geen onverwerkte notities. Leg een nieuwe gedachte vast, of bekijk verwerkte notities in de Vangbak.</p>
         <div class="empty-actions">
-          <button class="btn btn-primary" id="empty-capture">Nieuwe nota</button>
+          <button class="btn btn-primary" id="empty-capture">Nieuwe notitie</button>
           <button class="btn btn-ghost" id="empty-inbox">Naar Vangbak</button>
         </div>
       </div>
@@ -431,7 +424,7 @@ export async function renderProcess(app: HTMLElement): Promise<void> {
         <h2>Alles verwerkt.</h2>
         <p>Niets meer te doen — frisse pauze.</p>
         <div class="empty-actions">
-          <button class="btn btn-primary" id="empty-capture">Nieuwe nota</button>
+          <button class="btn btn-primary" id="empty-capture">Nieuwe notitie</button>
           <button class="btn btn-ghost" id="empty-inbox">Naar Vangbak</button>
         </div>
       </div>
@@ -440,23 +433,23 @@ export async function renderProcess(app: HTMLElement): Promise<void> {
     document.getElementById('empty-inbox')?.addEventListener('click', () => navigateTo('/inbox'))
   }
 
+  // Budget stays out of sight until it matters: nothing under 80%, a warning
+  // pill past the threshold, and the block message at the cap.
   async function renderCost(status: CostStatus): Promise<void> {
     const el = document.getElementById('process-cost')!
+    if (!status.warn && !status.block) { el.innerHTML = ''; return }
     const pct = (status.ratio * 100).toFixed(0)
-    const cls = status.block ? 'cost-block' : status.warn ? 'cost-warn' : 'cost-ok'
-    const warnMsg = status.warn && !status.block
-      ? `<span class="cost-pill cost-warn-msg">Let op: ${pct}% van je AI-budget gebruikt deze maand.</span>`
-      : ''
+    const cls = status.block ? 'cost-block' : 'cost-warn'
     el.innerHTML = `
       <span class="cost-pill ${cls}">
-        AI deze maand: <strong>${formatUsd(status.spendUsd)}</strong> / ${formatUsd(status.capUsd)} (${pct}%)
+        ${status.block ? 'AI-maandbudget bereikt' : `Let op: ${pct}% van je AI-maandbudget gebruikt`}
+        (${formatUsd(status.spendUsd)} / ${formatUsd(status.capUsd)})
       </span>
-      ${warnMsg}
-      <button class="topbar-btn" id="cap-edit">cap bijwerken</button>
+      <button class="topbar-btn" id="cap-edit">budget aanpassen</button>
     `
     document.getElementById('cap-edit')?.addEventListener('click', () => {
       // Native prompt() is deliberate: rare budget action, no custom modal needed.
-      const v = prompt('Maandelijkse AI-cap in USD:', String(getMonthlyCap()))
+      const v = prompt('Maandelijks AI-budget in dollars:', String(getMonthlyCap()))
       if (v == null) return
       const n = Number(v)
       if (Number.isFinite(n) && n > 0) {

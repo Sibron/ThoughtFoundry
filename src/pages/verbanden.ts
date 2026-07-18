@@ -17,8 +17,8 @@ const TABS: { key: VerbandenView; label: string; mount: (root: HTMLElement) => P
 ]
 
 const INTROS: Record<VerbandenView, string> = {
-  graph:       'Jouw nota\'s als netwerk: zie hoe ideeën samenhangen.',
-  connections: 'Voorgestelde verbindingen tussen nota\'s — jij beslist.',
+  graph:       'Jouw notities als netwerk: zie hoe ideeën samenhangen.',
+  connections: 'Voorgestelde verbindingen tussen notities — jij beslist.',
 }
 
 const VIEW_ALIAS: Record<string, VerbandenView> = { graaf: 'graph', verbindingen: 'connections' }
