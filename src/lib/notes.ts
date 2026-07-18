@@ -1,7 +1,6 @@
 import { supabase, fetchAllRows } from './supabase'
 
 export type NoteStatus = 'inbox' | 'verwerkt' | 'archief'
-export type NoteType = 'fleeting' | 'question' | 'literature' | 'permanent' | 'reflection' | 'framework'
 
 export interface Note {
   id: string
@@ -9,11 +8,9 @@ export interface Note {
   content: string
   mini_notes: string | null
   status: NoteStatus
-  note_type: NoteType
   core_idea: string | null
   use_for: string | null
   source_id: string | null
-  tags: string[]
   source_url: string | null
   source_title: string | null
   source_author: string | null
@@ -28,11 +25,9 @@ export interface Note {
 export interface NoteInsert {
   content: string
   mini_notes?: string
-  note_type?: NoteType
   core_idea?: string
   use_for?: string
   source_id?: string
-  tags?: string[]
   source_url?: string
   source_title?: string
   source_author?: string
@@ -41,7 +36,6 @@ export interface NoteInsert {
 export interface NoteUpdate {
   content?: string
   mini_notes?: string | null
-  note_type?: NoteType
   core_idea?: string | null
   use_for?: string | null
   source_id?: string | null
@@ -49,7 +43,6 @@ export interface NoteUpdate {
   source_title?: string | null
   source_author?: string | null
   status?: NoteStatus
-  tags?: string[]
   ai_summary?: string | null
   ai_title?: string | null
   processed_at?: string | null
@@ -73,21 +66,19 @@ const OFFLINE_QUEUE_KEY = 'offline_queue'
 // over the wire). Listing columns explicitly keeps every note fetch lean and the
 // local cache small.
 const NOTE_COLUMNS =
-  'id, user_id, content, mini_notes, status, note_type, core_idea, use_for, ' +
-  'source_id, tags, source_url, source_title, source_author, ai_summary, ' +
+  'id, user_id, content, mini_notes, status, core_idea, use_for, ' +
+  'source_id, source_url, source_title, source_author, ai_summary, ' +
   'ai_title, processed_at, section, created_at, updated_at'
 
 export async function fetchNotes(
   page = 0,
   pageSize = 50,
   status?: NoteStatus,
-  search?: string,
-  noteType?: NoteType
+  search?: string
 ): Promise<Note[]> {
   let q = supabase.from('notes').select(NOTE_COLUMNS)
     .order('created_at', { ascending: false }).order('id', { ascending: true })
   if (status) q = q.eq('status', status)
-  if (noteType) q = q.eq('note_type', noteType)
   if (search && search.trim()) {
     const safe = search.trim().replace(/[%,()]/g, ' ')
     // Match on ANY query word (not just the whole string) so multi-word and

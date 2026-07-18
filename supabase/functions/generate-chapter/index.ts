@@ -21,7 +21,6 @@ interface NoteRow {
   mini_notes: string | null
   ai_title: string | null
   ai_summary: string | null
-  tags: string[] | null
   section: string | null
 }
 
@@ -79,7 +78,7 @@ Deno.serve(async (req: Request) => {
 
   const { data: notesData, error: notesErr } = await supabase
     .from('notes')
-    .select('id, content, mini_notes, ai_title, ai_summary, tags, section')
+    .select('id, content, mini_notes, ai_title, ai_summary, section')
     .in('id', body.noteIds)
 
   if (notesErr) return jsonResponse({ error: notesErr.message }, 500)
@@ -151,9 +150,8 @@ function buildPrompt(notes: NoteRow[], themeName: string | null, angle: string |
   const noteText = notes.map(n => {
     const head = n.ai_title ? n.ai_title : n.content.slice(0, 60)
     const body = n.ai_summary ?? n.content
-    const tags = (n.tags ?? []).join(', ')
     const sectionLabel = n.section ? (SECTION_LABELS[n.section] ?? n.section) : 'niet toegewezen'
-    return `### [${n.id}] ${head}  (sectie: ${sectionLabel})\n${body}${tags ? `\nTags: ${tags}` : ''}`
+    return `### [${n.id}] ${head}  (sectie: ${sectionLabel})\n${body}`
   }).join('\n\n')
 
   const themeLine = themeName ? `Thema: **${themeName}**` : 'Thema: (geen)'
