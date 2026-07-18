@@ -104,7 +104,7 @@ function goalCard(
     : ''
   const momentum = thisWeek > 0 ? ` · <strong>+${thisWeek} deze week</strong>` : ''
   const progressParts = [
-    `${noteCount} ${noteCount === 1 ? 'noot' : 'noten'}`,
+    `${noteCount} ${noteCount === 1 ? 'notitie' : 'notities'}`,
     chapterCount ? `${chapterCount} ${chapterCount === 1 ? 'hoofdstuk' : 'hoofdstukken'}` : null,
     words ? `${words} woorden` : null,
   ].filter(Boolean).join(' · ')
@@ -115,10 +115,10 @@ function goalCard(
   let action: string
   let nav: string
   if (noteCount === 0) {
-    action = 'Koppel je eerste noten aan dit project'
+    action = 'Koppel je eerste notities aan dit project'
     nav = projectsTab
   } else if (chapterCount === 0 && isAiEnabled()) {
-    action = 'Genereer je eerste hoofdstuk uit projectnoten'
+    action = 'Genereer je eerste hoofdstuk uit projectnotities'
     nav = `/library?tab=book&project=${p.id}`
   } else if (chapterCount > 0 && words === 0) {
     action = 'Open de schrijfstudio en schrijf je eerste sectie'
@@ -130,7 +130,7 @@ function goalCard(
     action = 'Schrijf verder, of vraag een gap-analyse'
     nav = projectsTab
   } else {
-    action = 'Blijf noten koppelen en verbinden'
+    action = 'Blijf notities koppelen en verbinden'
     nav = projectsTab
   }
 
@@ -174,7 +174,7 @@ async function renderWeek(): Promise<void> {
       </div>
       <div class="vd-week-ctas">
         ${inboxCount > 0 ? `<button class="btn btn-ghost btn-sm" data-week-nav="${isAiEnabled() ? '/process' : '/inbox'}">Verwerk vangbak (${inboxCount})</button>` : ''}
-        ${orphans ? `<button class="btn btn-ghost btn-sm" data-week-nav="/inbox">Wezen: ${orphans} losse notities</button>` : ''}
+        ${orphans ? `<button class="btn btn-ghost btn-sm" data-week-nav="/inbox">${orphans} losse notities</button>` : ''}
         <button class="btn btn-ghost btn-sm" data-week-nav="/verbanden?view=verbindingen">Voorgestelde verbindingen</button>
         <button class="btn btn-ghost btn-sm" data-week-nav="/verbanden?view=graph">Bekijk je graaf</button>
       </div>

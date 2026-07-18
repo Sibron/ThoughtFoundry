@@ -61,7 +61,7 @@ export async function mountInboxList(root: HTMLElement): Promise<void> {
           const m = NOTE_TYPES[t]
           return `<button class="type-pill" data-note-type="${t}" style="--pill-color:${m.color}">${escHtml(m.label)}</button>`
         }).join('')}
-        <button class="type-pill orphan-pill" id="orphan-pill" title="Notities zonder enkele link of thema">⚓ Wees-notities</button>
+        <button class="type-pill orphan-pill" id="orphan-pill" title="Notities zonder enkele verbinding of thema">Losse notities</button>
       </div>
       <div class="orphan-banner focus-hide" id="orphan-banner" hidden></div>
       <div class="inbox-toolbar">
@@ -218,7 +218,7 @@ export async function mountInboxList(root: HTMLElement): Promise<void> {
       const capped = pool.length === 300 ? '+' : ''
       banner.hidden = false
       banner.innerHTML = `
-        <span>Je hebt <strong>${orphans.length}${capped}</strong> losse notities zonder enkele verbinding.</span>
+        <span>${orphans.length}${capped} notities staan nog los — verbind ze als je wilt.</span>
         <button class="btn btn-ghost btn-sm" id="orphan-show">Toon</button>
         <button class="orphan-dismiss" id="orphan-dismiss" title="Verberg">✕</button>
       `
@@ -244,16 +244,39 @@ export async function mountInboxList(root: HTMLElement): Promise<void> {
 
   function renderList(): void {
     const notes = visibleNotes()
+    updateTypePills()
     if (notes.length === 0) {
+      const noFilters = !searchText && !statusFilter && !noteTypeFilter && !orphanMode
       listEl.innerHTML = searchText
         ? '<div class="inbox-empty">Niets in de geladen lijst. Diep zoeken? Gebruik Zoek in de bovenbalk.</div>'
-        : '<div class="inbox-empty">Geen notities gevonden.</div>'
+        : noFilters && allNotes.length === 0
+          ? `<div class="inbox-empty inbox-empty-intro">
+               <p><strong>Zo werkt het:</strong></p>
+               <p>1. <strong>Vang</strong> elke gedachte zodra die opkomt.</p>
+               <p>2. <strong>Verwerk</strong> ze hier — één voor één, geef ze een plek.</p>
+               <p>3. <strong>Verbind</strong> ze en zie patronen ontstaan.</p>
+             </div>`
+          : '<div class="inbox-empty">Geen notities gevonden.</div>'
       selectAllEl.checked = false
       return
     }
     listEl.innerHTML = notes.map(note => renderNoteRow(note, selected.has(note.id))).join('')
     attachRowListeners()
     selectAllEl.checked = notes.length > 0 && notes.every(n => selected.has(n.id))
+  }
+
+  // Only offer type filters that can actually filter something: pills for
+  // types present in the loaded notes, and no pill row at all when every
+  // note has the same type.
+  function updateTypePills(): void {
+    const row = document.getElementById('inbox-type-pills')
+    if (!row) return
+    const present = new Set(allNotes.map(n => n.note_type ?? 'fleeting'))
+    row.querySelectorAll<HTMLButtonElement>('.type-pill[data-note-type]').forEach(pill => {
+      const t = pill.dataset['noteType']
+      if (t) pill.hidden = !present.has(t as NoteType) && noteTypeFilter !== t
+    })
+    row.hidden = present.size <= 1 && !orphanMode && !noteTypeFilter
   }
 
   function updateBulkBar(): void {
@@ -276,7 +299,7 @@ export async function mountInboxList(root: HTMLElement): Promise<void> {
         renderList()
         updateBulkBar()
 
-        showUndoToast(`${ids.length} nota${ids.length === 1 ? '' : "'s"} verwijderd`,
+        showUndoToast(`${ids.length} notitie${ids.length === 1 ? '' : "s"} verwijderd`,
           async () => {
             try { await bulkDelete(ids) } catch { showToast('Verwijderen mislukt.') }
           },
@@ -342,7 +365,7 @@ export async function mountInboxList(root: HTMLElement): Promise<void> {
         renderList()
         updateBulkBar()
 
-        showUndoToast('Nota verwijderd',
+        showUndoToast('Notitie verwijderd',
           async () => {
             try { await deleteNote(id) } catch { showToast('Verwijderen mislukt.') }
           },
@@ -360,6 +383,7 @@ function renderNoteRow(note: Note, isSelected: boolean): string {
   const preview = note.ai_title ?? note.content.slice(0, 200)
   const date = formatRelative(note.created_at)
   const badgeClass = `badge badge-${note.status}`
+  const statusLabel = note.status === 'inbox' ? 'Vangbak' : note.status === 'verwerkt' ? 'Verwerkt' : 'Archief'
   const typeMeta = NOTE_TYPES[note.note_type ?? 'fleeting']
   const typeBadge = `<span class="note-type-badge" style="background:${typeMeta?.color ?? '#888'}">${escHtml(typeMeta?.label ?? note.note_type ?? '')}</span>`
   return `
@@ -372,7 +396,7 @@ function renderNoteRow(note: Note, isSelected: boolean): string {
           <div class="row-preview">${escHtml(preview)}${!note.ai_title && note.content.length > 200 ? '…' : ''}</div>
           <div class="row-meta">
             ${typeBadge}
-            <span class="${badgeClass}">${escHtml(note.status)}</span>
+            <span class="${badgeClass}">${statusLabel}</span>
             <span class="row-date">${date}</span>
           </div>
         </div>
@@ -446,6 +470,8 @@ function injectInboxStyles(): void {
       text-align: center;
       padding: var(--s-7) 0;
     }
+    .inbox-empty-intro { display: flex; flex-direction: column; gap: var(--s-2); }
+    .inbox-empty-intro strong { color: var(--text); }
     .inbox-row {
       background: var(--surface);
       border: 1px solid var(--border);

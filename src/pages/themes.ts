@@ -133,7 +133,7 @@ export async function mountThemes(root: HTMLElement): Promise<void> {
       return `<div class="sec-seg ${isFilled ? 'sec-filled' : 'sec-empty'}" title="${escHtml(SECTION_LABELS[slug] ?? slug)}"></div>`
     }).join('')
     return `
-      <button class="section-bar" data-section-link="${escHtml(themeId)}" title="Bekijk nota's per sectie">
+      <button class="section-bar" data-section-link="${escHtml(themeId)}" title="Bekijk notities per sectie">
         <span class="section-bar-label">Boek in wording: ${filled}/5 secties</span>
         <div class="section-segments">${segs}</div>
       </button>
@@ -151,7 +151,7 @@ export async function mountThemes(root: HTMLElement): Promise<void> {
         <summary class="theme-summary">
           <span class="theme-dot" style="background:${escHtml(t.color)}"></span>
           <span class="theme-name">${escHtml(t.name)}</span>
-          <span class="theme-count">${counts[t.id] ?? 0} nota's</span>
+          <span class="theme-count">${counts[t.id] ?? 0} notities</span>
           ${renderSectionBar(t.id)}
         </summary>
         <div class="theme-edit">
@@ -264,7 +264,7 @@ export async function mountThemes(root: HTMLElement): Promise<void> {
     updateTotal()
 
     const msg = noteCount > 0
-      ? `Thema "${t?.name}" verwijderd — ${noteCount} nota('s) raken hun koppeling kwijt`
+      ? `Thema "${t?.name}" verwijderd — ${noteCount} notitie(s) raken hun koppeling kwijt`
       : `Thema "${t?.name}" verwijderd`
     showUndoToast(msg,
       async () => {

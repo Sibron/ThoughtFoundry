@@ -38,15 +38,15 @@ export function openLinkModal(opts: LinkModalOptions): void {
   const scrim = document.createElement('div')
   scrim.className = 'link-modal-scrim'
   scrim.innerHTML = `
-    <div class="link-modal" role="dialog" aria-modal="true" aria-label="Nota koppelen">
-      <h3 class="link-modal-title">Nota koppelen</h3>
+    <div class="link-modal" role="dialog" aria-modal="true" aria-label="Notitie koppelen">
+      <h3 class="link-modal-title">Notitie koppelen</h3>
       <div class="link-modal-note"><span class="link-modal-lbl">Van</span><span>${esc(opts.sourceLabel)}</span></div>
       ${opts.target
         ? `<div class="link-modal-note"><span class="link-modal-lbl">Naar</span><span>${esc(opts.target.label)}</span></div>`
         : `<div class="link-modal-field">
              <span class="link-modal-lbl">Naar</span>
              <div class="link-modal-chosen" id="link-modal-chosen" hidden></div>
-             <input type="text" id="link-modal-search" class="link-modal-search" placeholder="Zoek nota om te koppelen…" autocomplete="off" />
+             <input type="text" id="link-modal-search" class="link-modal-search" placeholder="Zoek notitie om te koppelen…" autocomplete="off" />
              <div class="link-modal-results" id="link-modal-results"></div>
            </div>`
       }

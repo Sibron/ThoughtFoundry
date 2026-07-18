@@ -335,14 +335,14 @@ export async function renderCapture(app: HTMLElement): Promise<void> {
     // Prefer an unprocessed note (the pile that wants attention), else anything.
     let note = await fetchRandomNote('inbox').catch(() => null)
     if (!note) note = await fetchRandomNote().catch(() => null)
-    if (!renderSurfaced(note, '')) showToast('Geen nota\'s gevonden')
+    if (!renderSurfaced(note, '')) showToast('Geen notities gevonden')
   }
 
   const showOnThisDay = async () => {
     lastSurfaceMode = 'onthisday'
     const note = await fetchOnThisDay().catch(() => null)
     if (!renderSurfaced(note, note ? formatRelative(note.created_at) : '')) {
-      showToast('Nog geen oudere nota om terug te halen')
+      showToast('Nog geen oudere notitie om terug te halen')
     }
   }
 
@@ -469,7 +469,7 @@ export async function renderCapture(app: HTMLElement): Promise<void> {
 
   const onOnline = async () => {
     const flushed = await flushOfflineQueue()
-    if (flushed > 0) showToast(`${flushed} offline-nota('s) gesynchroniseerd`)
+    if (flushed > 0) showToast(`${flushed} offline-notitie(s) gesynchroniseerd`)
     recentNotes = await fetchNotes(0, 50).catch(() => recentNotes)
     await refreshOnlineIndicator()
     await refreshRecent()
@@ -587,10 +587,10 @@ function setupSourceAnalysis(): void {
     try {
       const { usage } = await fetchSupadataUsage()
       if (usage && usage.used != null && usage.limit != null) {
-        usageEl.textContent = `Supadata: ${usage.used} / ${usage.limit} credits deze maand`
+        usageEl.textContent = `Bron-analyses: ${usage.used} van ${usage.limit} gebruikt deze maand`
         usageEl.hidden = false
       } else if (usage && usage.remaining != null) {
-        usageEl.textContent = `Supadata: nog ${usage.remaining} credits deze maand`
+        usageEl.textContent = `Bron-analyses: nog ${usage.remaining} deze maand`
         usageEl.hidden = false
       } else {
         usageEl.hidden = true
@@ -910,11 +910,11 @@ async function refreshOnlineIndicator(): Promise<void> {
   if (!navigator.onLine) {
     el.textContent = queue > 0 ? `⚫ offline (${queue})` : '⚫ offline'
     el.className = 'online-indicator offline'
-    el.title = `Offline${queue > 0 ? ` — ${queue} nota('s) wachten op sync` : ''}`
+    el.title = `Offline${queue > 0 ? ` — ${queue} notitie(s) wachten op sync` : ''}`
   } else if (queue > 0) {
     el.textContent = `🟡 sync (${queue})`
     el.className = 'online-indicator sync'
-    el.title = `${queue} nota('s) wachten op sync`
+    el.title = `${queue} notitie(s) wachten op sync`
   } else {
     el.textContent = '🟢 online'
     el.className = 'online-indicator online'

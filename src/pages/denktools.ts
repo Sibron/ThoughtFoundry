@@ -12,9 +12,9 @@ const TABS: { key: DenktoolsTab; label: string; mount: (root: HTMLElement) => Pr
 ]
 
 const INTROS: Record<DenktoolsTab, string> = {
-  spark:       'Synthese: laat AI jouw nota\'s tot een tekst smeden.',
+  spark:       'Synthese: laat AI jouw notities tot een tekst smeden.',
   denkpartner: 'Tegenspraak: scherpe vragen die je blinde vlekken blootleggen.',
-  clusters:    'Patronen: impliciete thema-clusters in je verwerkte nota\'s.',
+  clusters:    'Patronen: impliciete thema-clusters in je verwerkte notities.',
 }
 
 export async function renderDenktools(app: HTMLElement): Promise<void> {

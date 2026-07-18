@@ -35,7 +35,7 @@ export function openNotePicker(opts: NotePickerOptions): void {
     <div class="note-picker" role="dialog" aria-modal="true" aria-label="${esc(opts.title)}">
       <h3 class="note-picker-title">${esc(opts.title)}</h3>
       <div class="note-picker-tools">
-        <input type="text" id="note-picker-search" placeholder="Zoek nota's…" autocomplete="off" />
+        <input type="text" id="note-picker-search" placeholder="Zoek notities…" autocomplete="off" />
         ${opts.seedText ? '<button type="button" class="btn btn-ghost" id="note-picker-suggest">Stel voor op betekenis</button>' : ''}
       </div>
       <div class="note-picker-list" id="note-picker-list"><span class="muted">Laden…</span></div>
@@ -71,7 +71,7 @@ export function openNotePicker(opts: NotePickerOptions): void {
 
   function renderList(): void {
     if (listed.length === 0 && selected.size === 0) {
-      listEl.innerHTML = '<span class="muted">Geen nota\'s gevonden.</span>'
+      listEl.innerHTML = '<span class="muted">Geen notities gevonden.</span>'
       return
     }
     // Selected-but-not-listed notes stay visible on top so unticking is
@@ -128,7 +128,7 @@ export function openNotePicker(opts: NotePickerOptions): void {
       }
       const vec = await embedText(opts.seedText!)
       const hits = (await matchNotes(vec, 12)).filter(h => h.similarity >= 0.45 && !exclude.has(h.id))
-      if (hits.length === 0) { showToast('Geen passende nota\'s gevonden'); return }
+      if (hits.length === 0) { showToast('Geen passende notities gevonden'); return }
       const notes = await fetchNotesByIds(hits.map(h => h.id))
       const order = new Map(hits.map((h, i) => [h.id, i]))
       notes.sort((a, b) => (order.get(a.id) ?? 99) - (order.get(b.id) ?? 99))
