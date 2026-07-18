@@ -1,13 +1,10 @@
 import { supabase, fetchAllRows } from './supabase'
 
-export type LinkType = 'builds_on' | 'contradicts' | 'example_of' | 'contrasts' | 'applies_to' | 'related'
+export type LinkType = 'builds_on' | 'contradicts' | 'related'
 
 export const LINK_TYPE_LABELS: Record<LinkType, string> = {
   builds_on:   'Bouwt voort op',
   contradicts: 'Weerspreekt',
-  example_of:  'Voorbeeld van',
-  contrasts:   'Contrasteert met',
-  applies_to:  'Past toe op',
   related:     'Verwant aan',
 }
 

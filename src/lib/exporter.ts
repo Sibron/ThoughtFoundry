@@ -2,16 +2,17 @@ import { supabase } from './supabase'
 
 export interface ExportPayload {
   exported_at: string
-  // v1 exports omitted sources and the whole book/studio pipeline; the importer
-  // accepts both versions (every read falls back to []).
-  schema_version: 1 | 2
+  // v1 omitted sources and the book/studio pipeline; v2 still had books,
+  // note_type and tags. The importer accepts all versions (reads fall back to
+  // [] and retired fields are stripped).
+  schema_version: 1 | 2 | 3
   notes: unknown[]
   themes: unknown[]
   note_themes: unknown[]
   note_links: unknown[]
   chapters: unknown[]
-  books: unknown[]
   ai_usage: unknown[]
+  books?: unknown[]
   sources?: unknown[]
   book_projects?: unknown[]
   note_book_projects?: unknown[]
@@ -23,12 +24,12 @@ export interface ExportPayload {
 export async function buildExport(): Promise<ExportPayload> {
   const tables = [
     'notes', 'themes', 'note_themes', 'note_links', 'sources',
-    'book_projects', 'note_book_projects', 'chapters', 'books',
+    'book_projects', 'note_book_projects', 'chapters',
     'chapter_sections', 'chapter_section_revisions', 'user_settings', 'ai_usage'
   ] as const
   const out: Partial<ExportPayload> = {
     exported_at: new Date().toISOString(),
-    schema_version: 2
+    schema_version: 3
   }
   for (const t of tables) {
     const { data, error } = await supabase.from(t).select('*')
@@ -137,6 +138,11 @@ export async function importFromJson(payload: ExportPayload): Promise<ImportResu
   for (const note of notes) {
     if (!note['id'] || !note['content']) { result.skipped++; continue }
 
+    // Retired columns from v1/v2 exports (model simplification) — strip so the
+    // upsert doesn't hit unknown-column errors.
+    delete note['note_type']
+    delete note['tags']
+
     // notes.source_id has an enforced FK; a dangling reference (v1 exports
     // never contained sources) must not reject the whole note.
     const sourceId = note['source_id'] ? String(note['source_id']) : null
@@ -196,7 +202,7 @@ export async function importFromJson(payload: ExportPayload): Promise<ImportResu
     if (error) result.errors.push(`note_project: ${error.message}`)
   }
 
-  // ── Chapters → books → sections → revisions (FK order) ───────────────────
+  // ── Chapters → sections → revisions (FK order) ────────────────────────────
   for (const raw of (payload.chapters ?? []) as Record<string, unknown>[]) {
     if (!raw['id']) continue
     const themeId = raw['theme_id'] ? String(raw['theme_id']) : null
@@ -208,12 +214,10 @@ export async function importFromJson(payload: ExportPayload): Promise<ImportResu
     else result.chapters++
   }
 
-  for (const raw of (payload.books ?? []) as Record<string, unknown>[]) {
-    if (!raw['id']) continue
-    const { error } = await supabase
-      .from('books')
-      .upsert({ ...raw, user_id: userId }, { onConflict: 'id', ignoreDuplicates: true })
-    if (error) result.errors.push(`boek "${String(raw['title'] ?? raw['id'])}": ${error.message}`)
+  // 'books' from v1/v2 exports is skipped: boekenbundels zijn opgegaan in
+  // projecten en de tabel bestaat niet meer.
+  if ((payload.books ?? []).length > 0) {
+    result.errors.push(`${(payload.books ?? []).length} boek(en) overgeslagen (boeken zijn opgegaan in projecten)`)
   }
 
   for (const raw of (payload.chapter_sections ?? []) as Record<string, unknown>[]) {

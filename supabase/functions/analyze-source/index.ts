@@ -33,7 +33,7 @@ interface Proposal {
   author: string | null
   source_type: string
   summary: string
-  insights: { content: string; core_idea?: string; tags?: string[] }[]
+  insights: { content: string; core_idea?: string }[]
 }
 
 interface SourceMeta {
@@ -69,8 +69,7 @@ Antwoord ALLEEN met geldige JSON, in dit exacte formaat:
   "insights": [
     {
       "content": "een zelfstandige, atomaire gedachte-notitie van 1-4 zinnen",
-      "core_idea": "de kern in één zin",
-      "tags": ["max 5 tags, lowercase, single-word of-met-streepje"]
+      "core_idea": "de kern in één zin"
     }
   ]
 }
@@ -114,8 +113,7 @@ Antwoord ALLEEN met geldige JSON, in dit exacte formaat:
   "insights": [
     {
       "content": "een zelfstandige, atomaire gedachte-notitie van 1-4 zinnen",
-      "core_idea": "de kern in één zin",
-      "tags": ["max 5 tags, lowercase, single-word of-met-streepje"]
+      "core_idea": "de kern in één zin"
     }
   ]
 }
@@ -286,7 +284,7 @@ Deno.serve(async (req: Request) => {
 
   // ---- Stage 'insights': variable-count list, steered by angles -------------
   if (stage === 'insights') {
-    let insights: { content: string; core_idea?: string; tags: string[] }[]
+    let insights: { content: string; core_idea?: string }[]
     try {
       const parsed = parseJsonFromResponse<{ insights?: unknown }>(result.text)
       insights = sanitizeInsights(parsed.insights)
@@ -312,21 +310,17 @@ Deno.serve(async (req: Request) => {
   return jsonResponse({ proposal, retrieval, contentChars: content.length, usage })
 })
 
-// Normalize a raw model `insights` array: drop empties, trim, lowercase tags
-// (max 5), cap the list at 15 so "Veel"/"Auto" aren't clipped.
-function sanitizeInsights(raw: unknown): { content: string; core_idea?: string; tags: string[] }[] {
+// Normalize a raw model `insights` array: drop empties, trim; cap the list at
+// 15 so "Veel"/"Auto" aren't clipped.
+function sanitizeInsights(raw: unknown): { content: string; core_idea?: string }[] {
   return (Array.isArray(raw) ? raw : [])
-    .filter((i): i is { content: string; core_idea?: unknown; tags?: unknown } =>
+    .filter((i): i is { content: string; core_idea?: unknown } =>
       !!i && typeof i === 'object' && typeof (i as { content?: unknown }).content === 'string' &&
       (i as { content: string }).content.trim().length > 0)
     .slice(0, 15)
     .map(i => ({
       content: (i.content as string).trim(),
-      core_idea: typeof i.core_idea === 'string' ? i.core_idea.trim() : undefined,
-      tags: (Array.isArray(i.tags) ? i.tags : [])
-        .filter((t): t is string => typeof t === 'string' && t.trim().length > 0)
-        .map(t => t.trim().toLowerCase())
-        .slice(0, 5)
+      core_idea: typeof i.core_idea === 'string' ? i.core_idea.trim() : undefined
     }))
 }
 

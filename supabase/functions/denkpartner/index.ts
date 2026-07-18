@@ -1,5 +1,5 @@
 // Denkpartner: generates 4-5 sharp critical questions about a scope of notes.
-// Scope can be all notes, notes with a specific tag, or notes linked to a theme.
+// Scope can be all notes or notes linked to a theme.
 // This function does NOT modify any notes.
 
 import { corsHeaders, jsonResponse } from '../_shared/cors.ts'
@@ -9,8 +9,7 @@ import { enforceBudget } from '../_shared/budget.ts'
 
 interface DenkpartnerRequest {
   overrideCap?: boolean
-  scope: 'all' | 'tag' | 'theme'
-  tag?: string
+  scope: 'all' | 'theme'
   themeId?: string
   persona?: string
   model?: 'claude-haiku-4-5' | 'claude-sonnet-4-6'
@@ -62,13 +61,11 @@ Deno.serve(async (req: Request) => {
 
   let query = supabase
     .from('notes')
-    .select('id, content, ai_title, ai_summary, tags')
+    .select('id, content, ai_title, ai_summary')
     .neq('status', 'archief')
     .order('created_at', { ascending: false })
 
-  if (body.scope === 'tag' && body.tag) {
-    query = query.contains('tags', [body.tag])
-  } else if (body.scope === 'theme' && body.themeId) {
+  if (body.scope === 'theme' && body.themeId) {
     // fetch note ids for this theme first
     const { data: ntData } = await supabase
       .from('note_themes')
@@ -83,7 +80,7 @@ Deno.serve(async (req: Request) => {
 
   const { data: notesData, error: notesErr } = await query.limit(50)
   if (notesErr) return jsonResponse({ error: notesErr.message }, 500)
-  const notes = (notesData ?? []) as { id: string; content: string; ai_title: string | null; ai_summary: string | null; tags: string[] | null }[]
+  const notes = (notesData ?? []) as { id: string; content: string; ai_title: string | null; ai_summary: string | null }[]
 
   if (notes.length === 0) {
     return jsonResponse({ questions: [], message: 'Geen nota\'s gevonden voor dit bereik.' })

@@ -65,7 +65,7 @@ Deno.serve(async (req: Request) => {
 
   type NoteRow = {
     id: string; content: string; ai_title: string | null
-    ai_summary: string | null; tags: string[] | null; section: string | null
+    ai_summary: string | null; section: string | null
   }
 
   // ── Retrieval: by meaning first, by words as fallback ──────────────────────
@@ -83,7 +83,7 @@ Deno.serve(async (req: Request) => {
     if (!knnErr && hits.length > 0) {
       const { data: rows, error: rowsErr } = await supabase
         .from('notes')
-        .select('id, content, ai_title, ai_summary, tags, section')
+        .select('id, content, ai_title, ai_summary, section')
         .in('id', hits.map(h => h.id))
         .neq('status', 'archief')
       if (!rowsErr && rows?.length) {
@@ -98,7 +98,7 @@ Deno.serve(async (req: Request) => {
   if (matched.length === 0) {
     const { data: notesData, error: notesErr } = await supabase
       .from('notes')
-      .select('id, content, ai_title, ai_summary, tags, section')
+      .select('id, content, ai_title, ai_summary, section')
       .neq('status', 'archief')
       .order('created_at', { ascending: false })
       .limit(200)
@@ -109,7 +109,7 @@ Deno.serve(async (req: Request) => {
     const queryWords = tokenize(body.query)
     matched = notes
       .map(n => {
-        const text = [n.ai_title, n.ai_summary, n.content, ...(n.tags ?? [])].filter(Boolean).join(' ')
+        const text = [n.ai_title, n.ai_summary, n.content].filter(Boolean).join(' ')
         const noteWords = tokenize(text)
         const overlap = [...queryWords].filter(w => noteWords.has(w)).length
         return { note: n, score: overlap }

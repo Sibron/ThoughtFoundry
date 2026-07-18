@@ -23,19 +23,16 @@ interface EnrichedLink {
   reason: string
 }
 
-const VALID_TYPES = new Set(['builds_on', 'contradicts', 'example_of', 'contrasts', 'applies_to', 'related'])
+const VALID_TYPES = new Set(['builds_on', 'contradicts', 'related'])
 const MAX_PAIRS = 40
 
 const SYSTEM_PROMPT = `Je beoordeelt kandidaat-verbindingen tussen atomische nota's in een persoonlijk denksysteem (ThoughtFoundry).
 Voor ELK aangeleverd paar bepaal je:
 - keep: is de verbinding sterk en betekenisvol genoeg om te leggen? Wees streng — sla zwakke, triviale of toevallige verbanden over (keep:false).
-- type: het best passende link-type uit precies deze zes:
+- type: het best passende link-type uit precies deze drie:
   - builds_on   (de een bouwt voort op / verdiept de ander)
   - contradicts (ze spreken elkaar tegen)
-  - example_of  (de een is een concreet voorbeeld van de ander)
-  - contrasts   (ze belichten hetzelfde vanuit tegengestelde hoek)
-  - applies_to  (de een past de ander toe in de praktijk)
-  - related     (algemeen verwant, geen van bovenstaande past beter)
+  - related     (algemeen verwant)
 - reason: één bondige Nederlandse zin die het verband uitlegt.
 
 Schrijf in het Nederlands. Antwoord ALLEEN met geldige JSON in dit exacte formaat:

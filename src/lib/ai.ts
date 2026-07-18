@@ -1,13 +1,12 @@
 import { supabase } from './supabase'
 import { getPersona } from './persona'
-import { updateNote, fetchNoteById } from './notes'
+import { updateNote } from './notes'
 import { addThemesForNote } from './themes'
 import { createLink, type LinkType } from './links'
 
 export interface NoteSuggestion {
   title: string
   summary: string
-  tags: string[]
   matched_theme_ids: string[]
   new_themes: { name: string; description: string }[]
   related_note_ids: string[]
@@ -98,24 +97,18 @@ export async function embedNotesBatch(
  * become genuinely AI-processed — equivalent to a natively processed note.
  *
  * Non-destructive by design: overwrites only the AI-derived text fields
- * (title/summary/section) and stamps processed_at; merges tags with the existing
- * ones; adds AI-matched themes and related-note links additively (never removes
- * curated import links); and leaves content / note_type / core_idea / use_for /
- * source_* untouched. New theme suggestions are intentionally skipped in batch.
+ * (title/summary/section) and stamps processed_at; adds AI-matched themes and
+ * related-note links additively (never removes curated import links); and
+ * leaves content / core_idea / use_for / source_* untouched. New theme
+ * suggestions are intentionally skipped in batch.
  */
 export async function reprocessNote(noteId: string): Promise<AIUsage> {
-  const [{ suggestion, usage }, current] = await Promise.all([
-    processNote(noteId, 'claude-haiku-4-5'),
-    fetchNoteById(noteId),
-  ])
-
-  const mergedTags = [...new Set([...(current?.tags ?? []), ...(suggestion.tags ?? [])])].slice(0, 5)
+  const { suggestion, usage } = await processNote(noteId, 'claude-haiku-4-5')
 
   await updateNote(noteId, {
     ai_title: suggestion.title || null,
     ai_summary: suggestion.summary || null,
     section: suggestion.section || null,
-    tags: mergedTags,
     processed_at: new Date().toISOString(),
   })
 
@@ -206,8 +199,7 @@ export interface DenkpartnerResult {
 }
 
 export async function runDenkpartner(input: {
-  scope: 'all' | 'tag' | 'theme'
-  tag?: string
+  scope: 'all' | 'theme'
   themeId?: string
   model?: 'claude-haiku-4-5' | 'claude-sonnet-4-6'
   overrideCap?: boolean
@@ -260,7 +252,6 @@ export async function writeSection(input: {
 export interface SourceInsightProposal {
   content: string
   core_idea?: string
-  tags: string[]
 }
 
 export interface SourceProposal {

@@ -69,7 +69,7 @@ Deno.serve(async (req: Request) => {
 
   const { data: notesData, error: notesErr } = await supabase
     .from('notes')
-    .select('id, content, ai_title, ai_summary, tags, section')
+    .select('id, content, ai_title, ai_summary, section')
     .eq('status', 'verwerkt')
     .order('created_at', { ascending: false })
     .limit(100)
@@ -77,7 +77,7 @@ Deno.serve(async (req: Request) => {
   if (notesErr) return jsonResponse({ error: notesErr.message }, 500)
   const notes = (notesData ?? []) as {
     id: string; content: string; ai_title: string | null
-    ai_summary: string | null; tags: string[] | null; section: string | null
+    ai_summary: string | null; section: string | null
   }[]
 
   if (notes.length < 5) {
@@ -90,8 +90,7 @@ Deno.serve(async (req: Request) => {
   const noteBlock = notes.map(n => {
     const title = n.ai_title ?? '(geen titel)'
     const text = n.ai_summary ?? n.content.slice(0, 200)
-    const tags = (n.tags ?? []).join(', ')
-    return `[${n.id}] **${title}**${tags ? ` (${tags})` : ''}: ${text}`
+    return `[${n.id}] **${title}**: ${text}`
   }).join('\n')
 
   const userPrompt = `## Verwerkte nota's (${notes.length})\n\n${noteBlock}\n\nIdentificeer 2-4 impliciete clusters.`

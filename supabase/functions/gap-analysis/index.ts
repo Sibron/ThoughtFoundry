@@ -62,11 +62,11 @@ Deno.serve(async (req: Request) => {
   const noteIds = (links ?? []).map((l: { note_id: string }) => l.note_id)
 
   // Load the actual notes
-  let notes: { id: string; content: string; ai_title: string | null; note_type: string; core_idea: string | null }[] = []
+  let notes: { id: string; content: string; ai_title: string | null; core_idea: string | null }[] = []
   if (noteIds.length > 0) {
     const { data: notesData, error: notesErr } = await supabase
       .from('notes')
-      .select('id, content, ai_title, note_type, core_idea')
+      .select('id, content, ai_title, core_idea')
       .in('id', noteIds)
 
     if (notesErr) return jsonResponse({ error: notesErr.message }, 500)
@@ -86,7 +86,7 @@ Deno.serve(async (req: Request) => {
     : notes.map((n, i) => {
         const title = n.ai_title ?? n.core_idea ?? `Nota ${i + 1}`
         const body = n.core_idea ?? n.content.slice(0, 400)
-        return `### ${i + 1}. ${title} [${n.note_type}]\n${body}`
+        return `### ${i + 1}. ${title}\n${body}`
       }).join('\n\n')
 
   const userPrompt = `## Project\n\n${projectBlock}\n\n## Nota's in dit project (${notes.length})\n\n${notesBlock}\n\n## Jouw analyse\n\nGeef een gestructureerde gap-analyse met de volgende vier secties:\n\n## WITTE PLEKKEN\nWelke thema's, perspectieven of aspecten van de kernvraag ontbreken volledig in het huidige corpus?\n\n## ONTBREKENDE TEGENARGUMENTEN\nWelke tegenwerpingen, kritiek of afwijkende standpunten zijn niet vertegenwoordigd?\n\n## ONUITGEWERKTE VRAGEN\nWelke vragen of deelthema's zijn aangeraakt maar niet uitgewerkt?\n\n## RISICO VAN HET HUIDIGE CORPUS\nWelke aannames, blinde vlekken of structurele zwakheden zitten er in het huidige corpus als geheel?`
