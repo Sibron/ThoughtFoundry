@@ -5,10 +5,8 @@ import {
   bulkUpdateStatus,
   bulkDelete,
   type Note,
-  type NoteStatus,
-  type NoteType
+  type NoteStatus
 } from '../lib/notes'
-import { NOTE_TYPES, NOTE_TYPE_ORDER } from '../lib/noteTypes'
 import { renderTopbar, attachTopbar, renderGuidanceBanner } from '../lib/nav'
 import { navigateTo } from '../router'
 import { injectShellStyles } from './denktools'
@@ -54,14 +52,7 @@ export async function mountInboxList(root: HTMLElement): Promise<void> {
         <button class="inbox-tab" data-status="inbox">Vangbak</button>
         <button class="inbox-tab" data-status="verwerkt">Verwerkt</button>
         <button class="inbox-tab" data-status="archief">Archief</button>
-      </div>
-      <div class="inbox-type-pills focus-hide" id="inbox-type-pills">
-        <button class="type-pill active" data-note-type="">Alle types</button>
-        ${NOTE_TYPE_ORDER.map(t => {
-          const m = NOTE_TYPES[t]
-          return `<button class="type-pill" data-note-type="${t}" style="--pill-color:${m.color}">${escHtml(m.label)}</button>`
-        }).join('')}
-        <button class="type-pill orphan-pill" id="orphan-pill" title="Notities zonder enkele verbinding of thema">Losse notities</button>
+        <button class="inbox-tab orphan-pill" id="orphan-pill" title="Notities zonder enkele verbinding of thema">Losse notities</button>
       </div>
       <div class="orphan-banner focus-hide" id="orphan-banner" hidden></div>
       <div class="inbox-toolbar">
@@ -88,7 +79,6 @@ export async function mountInboxList(root: HTMLElement): Promise<void> {
   let allNotes: Note[] = []
   let searchText = ''
   let statusFilter: NoteStatus | undefined = undefined
-  let noteTypeFilter: NoteType | undefined = undefined
   let orphanMode = false
   let connectedIds: Set<string> | null = null
   const selected = new Set<string>()
@@ -107,20 +97,6 @@ export async function mountInboxList(root: HTMLElement): Promise<void> {
       tab.setAttribute('aria-current', 'true')
       const v = tab.dataset['status']
       statusFilter = v ? (v as NoteStatus) : undefined
-      page = 0
-      allNotes = []
-      selected.clear()
-      updateBulkBar()
-      await loadNotes()
-    })
-  })
-
-  document.querySelectorAll<HTMLButtonElement>('.type-pill').forEach(pill => {
-    pill.addEventListener('click', async () => {
-      document.querySelectorAll('.type-pill').forEach(p => p.classList.remove('active'))
-      pill.classList.add('active')
-      const v = pill.dataset['noteType']
-      noteTypeFilter = v ? (v as NoteType) : undefined
       page = 0
       allNotes = []
       selected.clear()
@@ -190,13 +166,13 @@ export async function mountInboxList(root: HTMLElement): Promise<void> {
         // Orphans = notes with no link and no theme. Filter a wide recent pool
         // client-side; no pagination (the pile is meant to be drained, not browsed).
         const connected = await ensureConnected()
-        const pool = await fetchNotes(0, 300, statusFilter, undefined, noteTypeFilter)
+        const pool = await fetchNotes(0, 300, statusFilter)
         allNotes = pool.filter(n => !connected.has(n.id))
         loadMoreBtn.style.display = 'none'
         renderList()
         return
       }
-      const notes = await fetchNotes(page, 50, statusFilter, undefined, noteTypeFilter)
+      const notes = await fetchNotes(page, 50, statusFilter)
       allNotes = page === 0 ? notes : [...allNotes, ...notes]
       loadMoreBtn.style.display = notes.length === 50 ? 'flex' : 'none'
       renderList()
@@ -236,7 +212,7 @@ export async function mountInboxList(root: HTMLElement): Promise<void> {
   function visibleNotes(): Note[] {
     if (!searchText) return allNotes
     return allNotes.filter(n =>
-      [n.content, n.ai_title, n.ai_summary, ...(n.tags ?? [])]
+      [n.content, n.ai_title, n.ai_summary]
         .filter(Boolean)
         .some(t => (t as string).toLowerCase().includes(searchText))
     )
@@ -244,9 +220,8 @@ export async function mountInboxList(root: HTMLElement): Promise<void> {
 
   function renderList(): void {
     const notes = visibleNotes()
-    updateTypePills()
     if (notes.length === 0) {
-      const noFilters = !searchText && !statusFilter && !noteTypeFilter && !orphanMode
+      const noFilters = !searchText && !statusFilter && !orphanMode
       listEl.innerHTML = searchText
         ? '<div class="inbox-empty">Niets in de geladen lijst. Diep zoeken? Gebruik Zoek in de bovenbalk.</div>'
         : noFilters && allNotes.length === 0
@@ -263,20 +238,6 @@ export async function mountInboxList(root: HTMLElement): Promise<void> {
     listEl.innerHTML = notes.map(note => renderNoteRow(note, selected.has(note.id))).join('')
     attachRowListeners()
     selectAllEl.checked = notes.length > 0 && notes.every(n => selected.has(n.id))
-  }
-
-  // Only offer type filters that can actually filter something: pills for
-  // types present in the loaded notes, and no pill row at all when every
-  // note has the same type.
-  function updateTypePills(): void {
-    const row = document.getElementById('inbox-type-pills')
-    if (!row) return
-    const present = new Set(allNotes.map(n => n.note_type ?? 'fleeting'))
-    row.querySelectorAll<HTMLButtonElement>('.type-pill[data-note-type]').forEach(pill => {
-      const t = pill.dataset['noteType']
-      if (t) pill.hidden = !present.has(t as NoteType) && noteTypeFilter !== t
-    })
-    row.hidden = present.size <= 1 && !orphanMode && !noteTypeFilter
   }
 
   function updateBulkBar(): void {
@@ -384,8 +345,6 @@ function renderNoteRow(note: Note, isSelected: boolean): string {
   const date = formatRelative(note.created_at)
   const badgeClass = `badge badge-${note.status}`
   const statusLabel = note.status === 'inbox' ? 'Vangbak' : note.status === 'verwerkt' ? 'Verwerkt' : 'Archief'
-  const typeMeta = NOTE_TYPES[note.note_type ?? 'fleeting']
-  const typeBadge = `<span class="note-type-badge" style="background:${typeMeta?.color ?? '#888'}">${escHtml(typeMeta?.label ?? note.note_type ?? '')}</span>`
   return `
     <div class="inbox-row" data-id="${note.id}">
       <div class="row-select">
@@ -395,7 +354,6 @@ function renderNoteRow(note: Note, isSelected: boolean): string {
         <div class="row-header" role="button" tabindex="0" aria-expanded="false">
           <div class="row-preview">${escHtml(preview)}${!note.ai_title && note.content.length > 200 ? '…' : ''}</div>
           <div class="row-meta">
-            ${typeBadge}
             <span class="${badgeClass}">${statusLabel}</span>
             <span class="row-date">${date}</span>
           </div>
@@ -405,7 +363,6 @@ function renderNoteRow(note: Note, isSelected: boolean): string {
           <div class="row-full-content">${escHtml(note.content)}</div>
           ${note.mini_notes ? `<div class="row-mini">${escHtml(note.mini_notes)}</div>` : ''}
           ${note.source_url ? `<a class="row-source" href="${escHtml(note.source_url)}" target="_blank" rel="noopener">${escHtml(note.source_title ?? note.source_url)}</a>` : ''}
-          ${(note.tags ?? []).length ? `<div class="row-tags">${note.tags.map(t => `<span class="badge">${escHtml(t)}</span>`).join('')}</div>` : ''}
           <div class="row-actions">
             <button class="btn btn-ghost row-edit-btn" style="width:auto;min-height:36px">Bewerken</button>
             <button class="btn btn-danger row-delete-btn" style="width:auto;min-height:36px">Verwijderen</button>
@@ -533,11 +490,6 @@ function injectInboxStyles(): void {
       color: var(--accent);
       word-break: break-all;
     }
-    .row-tags {
-      display: flex;
-      gap: var(--s-1);
-      flex-wrap: wrap;
-    }
     .row-actions {
       display: flex;
       gap: var(--s-2);
@@ -569,26 +521,13 @@ function injectInboxStyles(): void {
       color: #fff;
       border-color: var(--accent);
     }
-    .inbox-type-pills {
-      display: flex;
-      gap: var(--s-1);
-      flex-wrap: wrap;
-    }
-    .type-pill {
-      background: var(--surface);
-      border: 1.5px solid var(--pill-color, var(--border));
-      border-radius: var(--r-sm);
-      padding: 2px var(--s-2);
-      cursor: pointer;
-      font-size: var(--fs-sm);
-      color: var(--pill-color, var(--text-muted));
-    }
-    .type-pill.active {
-      background: var(--pill-color, var(--accent));
+    .orphan-pill { border-style: dashed; }
+    .orphan-pill.active {
+      background: var(--accent);
       color: #fff;
+      border-color: var(--accent);
       font-weight: 600;
     }
-    .orphan-pill { border-style: dashed; }
     .orphan-banner {
       display: flex;
       align-items: center;
@@ -609,15 +548,6 @@ function injectInboxStyles(): void {
       color: var(--text-muted);
       cursor: pointer;
       font-size: var(--fs-base);
-    }
-    .note-type-badge {
-      display: inline-block;
-      padding: 1px 6px;
-      border-radius: var(--r-sm);
-      font-size: 11px;
-      font-weight: 600;
-      color: #fff;
-      letter-spacing: 0.02em;
     }
     .muted { color: var(--text-muted); font-size: var(--fs-sm); }
   `

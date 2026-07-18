@@ -6,7 +6,6 @@ import {
   type Theme
 } from '../lib/themes'
 import { createLink, LINK_TYPE_LABELS, type LinkType } from '../lib/links'
-import { SECTIONS } from '../lib/sections'
 import { processNote, embedNote, type NoteSuggestion } from '../lib/ai'
 import { getCostStatus, getMonthlyCap, setMonthlyCap, formatUsd, type CostStatus } from '../lib/cost'
 import { preferredModel } from '../lib/ai-action'
@@ -104,7 +103,7 @@ export async function renderProcess(app: HTMLElement): Promise<void> {
           </div>
         </section>
         <section class="process-suggest-pane" id="suggest-pane">
-          <p class="pane-hint">Klik "AI-suggesties ophalen" om titel, samenvatting, tags en thema-matches te krijgen. Niets wordt opgeslagen tot je "Accepteer" klikt.</p>
+          <p class="pane-hint">Klik "AI-suggesties ophalen" om titel, thema-matches en verbindingen te krijgen. Niets wordt opgeslagen tot je "Accepteer" klikt.</p>
         </section>
       </div>
     `
@@ -225,10 +224,6 @@ export async function renderProcess(app: HTMLElement): Promise<void> {
       </label>
     `).join('')
 
-    const sectionOptions = SECTIONS.map(sec =>
-      `<option value="${sec.slug}"${s.section === sec.slug ? ' selected' : ''}>${escHtml(sec.label)}</option>`
-    ).join('')
-
     pane.innerHTML = `
       <h2 class="suggest-title">AI-suggesties</h2>
 
@@ -262,23 +257,7 @@ export async function renderProcess(app: HTMLElement): Promise<void> {
         <input type="text" id="s-title" value="${escHtml(s.title ?? '')}" />
       </label>
 
-      <label class="field">
-        <span class="field-label">Samenvatting</span>
-        <textarea id="s-summary" rows="3">${escHtml(s.summary ?? '')}</textarea>
-      </label>
-
-      <label class="field">
-        <span class="field-label">Tags (komma-gescheiden)</span>
-        <input type="text" id="s-tags" value="${escHtml((s.tags ?? []).join(', '))}" />
-      </label>
-
-      <label class="field">
-        <span class="field-label">Hoofdstuk-sectie</span>
-        <select id="s-section">
-          <option value=""${!s.section ? ' selected' : ''}>(geen)</option>
-          ${sectionOptions}
-        </select>
-      </label>
+      ${s.summary ? `<p class="muted suggest-silent">Samenvatting wordt automatisch opgeslagen; bijschaven kan later in de notitie.</p>` : ''}
 
       <div class="suggest-actions">
         <button class="btn btn-primary" id="accept-btn">Accepteer & volgende</button>
@@ -287,10 +266,9 @@ export async function renderProcess(app: HTMLElement): Promise<void> {
       </div>
     `
 
-    // Snapshot the editable fields so Annuleer can warn before discarding edits.
-    const suggestSnapshot = () => ['s-title', 's-summary', 's-tags', 's-section']
-      .map(fid => (document.getElementById(fid) as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | null)?.value ?? '')
-      .join('\u0000')
+    // Snapshot the editable field so Annuleer can warn before discarding edits.
+    const suggestSnapshot = () =>
+      (document.getElementById('s-title') as HTMLInputElement | null)?.value ?? ''
     const initialSuggest = suggestSnapshot()
 
     document.getElementById('accept-btn')?.addEventListener('click', () => acceptSuggestion(note))
@@ -310,9 +288,10 @@ export async function renderProcess(app: HTMLElement): Promise<void> {
     acceptBtn.textContent = 'Opslaan…'
 
     const title = (document.getElementById('s-title') as HTMLInputElement).value.trim()
-    const summary = (document.getElementById('s-summary') as HTMLTextAreaElement).value.trim()
-    const tagsArr = parseCsv((document.getElementById('s-tags') as HTMLInputElement).value)
-    const sectionVal = (document.getElementById('s-section') as HTMLSelectElement).value
+    // Summary and section come silently from the AI suggestion — the pane
+    // only asks for what needs human judgement (titel, thema's, verbindingen).
+    const summary = (currentSuggestion.summary ?? '').trim()
+    const sectionVal = currentSuggestion.section ?? ''
 
     const checkedThemeIds = Array.from(
       document.querySelectorAll<HTMLInputElement>('.chip-group:not(.chip-group-new) input[type=checkbox]:checked')
@@ -346,7 +325,6 @@ export async function renderProcess(app: HTMLElement): Promise<void> {
       await updateNote(note.id, {
         ai_title: title || null,
         ai_summary: summary || null,
-        tags: tagsArr,
         status: 'verwerkt',
         processed_at: new Date().toISOString(),
         section: sectionVal || null
@@ -485,9 +463,6 @@ function clearResume(): void {
   try { localStorage.removeItem(RESUME_KEY) } catch { /* ignore */ }
 }
 
-function parseCsv(s: string): string[] {
-  return s.split(',').map(x => x.trim()).filter(Boolean)
-}
 
 
 

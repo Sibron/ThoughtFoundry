@@ -2,17 +2,17 @@
 //
 // The real semantic path lives in semantic.ts (pgvector + gte-small embeddings,
 // generated on process/backfill). These helpers approximate relatedness with
-// word- and tag-overlap for notes that aren't embedded yet, and for flows that
-// must work offline. Intentionally cheap: runs client-side over a capped pool
-// of notes, which is plenty fast at single-user scale.
+// word overlap for notes that aren't embedded yet, and for flows that must
+// work offline. Intentionally cheap: runs client-side over a capped pool of
+// notes, which is plenty fast at single-user scale.
 //
-// Scoring favours shared tags and title words over body words, mirroring how a
-// human skims for relatedness.
+// Scoring favours title words over body words, mirroring how a human skims
+// for relatedness.
 
 import type { Note } from './notes'
 
 /** Fields we actually read for scoring — keeps callers free to pass partials. */
-export type SimNote = Pick<Note, 'id' | 'content' | 'ai_title' | 'ai_summary' | 'tags'>
+export type SimNote = Pick<Note, 'id' | 'content' | 'ai_title' | 'ai_summary'>
   & Partial<Pick<Note, 'core_idea'>>
 
 // Longer Dutch function words that survive the length filter but carry no signal.
@@ -35,20 +35,15 @@ export function tokenize(text: string): Set<string> {
   return out
 }
 
-/** Tokens that describe a note: title + summary + core idea + tags + capped body. */
+/** Tokens that describe a note: title + summary + core idea + capped body. */
 export function noteTokens(n: SimNote): Set<string> {
   const parts = [
     n.ai_title ?? '',
     n.ai_summary ?? '',
     n.core_idea ?? '',
-    (n.tags ?? []).join(' '),
     n.content.slice(0, 600)
   ]
   return tokenize(parts.join(' '))
-}
-
-function tagSet(n: SimNote): Set<string> {
-  return new Set((n.tags ?? []).map(t => t.toLowerCase().trim()).filter(Boolean))
 }
 
 function sharedCount(a: Set<string>, b: Set<string>): number {
@@ -60,34 +55,27 @@ function sharedCount(a: Set<string>, b: Set<string>): number {
 export interface Scored<T> { note: T; score: number }
 
 /**
- * Rank candidates by similarity to a target note. A shared tag is worth more
- * than a shared word (TAG_WEIGHT), since tags are deliberate. Notes with no
- * overlap are dropped.
+ * Rank candidates by similarity to a target note. Notes with no overlap are
+ * dropped.
  */
 export function rankBySimilarity<T extends SimNote>(
   target: SimNote,
   candidates: T[],
   limit = 5
 ): Scored<T>[] {
-  const TAG_WEIGHT = 3
   const tTokens = noteTokens(target)
-  const tTags = tagSet(target)
-  if (tTokens.size === 0 && tTags.size === 0) return []
+  if (tTokens.size === 0) return []
 
   return candidates
-    .map(note => {
-      const wordOverlap = sharedCount(tTokens, noteTokens(note))
-      const tagOverlap = sharedCount(tTags, tagSet(note))
-      return { note, score: wordOverlap + tagOverlap * TAG_WEIGHT }
-    })
+    .map(note => ({ note, score: sharedCount(tTokens, noteTokens(note)) }))
     .filter(s => s.score > 0)
     .sort((a, b) => b.score - a.score)
     .slice(0, limit)
 }
 
 /**
- * Rank notes by relevance to a free-text query. Hits in the title or tags weigh
- * more than body hits, and an exact substring of the whole query is a strong
+ * Rank notes by relevance to a free-text query. Hits in the title weigh more
+ * than body hits, and an exact substring of the whole query is a strong
  * signal. Returns every note, scored — so callers can keep server ordering for
  * ties without losing recall.
  */
@@ -98,12 +86,10 @@ export function rankByQuery<T extends SimNote>(query: string, notes: T[]): Score
     .map(note => {
       const title = (note.ai_title ?? '').toLowerCase()
       const summary = (note.ai_summary ?? '').toLowerCase()
-      const tags = (note.tags ?? []).join(' ').toLowerCase()
       const body = note.content.toLowerCase()
       let score = 0
       for (const t of qTokens) {
         if (title.includes(t)) score += 4
-        if (tags.includes(t)) score += 3
         if (summary.includes(t)) score += 2
         if (body.includes(t)) score += 1
       }
@@ -123,7 +109,7 @@ export interface SurprisingPair {
 }
 
 /**
- * Find two notes that look related (high word/tag overlap) yet are NOT linked
+ * Find two notes that look related (high word overlap) yet are NOT linked
  * and share NO theme — the kind of cross-theme bridge that sparks a new idea.
  * `linkedPairs` holds undirected "id1|id2" keys (smaller id first); `themeMap`
  * maps note id → set of theme ids. Pure client-side, O(n²) over a small sample.
@@ -137,8 +123,7 @@ export function findSurprisingPair(
   // Cap the working set so the O(n²) scan stays snappy.
   const pool = notes.slice(0, 80)
   const tokens = new Map<string, Set<string>>()
-  const tags = new Map<string, Set<string>>()
-  for (const n of pool) { tokens.set(n.id, noteTokens(n)); tags.set(n.id, tagSet(n)) }
+  for (const n of pool) { tokens.set(n.id, noteTokens(n)) }
 
   const candidates: SurprisingPair[] = []
   for (let i = 0; i < pool.length; i++) {
@@ -146,9 +131,7 @@ export function findSurprisingPair(
       const a = pool[i], b = pool[j]
       if (linkedPairs.has(pairKey(a.id, b.id))) continue
       if (shareTheme(themeMap.get(a.id), themeMap.get(b.id))) continue
-      const score =
-        sharedCount(tokens.get(a.id)!, tokens.get(b.id)!) +
-        sharedCount(tags.get(a.id)!, tags.get(b.id)!) * 3
+      const score = sharedCount(tokens.get(a.id)!, tokens.get(b.id)!)
       if (score >= minScore) candidates.push({ a, b, score })
     }
   }
