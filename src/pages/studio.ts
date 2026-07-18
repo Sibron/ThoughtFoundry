@@ -21,7 +21,7 @@ import { navigateTo, navigateBack } from '../router'
 export async function renderStudio(app: HTMLElement): Promise<void> {
   const chapterId = paramFromHash('chapter')
   app.innerHTML = `
-    ${renderTopbar('Schrijfstudio', 'library')}
+    ${renderTopbar('Schrijfstudio', 'studio')}
     <div id="studio-root"><div class="studio-loading">Laden…</div></div>
     <div class="toast" id="toast"></div>
   `

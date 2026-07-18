@@ -1,36 +1,25 @@
-// "Vandaag" — the home dashboard. Books are the goals, so the screen answers
-// three questions the moment it opens: (1) what am I working toward and is
-// there momentum, (2) what wants my attention now, (3) where do I drop this
-// thought — a quick-capture box keeps capture one keystroke away even though
-// the full capture page moved one tap out.
+// "Vandaag" — the goals dashboard (reachable via Meer). Books are the goals,
+// so the screen answers two questions the moment it opens: (1) what am I
+// working toward and is there momentum, (2) what wants my attention now.
+// Capture lives on its own primary tab, so there is no quick-capture box here.
 //
-// Loading is best-effort and after-paint: the quick capture is interactive
-// immediately; goal cards and week stats fill in when their queries land, and
-// render nothing (rather than an error wall) when offline.
+// Loading is best-effort and after-paint: goal cards and week stats fill in
+// when their queries land, and render nothing (rather than an error wall)
+// when offline.
 
-import { insertNote, queueOfflineNote, countByStatus, fetchConnectedNoteIds, fetchAllNotes } from '../lib/notes'
+import { countByStatus, fetchConnectedNoteIds, fetchAllNotes } from '../lib/notes'
 import { fetchProjects, fetchProjectNoteIds, BOOK_STATUSES, type BookProject } from '../lib/projects'
 import { fetchChaptersByProject, fetchSectionStats, type ChapterSectionStats } from '../lib/chapters'
 import { fetchWeekStats, countCreatedThisWeek } from '../lib/weekstats'
 import { getReviewWeekday } from '../lib/user-settings'
 import { renderTopbar, attachTopbar, isAiEnabled } from '../lib/nav'
-import { showToast, esc, errMsg } from '../lib/crud-list'
-import { embedNote } from '../lib/ai'
+import { esc } from '../lib/crud-list'
 import { navigateTo } from '../router'
 
 export async function renderVandaag(app: HTMLElement): Promise<void> {
   app.innerHTML = `
     ${renderTopbar('Vandaag', 'vandaag')}
     <div class="vd-body">
-      <section class="vd-capture-card">
-        <textarea id="vd-capture" class="vd-capture-input" rows="2"
-          placeholder="Wat denk je nu? Gooi het erin…"></textarea>
-        <div class="vd-capture-row">
-          <button class="btn btn-primary" id="vd-save" disabled>Opslaan</button>
-          <button class="btn btn-ghost" id="vd-more">Meer velden →</button>
-        </div>
-      </section>
-
       <section class="vd-section" id="vd-goals-section">
         <header class="vd-section-head">
           <h2 class="vd-h2">Doelen</h2>
@@ -51,52 +40,11 @@ export async function renderVandaag(app: HTMLElement): Promise<void> {
   injectVandaagStyles()
   attachTopbar()
 
-  wireQuickCapture()
-  document.getElementById('vd-more')?.addEventListener('click', () => navigateTo('/capture'))
   document.getElementById('vd-goals-manage')?.addEventListener('click', () => navigateTo('/library?tab=book'))
 
   // Fill in after paint; each block independently best-effort.
   void renderGoals()
   void renderWeek()
-}
-
-// ── Quick capture ───────────────────────────────────────────────────────────
-
-function wireQuickCapture(): void {
-  const textarea = document.getElementById('vd-capture') as HTMLTextAreaElement
-  const saveBtn = document.getElementById('vd-save') as HTMLButtonElement
-
-  textarea.addEventListener('input', () => {
-    saveBtn.disabled = textarea.value.trim() === ''
-  })
-  textarea.addEventListener('keydown', (e) => {
-    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && !saveBtn.disabled) saveBtn.click()
-  })
-
-  saveBtn.addEventListener('click', async () => {
-    const content = textarea.value.trim()
-    if (!content) return
-    saveBtn.disabled = true
-    try {
-      if (navigator.onLine) {
-        const saved = await insertNote({ content, note_type: 'fleeting' })
-        void embedNote(saved.id).catch(() => {})
-        showToast('Opgeslagen')
-      } else {
-        await queueOfflineNote({ content, note_type: 'fleeting' })
-        showToast('Opgeslagen (offline wachtrij)')
-      }
-      textarea.value = ''
-    } catch (err) {
-      showToast(`Opslaan mislukt: ${errMsg(err)}`)
-      saveBtn.disabled = false
-      return
-    }
-    saveBtn.disabled = true
-    textarea.focus()
-  })
-
-  textarea.focus()
 }
 
 // ── Doelen (active book projects) ───────────────────────────────────────────
@@ -227,8 +175,8 @@ async function renderWeek(): Promise<void> {
       <div class="vd-week-ctas">
         ${inboxCount > 0 ? `<button class="btn btn-ghost btn-sm" data-week-nav="${isAiEnabled() ? '/process' : '/inbox'}">Verwerk vangbak (${inboxCount})</button>` : ''}
         ${orphans ? `<button class="btn btn-ghost btn-sm" data-week-nav="/inbox">Wezen: ${orphans} losse notities</button>` : ''}
-        <button class="btn btn-ghost btn-sm" data-week-nav="/inbox?view=verbindingen">Voorgestelde verbindingen</button>
-        <button class="btn btn-ghost btn-sm" data-week-nav="/inbox?view=graph">Bekijk je graaf</button>
+        <button class="btn btn-ghost btn-sm" data-week-nav="/verbanden?view=verbindingen">Voorgestelde verbindingen</button>
+        <button class="btn btn-ghost btn-sm" data-week-nav="/verbanden?view=graph">Bekijk je graaf</button>
       </div>
     `
     host.querySelectorAll<HTMLElement>('[data-week-nav]').forEach(el => {
@@ -263,21 +211,6 @@ function injectVandaagStyles(): void {
       width: 100%;
       margin: 0 auto;
     }
-    .vd-capture-card {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-left: 3px solid var(--accent);
-      border-radius: var(--r-md);
-      padding: var(--s-3);
-      display: flex; flex-direction: column; gap: var(--s-2);
-    }
-    .vd-capture-input {
-      border: none; background: transparent; resize: none;
-      font-size: var(--fs-lg); line-height: 1.5; outline: none;
-      font-family: inherit; color: var(--text);
-    }
-    .vd-capture-row { display: flex; gap: var(--s-2); }
-    .vd-capture-row .btn { width: auto; }
     .vd-section { display: flex; flex-direction: column; gap: var(--s-2); }
     .vd-section-head { display: flex; align-items: baseline; justify-content: space-between; }
     .vd-h2 { font-size: var(--fs-lg); font-weight: 600; }
