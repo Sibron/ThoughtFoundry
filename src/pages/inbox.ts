@@ -11,95 +11,38 @@ import {
 import { NOTE_TYPES, NOTE_TYPE_ORDER } from '../lib/noteTypes'
 import { renderTopbar, attachTopbar, renderGuidanceBanner } from '../lib/nav'
 import { navigateTo } from '../router'
-import { mountSearch } from './search'
-import { mountGraph } from './graph'
-import { mountConnections } from './connections'
 import { injectShellStyles } from './denktools'
 import { esc as escHtml, errMsg, showToast, showUndoToast, formatRelative } from '../lib/crud-list'
 
 export async function renderInbox(app: HTMLElement): Promise<void> {
+  // Back-compat for pre-restructure deep-links (/inbox?view=…): graph and
+  // connections moved to the Verbanden shell; search became the topbar overlay.
+  const params = new URLSearchParams(window.location.hash.split('?')[1] ?? '')
+  const requestedView = params.get('view')
+  const viewAlias: Record<string, string> = { zoeken: 'search', graaf: 'graph', verbindingen: 'connections' }
+  const view = requestedView ? (viewAlias[requestedView] ?? requestedView) : null
+  if (view === 'graph' || view === 'connections') {
+    params.set('view', view)
+    navigateTo('/verbanden?' + params.toString())  // carries focus= along
+    return
+  }
+
   app.innerHTML = `
     ${renderTopbar('Vangbak', 'inbox')}
-    <div class="inbox-view-toggle focus-hide" id="inbox-view-toggle">
-      <button class="shell-tab" data-view="list" aria-current="true">Lijst</button>
-      <button class="shell-tab" data-view="search">Zoeken</button>
-      <button class="shell-tab" data-view="graph">Graaf</button>
-      <button class="shell-tab" data-view="connections">Verbindingen</button>
-    </div>
-    <div id="inbox-view">
-      <div id="inbox-list-view"></div>
-      <div id="inbox-aux-view" hidden></div>
-    </div>
+    <div id="inbox-view"></div>
     <div class="toast" id="toast"></div>
   `
   injectShellStyles()
   attachTopbar()
 
-  const listView = document.getElementById('inbox-list-view')!
-  const auxView = document.getElementById('inbox-aux-view')!
-  const toggle = document.getElementById('inbox-view-toggle')!
+  await mountInboxList(document.getElementById('inbox-view')!)
 
-  // The list holds expensive state (status/type filters, search text, selection,
-  // loaded pages, scroll), so it is mounted once and only hidden/shown. Zoeken,
-  // Graaf and Verbindingen are "re-finding" views without state worth keeping —
-  // they mount fresh into a separate aux container.
-  type AuxView = 'search' | 'graph' | 'connections'
-  let current: 'list' | AuxView = 'list'
-  let auxLoading = false
-  let auxDesired: AuxView | null = null
-
-  // Single in-flight aux mount; re-mount if a newer view was requested mid-load
-  // so the last-clicked view wins (guards against fast switching).
-  async function showAux(v: AuxView): Promise<void> {
-    auxDesired = v
-    if (auxLoading) return
-    auxLoading = true
-    try {
-      while (auxDesired) {
-        const t: AuxView = auxDesired
-        auxView.innerHTML = ''
-        if (t === 'search') await mountSearch(auxView)
-        else if (t === 'graph') await mountGraph(auxView)
-        else await mountConnections(auxView)
-        if (auxDesired === t) break
-      }
-    } finally {
-      auxLoading = false
-    }
+  if (view === 'search') {
+    // The old /search route (and the PWA "Zoeken" shortcut) land here; the
+    // overlay reads any ?q= from the hash itself.
+    const { openSearchOverlay } = await import('../lib/search-overlay')
+    void openSearchOverlay()
   }
-
-  toggle.querySelectorAll<HTMLButtonElement>('.shell-tab').forEach(btn => {
-    btn.addEventListener('click', async () => {
-      const v = btn.dataset['view'] as 'list' | AuxView
-      if (v === current) return
-      current = v
-      toggle.querySelectorAll('.shell-tab').forEach(b => b.removeAttribute('aria-current'))
-      btn.setAttribute('aria-current', 'true')
-      if (v === 'list') {
-        // Stop any pending aux mount and reveal the preserved list. Don't clear
-        // aux content here — an in-flight mount may still be writing into it.
-        auxDesired = null
-        auxView.hidden = true
-        listView.hidden = false
-      } else {
-        listView.hidden = true
-        auxView.hidden = false
-        await showAux(v)
-      }
-    })
-  })
-
-  // Deep-links: /inbox?view=search|graph|verbindingen (used by the old
-  // /search and /graph routes, Vandaag's CTA's, and "Bekijk in graaf" entries).
-  const params = new URLSearchParams(window.location.hash.split('?')[1] ?? '')
-  const requestedView = params.get('view')
-  const viewAlias: Record<string, string> = { zoeken: 'search', graaf: 'graph', verbindingen: 'connections' }
-  const view = requestedView ? (viewAlias[requestedView] ?? requestedView) : null
-  if (view === 'search' || view === 'graph' || view === 'connections') {
-    toggle.querySelector<HTMLButtonElement>(`[data-view="${view}"]`)?.click()
-  }
-
-  await mountInboxList(listView)
 }
 
 export async function mountInboxList(root: HTMLElement): Promise<void> {

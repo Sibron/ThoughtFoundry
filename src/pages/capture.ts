@@ -89,12 +89,18 @@ export async function renderCapture(app: HTMLElement): Promise<void> {
         </div>
       </details>
 
+      <details class="capture-extra" id="ontdek-details">
+        <summary class="capture-extra-toggle">Ontdekken</summary>
+        <div class="ontdek-fields">
+          <button class="btn btn-ghost btn-sm" id="btn-surprise">Verras me</button>
+          <button class="btn btn-ghost btn-sm" id="btn-onthisday">Op deze dag</button>
+          <button class="btn btn-ghost btn-sm" id="btn-connect">Verbind twee</button>
+        </div>
+      </details>
+
       <div class="capture-footer">
         <button class="btn btn-primary" id="save-btn" disabled>Opslaan</button>
         <span class="capture-session" id="capture-session" hidden></span>
-        <button class="btn btn-ghost btn-sm" id="btn-surprise">Verras me</button>
-        <button class="btn btn-ghost btn-sm" id="btn-onthisday">Op deze dag</button>
-        <button class="btn btn-ghost btn-sm" id="btn-connect">Verbind twee</button>
       </div>
 
       <div class="capture-recent" id="capture-recent"></div>
@@ -1137,7 +1143,14 @@ function injectCaptureStyles(): void {
       min-height: 52px;
       font-size: var(--fs-base);
     }
-    .capture-footer .btn-sm {
+    .ontdek-fields {
+      display: flex;
+      flex-wrap: wrap;
+      gap: var(--s-2);
+      padding: var(--s-3) var(--s-4);
+    }
+    .ontdek-fields .btn {
+      width: auto;
       min-height: unset;
       font-size: var(--fs-sm);
       padding: var(--s-2) var(--s-3);

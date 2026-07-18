@@ -111,15 +111,6 @@ export function injectShellStyles(): void {
       color: #fff;
       border-color: var(--accent);
     }
-    .inbox-view-toggle {
-      display: flex;
-      gap: var(--s-2);
-      flex-wrap: wrap;
-      padding: var(--s-4) var(--s-4) 0;
-      max-width: 800px;
-      width: 100%;
-      margin: 0 auto;
-    }
     .shell-intro {
       margin: 0 auto;
       padding: 0 var(--s-4);
@@ -128,9 +119,8 @@ export function injectShellStyles(): void {
     }
     #denktools-panel,
     #library-panel,
-    #inbox-view,
-    #inbox-list-view:not([hidden]),
-    #inbox-aux-view:not([hidden]) {
+    #verbanden-panel,
+    #inbox-view {
       display: flex;
       flex-direction: column;
       flex: 1;

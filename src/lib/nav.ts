@@ -34,18 +34,26 @@ export function renderGuidanceBanner(text: string, tone: 'anchor' | 'quiet' = 'q
 
 // ── Navigation ────────────────────────────────────────────────────────────
 
-export type NavKey = 'vandaag' | 'capture' | 'inbox' | 'process' | 'settings' | 'denktools' | 'library'
+export type NavKey = 'vandaag' | 'capture' | 'inbox' | 'process' | 'settings' | 'denktools' | 'library' | 'verbanden' | 'studio'
 
 /**
  * Render the slim sticky header + fixed bottom tab bar.
  * Signature is unchanged: `title` shows in the header, `active` highlights
  * the matching tab, `extra` is injected into the header actions (e.g. online indicator).
  */
-// Tabs shown directly in the bottom bar. Anything else (Verwerken, Denktools,
-// Instellingen) lives behind the "Meer" overflow sheet. Zoeken/Graaf live as
-// views inside Vangbak; Thema's/Bronnen/Boek/Projecten as sub-tabs in
-// Bibliotheek. Vandaag is the goal-oriented home dashboard.
-const PRIMARY_TABS: NavKey[] = ['vandaag', 'capture', 'inbox', 'library']
+// The bottom bar IS the core flow: Vangen → Vangbak → Verwerken → Verbanden.
+// Verwerken only shows when AI is on (the bar drops to 4 columns without it).
+// Everything else (Vandaag, Bibliotheek, Schrijfstudio, Denktools,
+// Instellingen) lives behind the "Meer" overflow sheet. Zoeken is the topbar
+// overlay on every screen.
+const PRIMARY_TABS: NavKey[] = ['capture', 'inbox', 'process', 'verbanden']
+
+const TAB_LABELS: Record<string, string> = {
+  capture: 'Vangen',
+  inbox: 'Vangbak',
+  process: 'Verwerken',
+  verbanden: 'Verbanden'
+}
 
 export function renderTopbar(title: string, active?: NavKey, extra = ''): string {
   const ai = isAiEnabled()
@@ -53,15 +61,14 @@ export function renderTopbar(title: string, active?: NavKey, extra = ''): string
   const tab = (key: NavKey, label: string) =>
     `<button class="tab-btn${active === key ? ' active' : ''}" data-nav="${key}">${label}</button>`
 
-  // "Meer" is active whenever the current screen isn't one of the primary tabs.
-  const meerActive = !active || !PRIMARY_TABS.includes(active)
+  const visibleTabs = PRIMARY_TABS.filter(k => k !== 'process' || ai)
+  const colClass = `bottom-nav--${visibleTabs.length + 1}col`
+
+  // "Meer" is active whenever the current screen isn't one of the visible tabs.
+  const meerActive = !active || !visibleTabs.includes(active)
 
   const sheetItem = (key: NavKey, label: string) =>
     `<button class="nav-sheet-item${active === key ? ' active' : ''}" data-nav="${key}">${label}</button>`
-
-  const aiSheetItems = ai
-    ? sheetItem('process', 'Verwerken') + sheetItem('denktools', 'Denktools')
-    : ''
 
   return `
     <header class="topbar">
@@ -73,16 +80,16 @@ export function renderTopbar(title: string, active?: NavKey, extra = ''): string
         <button class="topbar-btn" data-nav="toggle-theme" id="theme-toggle-btn">Donker</button>
       </div>
     </header>
-    <nav class="bottom-nav focus-hide bottom-nav--5col" aria-label="Hoofdnavigatie">
-      ${tab('vandaag', 'Vandaag')}
-      ${tab('capture', 'Nieuw')}
-      ${tab('inbox', 'Vangbak')}
-      ${tab('library', 'Bibliotheek')}
+    <nav class="bottom-nav focus-hide ${colClass}" aria-label="Hoofdnavigatie">
+      ${visibleTabs.map(k => tab(k, TAB_LABELS[k])).join('')}
       <button class="tab-btn${meerActive ? ' active' : ''}" data-nav="meer" aria-expanded="false" aria-controls="nav-sheet">Meer</button>
     </nav>
     <div class="nav-sheet-scrim focus-hide" id="nav-sheet-scrim" hidden></div>
     <div class="nav-sheet focus-hide" id="nav-sheet" role="menu" aria-label="Meer" hidden>
-      ${aiSheetItems}
+      ${sheetItem('vandaag', 'Vandaag')}
+      ${sheetItem('library', 'Bibliotheek')}
+      ${sheetItem('studio', 'Schrijfstudio')}
+      ${ai ? sheetItem('denktools', 'Denktools') : ''}
       ${sheetItem('settings', 'Instellingen')}
     </div>`
 }
