@@ -264,7 +264,7 @@ export async function renderCapture(app: HTMLElement): Promise<void> {
 
     saveBtn.disabled = true
 
-    const note: NoteInsert = { content, note_type: 'fleeting' }
+    const note: NoteInsert = { content }
     if (useForEl.value.trim())      note.use_for = useForEl.value.trim()
     if (miniTextarea.value.trim())  note.mini_notes = miniTextarea.value.trim()
     if (sourceIdEl.value)           note.source_id = sourceIdEl.value
@@ -773,11 +773,7 @@ function setupSourceAnalysis(): void {
             <input type="checkbox" class="ap-check" data-idx="${i}" checked />
             <div class="analyze-insight-body">
               <textarea class="ap-content" data-idx="${i}" rows="3">${escHtml(ins.content)}</textarea>
-              ${ins.core_idea || ins.tags.length > 0
-                ? `<p class="analyze-insight-meta">${escHtml(ins.core_idea ?? '')}${
-                    ins.tags.length > 0 ? `${ins.core_idea ? ' · ' : ''}${ins.tags.map(t => '#' + escHtml(t)).join(' ')}` : ''
-                  }</p>`
-                : ''}
+              ${ins.core_idea ? `<p class="analyze-insight-meta">${escHtml(ins.core_idea)}</p>` : ''}
             </div>
           </li>`).join('')}
       </ul>
@@ -833,9 +829,7 @@ function setupSourceAnalysis(): void {
           const ins = insights[idx]
           const note = await insertNote({
             content: c,
-            note_type: 'literature',
             core_idea: ins?.core_idea || undefined,
-            tags: ins && ins.tags.length > 0 ? ins.tags : undefined,
             source_id: src.id,
             source_url: analyzedUrl || undefined,
             source_title: title,

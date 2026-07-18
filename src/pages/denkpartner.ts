@@ -17,11 +17,9 @@ export async function mountDenkpartner(root: HTMLElement): Promise<void> {
           <legend class="field-label">Bereik</legend>
           <div class="scope-row">
             <label class="scope-opt"><input type="radio" name="scope" value="all" checked /> Alle notities</label>
-            <label class="scope-opt"><input type="radio" name="scope" value="tag" /> Op tag</label>
             <label class="scope-opt"><input type="radio" name="scope" value="theme" /> Op thema</label>
           </div>
           <div id="scope-detail" class="scope-detail" hidden>
-            <input type="text" id="scope-tag" placeholder="tagwaarde" class="scope-tag" hidden />
             <select id="scope-theme" hidden></select>
           </div>
         </fieldset>
@@ -33,7 +31,7 @@ export async function mountDenkpartner(root: HTMLElement): Promise<void> {
 
       <div id="dp-save-all" hidden>
         <button class="btn btn-primary" id="btn-save-all">Alle antwoorden opslaan als notities</button>
-        <p class="muted">Lege antwoorden worden overgeslagen. De tag <code>denkpartner</code> wordt automatisch toegevoegd.</p>
+        <p class="muted">Lege antwoorden worden overgeslagen.</p>
       </div>
     </div>
   `
@@ -53,11 +51,9 @@ export async function mountDenkpartner(root: HTMLElement): Promise<void> {
   document.querySelectorAll<HTMLInputElement>('input[name="scope"]').forEach(radio => {
     radio.addEventListener('change', () => {
       const detail = document.getElementById('scope-detail') as HTMLDivElement
-      const tagInput = document.getElementById('scope-tag') as HTMLInputElement
       const themeSelect = document.getElementById('scope-theme') as HTMLSelectElement
       const v = radio.value
       detail.hidden = v === 'all'
-      tagInput.hidden = v !== 'tag'
       themeSelect.hidden = v !== 'theme'
     })
   })
@@ -71,20 +67,16 @@ export async function mountDenkpartner(root: HTMLElement): Promise<void> {
     phases: AI_PHASES.denkpartner,
     beforeRun: () => {
       const scope = document.querySelector<HTMLInputElement>('input[name="scope"]:checked')?.value ?? 'all'
-      const tag = (document.getElementById('scope-tag') as HTMLInputElement).value.trim()
       const themeId = (document.getElementById('scope-theme') as HTMLSelectElement).value
-      if (scope === 'tag' && !tag) { showToast('Voer een tag in'); return false }
       if (scope === 'theme' && !themeId) { showToast('Selecteer een thema'); return false }
       return true
     },
     run: async (model, overrideCap) => {
-      const scope = (document.querySelector<HTMLInputElement>('input[name="scope"]:checked')?.value ?? 'all') as 'all' | 'tag' | 'theme'
-      const tag = (document.getElementById('scope-tag') as HTMLInputElement).value.trim()
+      const scope = (document.querySelector<HTMLInputElement>('input[name="scope"]:checked')?.value ?? 'all') as 'all' | 'theme'
       const themeId = (document.getElementById('scope-theme') as HTMLSelectElement).value
 
       const result = await runDenkpartner({
         scope,
-        tag: scope === 'tag' ? tag : undefined,
         themeId: scope === 'theme' ? themeId : undefined,
         model, overrideCap
       })
@@ -135,7 +127,6 @@ export async function mountDenkpartner(root: HTMLElement): Promise<void> {
         await insertNote({
           content: answer,
           mini_notes: `Vraag: ${q.question}`,
-          tags: ['denkpartner'],
         })
         saved++
       } catch (err) {

@@ -7,10 +7,8 @@ import {
   deleteNote,
   type Note,
   type NoteStatus,
-  type NoteType,
   type NoteUpdate
 } from '../lib/notes'
-import { NOTE_TYPES, NOTE_TYPE_ORDER } from '../lib/noteTypes'
 import {
   fetchThemes,
   fetchThemesForNote,
@@ -31,7 +29,6 @@ import {
 import { fetchSources, type Source } from '../lib/sources'
 import { fetchProjects, fetchNoteProjectIds, setNoteProjects, type BookProject } from '../lib/projects'
 import { openLinkModal } from '../lib/link-modal'
-import { SECTIONS } from '../lib/sections'
 import { rankBySimilarity } from '../lib/similarity'
 import { fetchNeighbors } from '../lib/semantic'
 import { processNote, AiBudgetError } from '../lib/ai'
@@ -100,8 +97,6 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
     } catch { /* best-effort */ }
   }
 
-  let tagsState: string[] = [...(current.tags ?? [])]
-
   // All edits live only in the DOM until Opslaan — guard every way out
   // (bottom nav, back, related-note cards, reload) against silent loss.
   let cleanSnapshot = ''
@@ -128,14 +123,8 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
 
   function renderForm(): void {
     const body = document.querySelector('.note-body') as HTMLElement
-    const typeOptions = NOTE_TYPE_ORDER.map(t =>
-      `<option value="${t}"${current.note_type === t ? ' selected' : ''}>${escHtml(NOTE_TYPES[t].label)}</option>`
-    ).join('')
     const statusOptions = (Object.keys(STATUS_LABELS) as NoteStatus[]).map(s =>
       `<option value="${s}"${current.status === s ? ' selected' : ''}>${STATUS_LABELS[s]}</option>`
-    ).join('')
-    const sectionOptions = SECTIONS.map(sec =>
-      `<option value="${sec.slug}"${current.section === sec.slug ? ' selected' : ''}>${escHtml(sec.label)}</option>`
     ).join('')
     const sourceOptions = sources.map(s =>
       `<option value="${s.id}"${current.source_id === s.id ? ' selected' : ''}>${escHtml(s.title)}${s.author ? ' — ' + escHtml(s.author) : ''}</option>`
@@ -157,7 +146,7 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
 
     // Collapsed groups auto-open when they hold content, so nothing existing
     // is ever hidden — only empty ballast starts folded.
-    const hasMeerVelden = Boolean(current.core_idea || current.use_for || current.ai_summary || current.mini_notes || current.section)
+    const hasMeerVelden = Boolean(current.core_idea || current.use_for || current.ai_summary || current.mini_notes)
     const hasOrganiseren = noteThemeIds.length > 0 || noteProjectIds.length > 0
     const hasBron = Boolean(current.source_id || current.source_url || current.source_title || current.source_author)
 
@@ -168,16 +157,10 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
           <span class="muted">Aangemaakt ${formatDate(current.created_at)}${current.processed_at ? ` · verwerkt ${formatDate(current.processed_at)}` : ''}</span>
         </header>
 
-        <div class="note-row note-row-2">
-          <label class="field">
-            <span class="field-label">Type</span>
-            <select id="f-type">${typeOptions}</select>
-          </label>
-          <label class="field">
-            <span class="field-label">Status</span>
-            <select id="f-status">${statusOptions}</select>
-          </label>
-        </div>
+        <label class="field">
+          <span class="field-label">Status</span>
+          <select id="f-status">${statusOptions}</select>
+        </label>
 
         <label class="field">
           <span class="field-label">Titel</span>
@@ -188,12 +171,6 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
           <span class="field-label">Uitwerking</span>
           <textarea id="f-content" rows="6">${escHtml(current.content)}</textarea>
         </label>
-
-        <fieldset class="field">
-          <legend class="field-label">Tags</legend>
-          <div class="tag-editor" id="tag-editor"></div>
-          <input type="text" id="tag-input" class="tag-input" placeholder="Typ een tag en druk Enter…" />
-        </fieldset>
 
         <details class="note-group" id="note-group-meer"${hasMeerVelden ? ' open' : ''}>
           <summary class="note-group-toggle">Meer velden</summary>
@@ -213,13 +190,6 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
             <label class="field">
               <span class="field-label">Extra notitie</span>
               <textarea id="f-mini" rows="2">${escHtml(current.mini_notes ?? '')}</textarea>
-            </label>
-            <label class="field">
-              <span class="field-label">Hoofdstuk-sectie</span>
-              <select id="f-section">
-                <option value=""${!current.section ? ' selected' : ''}>(geen)</option>
-                ${sectionOptions}
-              </select>
             </label>
           </div>
         </details>
@@ -274,7 +244,7 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
         ${isAiEnabled() ? `
         <div class="note-ai">
           <button class="btn btn-ghost btn-sm" id="ai-prefill">AI-suggesties ophalen</button>
-          <span class="muted">Vult titel, samenvatting, tags en sectie voor. Niets wordt opgeslagen tot je opslaat.</span>
+          <span class="muted">Vult titel en samenvatting voor. Niets wordt opgeslagen tot je opslaat.</span>
           <div class="ai-theme-suggestions" id="ai-theme-suggestions"></div>
         </div>` : ''}
 
@@ -288,9 +258,7 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
       </article>
     `
 
-    renderTagChips()
     renderLinkList()
-    wireTagInput()
     wireLinkAdd()
     wireActions()
     void loadRelatedNotes()
@@ -338,7 +306,7 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
       .join('')
     const heading = semantic
       ? 'Misschien verwant (op betekenis):'
-      : 'Misschien verwant (op woorden &amp; tags):'
+      : 'Misschien verwant (op woorden):'
     box.innerHTML = `
       <div class="ai-sugg-label">${heading}</div>
       ${ranked.map(r => `
@@ -393,37 +361,6 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
     } catch {
       el.innerHTML = '<span class="muted">Kon verwante notities niet laden.</span>'
     }
-  }
-
-  // ── Tags ──────────────────────────────────────────────────────────────────
-  function renderTagChips(): void {
-    const el = document.getElementById('tag-editor')!
-    if (tagsState.length === 0) { el.innerHTML = '<span class="muted">Nog geen tags</span>'; return }
-    el.innerHTML = tagsState.map((t, i) =>
-      `<span class="tag-chip">${escHtml(t)} <button class="tag-remove" data-idx="${i}" title="Verwijder">✕</button></span>`
-    ).join('')
-    el.querySelectorAll<HTMLButtonElement>('.tag-remove').forEach(b => {
-      b.addEventListener('click', () => {
-        tagsState.splice(Number(b.dataset['idx']), 1)
-        renderTagChips()
-      })
-    })
-  }
-
-  function wireTagInput(): void {
-    const input = document.getElementById('tag-input') as HTMLInputElement
-    const commit = () => {
-      const raw = input.value.trim().toLowerCase().replace(/,$/, '').trim()
-      if (raw && !tagsState.includes(raw)) {
-        tagsState.push(raw)
-        renderTagChips()
-      }
-      input.value = ''
-    }
-    input.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); commit() }
-    })
-    input.addEventListener('blur', commit)
   }
 
   // ── Links ───────────────────────────────────────────────────────────────--
@@ -581,7 +518,6 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
   function collectUpdate(): NoteUpdate {
     const val = (sel: string) => (document.getElementById(sel) as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement).value
     return {
-      note_type: val('f-type') as NoteType,
       status: val('f-status') as NoteStatus,
       ai_title: val('f-title').trim() || null,
       core_idea: val('f-core').trim() || null,
@@ -589,8 +525,6 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
       content: val('f-content').trim(),
       ai_summary: val('f-summary').trim() || null,
       mini_notes: val('f-mini').trim() || null,
-      tags: tagsState,
-      section: val('f-section') || null,
       source_id: val('f-source') || null,
       source_url: val('f-source-url').trim() || null,
       source_title: val('f-source-title').trim() || null,
@@ -614,7 +548,6 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
     try {
       const saved = await updateNote(id, updates)
       Object.assign(current, saved)
-      tagsState = [...(current.tags ?? [])]
       await setThemesForNote(id, themeIds)
       noteThemeIds = themeIds
       await setNoteProjects(id, projectIds)
@@ -680,17 +613,12 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
         const set = (sel: string, v: string) => { (document.getElementById(sel) as HTMLInputElement | HTMLTextAreaElement).value = v }
         if (suggestion.title) set('f-title', suggestion.title)
         if (suggestion.summary) set('f-summary', suggestion.summary)
-        if (suggestion.section) (document.getElementById('f-section') as HTMLSelectElement).value = suggestion.section
-        // Samenvatting/sectie live in the collapsed "Meer velden" group — open
-        // it so the user can see what the AI filled in.
-        if (suggestion.summary || suggestion.section) {
+        // Samenvatting lives in the collapsed "Meer velden" group — open it so
+        // the user can see what the AI filled in.
+        if (suggestion.summary) {
           const meer = document.getElementById('note-group-meer') as HTMLDetailsElement | null
           if (meer) meer.open = true
         }
-        for (const tag of suggestion.tags ?? []) {
-          if (!tagsState.includes(tag)) tagsState.push(tag)
-        }
-        renderTagChips()
         // Pre-check matched existing themes (don't auto-create new ones here).
         suggestion.matched_theme_ids?.forEach(tid => {
           const cb = document.querySelector<HTMLInputElement>(`.theme-check[value="${tid}"]`)
@@ -788,14 +716,6 @@ function injectNoteStyles(): void {
       background: var(--bg); border: 1px solid var(--border);
       font-size: var(--fs-sm); cursor: pointer;
     }
-    .tag-editor { display: flex; flex-wrap: wrap; gap: var(--s-1); min-height: 1.4rem; }
-    .tag-chip {
-      display: inline-flex; align-items: center; gap: 4px;
-      background: var(--accent); color: #fff;
-      border-radius: var(--r-sm); padding: 2px var(--s-2); font-size: var(--fs-sm);
-    }
-    .tag-remove { background: none; border: none; color: inherit; cursor: pointer; padding: 0; font-size: 12px; }
-    .tag-input { font-size: var(--fs-sm); }
     .link-list { display: flex; flex-direction: column; gap: var(--s-1); }
     .link-row { display: flex; align-items: center; gap: var(--s-2); flex-wrap: wrap; }
     .link-dir { color: var(--text-muted); font-weight: 600; }

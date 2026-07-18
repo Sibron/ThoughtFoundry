@@ -48,9 +48,6 @@ const MAX_NOTE_LABELS = 60
 const LINK_TYPE_COLORS: Record<LinkType, string> = {
   builds_on:   '#4E7A5E',
   contradicts: '#C0392B',
-  example_of:  '#B8860B',
-  contrasts:   '#7D6B9E',
-  applies_to:  '#3E7CA8',
   related:     '#8A8A8A',
 }
 
@@ -759,12 +756,11 @@ export async function mountGraph(root: HTMLElement): Promise<void> {
     aside.innerHTML = `
       <h3 class="sidebar-title">${escHtml(getNoteTitle(note, 80))}</h3>
       <div class="sidebar-meta">
-        <span class="badge badge-${note.status}">${escHtml(note.status)}</span>
+        <span class="badge badge-${note.status}">${note.status === 'inbox' ? 'Vangbak' : note.status === 'verwerkt' ? 'Verwerkt' : 'Archief'}</span>
         <span class="muted">${escHtml(themeNames)}</span>
       </div>
       <p class="sidebar-content">${escHtml(note.content)}</p>
       ${note.ai_summary ? `<p class="sidebar-summary"><em>${escHtml(note.ai_summary)}</em></p>` : ''}
-      ${(note.tags ?? []).length ? `<div class="sidebar-tags">${note.tags.map(t => `<span class="badge">${escHtml(t)}</span>`).join('')}</div>` : ''}
       <button class="btn btn-ghost btn-sm" id="sidebar-open-note">Open notitie →</button>
 
       <h4 class="sidebar-subtitle">Expliciete links (${explicit.length})</h4>
