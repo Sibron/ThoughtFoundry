@@ -133,9 +133,9 @@ function mount(body: HTMLDivElement, sources: Source[], allNotes: Note[]): void 
               <button class="btn btn-danger" id="src-delete-btn">Verwijderen</button>
             </div>
             <section class="src-detail-notes">
-              <h3>${notes.length} nota${notes.length === 1 ? '' : "'s"}</h3>
+              <h3>${notes.length} notitie${notes.length === 1 ? '' : "s"}</h3>
               ${notes.length === 0
-                ? '<p class="muted">Nog geen nota\'s gekoppeld aan deze bron.</p>'
+                ? '<p class="muted">Nog geen notities gekoppeld aan deze bron.</p>'
                 : notes.map(n => `
                   <div class="crud-note-row">
                     <span class="crud-note-title">${esc(n.ai_title ?? n.core_idea ?? n.content.slice(0, 80))}</span>
@@ -151,7 +151,7 @@ function mount(body: HTMLDivElement, sources: Source[], allNotes: Note[]): void 
       document.getElementById('src-edit-btn')?.addEventListener('click', () => ctx.edit(source))
       document.getElementById('src-delete-btn')?.addEventListener('click', () => {
         // Soft-delete: back to the list now, API delete after the undo window.
-        // Gekoppelde nota's verliezen alleen de koppeling.
+        // Gekoppelde notities verliezen alleen de koppeling.
         ctx.remove(source.id)
         showUndoToast(`Bron "${source.title}" verwijderd`,
           async () => {
@@ -173,7 +173,7 @@ function renderCard(source: Source, noteCount: number): string {
       <div class="src-card-type">${esc(meta.label)}</div>
       <div class="src-card-title">${esc(source.title)}</div>
       ${source.author ? `<div class="src-card-author">${esc(source.author)}${source.year ? ` · ${esc(source.year)}` : ''}</div>` : ''}
-      <div class="src-card-count">${noteCount} nota${noteCount === 1 ? '' : "'s"}</div>
+      <div class="src-card-count">${noteCount} notitie${noteCount === 1 ? '' : "s"}</div>
     </div>
   `
 }

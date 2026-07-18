@@ -21,7 +21,7 @@ import { navigateTo, navigateBack } from '../router'
 export async function renderStudio(app: HTMLElement): Promise<void> {
   const chapterId = paramFromHash('chapter')
   app.innerHTML = `
-    ${renderTopbar('Schrijfstudio', 'library')}
+    ${renderTopbar('Schrijfstudio', 'studio')}
     <div id="studio-root"><div class="studio-loading">Laden…</div></div>
     <div class="toast" id="toast"></div>
   `
@@ -166,7 +166,7 @@ export async function renderStudio(app: HTMLElement): Promise<void> {
       <div class="studio-ai">
         <div class="studio-ai-row">
           <select id="studio-ai-mode" aria-label="AI-hulp modus">
-            <option value="draft">Schrijf deze sectie (uit je nota's)</option>
+            <option value="draft">Schrijf deze sectie (uit je notities)</option>
             <option value="continue">Schrijf verder</option>
             <option value="rewrite">Herschrijf selectie/tekst</option>
             <option value="tighten">Maak strakker</option>
@@ -192,7 +192,7 @@ export async function renderStudio(app: HTMLElement): Promise<void> {
       defaultModel: 'claude-sonnet-4-6',
       expectedOutputTokens: 900,
       estimateInputChars: () => s.note_ids.length * 400 + (s.content_md?.length ?? 0) + 800,
-      phases: ['Nota\'s doornemen…', 'Toon vangen…', 'Proza schrijven…', 'Bijschaven…'],
+      phases: ['Notities doornemen…', 'Toon vangen…', 'Proza schrijven…', 'Bijschaven…'],
       beforeRun: () => {
         flushSave()
         const mode = modeEl.value as WriteSectionMode
@@ -317,6 +317,7 @@ export async function renderStudio(app: HTMLElement): Promise<void> {
     document.getElementById('sec-move-up')?.addEventListener('click', () => moveSection(-1))
     document.getElementById('sec-move-down')?.addEventListener('click', () => moveSection(1))
     document.getElementById('sec-delete')?.addEventListener('click', async () => {
+      // Native confirm() is deliberate: destructive, and revisions are the safety net.
       if (!confirm(`Sectie «${s.heading}» verwijderen?${s.content_md?.trim() ? ' De geschreven tekst gaat verloren.' : ''}`)) return
       try {
         await deleteSection(s.id)

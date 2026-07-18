@@ -32,7 +32,7 @@ export async function mountBook(root: HTMLElement): Promise<void> {
 
   let sectionStats = new Map<string, ChapterSectionStats>()
   // Workbench project scope: /library?tab=book&project=<id> pre-filters the
-  // note pool to that project's noten and stamps project_id on saved chapters.
+  // note pool to that project's notities and stamps project_id on saved chapters.
   let workProject: BookProject | null = null
   let workProjectNoteIds: Set<string> = new Set()
 
@@ -99,15 +99,15 @@ export async function mountBook(root: HTMLElement): Promise<void> {
       <section class="book-section">
         <header class="book-section-header">
           <h2>Hoofdstuk-werkbank</h2>
-          <p class="muted">Selecteer een thema, kies nota's, en laat AI een hoofdstukschets voorstellen.</p>
-          ${workProject ? `<p class="book-project-scope">Project: <strong>${escHtml(workProject.title)}</strong> — alleen projectnoten worden getoond; het hoofdstuk wordt aan dit project gekoppeld.</p>` : ''}
+          <p class="muted">Selecteer een thema, kies notities, en laat AI een hoofdstukschets voorstellen.</p>
+          ${workProject ? `<p class="book-project-scope">Project: <strong>${escHtml(workProject.title)}</strong> — alleen projectnotities worden getoond; het hoofdstuk wordt aan dit project gekoppeld.</p>` : ''}
         </header>
 
         <div class="book-controls">
           <label class="field">
             <span class="field-label">Thema</span>
             <select id="book-theme">
-              <option value="">— alle nota's —</option>
+              <option value="">— alle notities —</option>
               ${themes.map(t => `<option value="${t.id}">${escHtml(t.name)}</option>`).join('')}
             </select>
           </label>
@@ -155,7 +155,7 @@ export async function mountBook(root: HTMLElement): Promise<void> {
       estimateInputChars: () => selectedNoteIds().length * 400 + 1500,
       phases: AI_PHASES.book,
       beforeRun: () => {
-        if (selectedNoteIds().length < 2) { showToast('Selecteer minimaal 2 nota\'s'); return false }
+        if (selectedNoteIds().length < 2) { showToast('Selecteer minimaal 2 notities'); return false }
         if (!isAiEnabled()) { showToast('Zet AI aan in Instellingen om hoofdstukken te genereren'); return false }
         return true
       },
@@ -422,8 +422,8 @@ export async function mountBook(root: HTMLElement): Promise<void> {
     const listEl = document.getElementById('book-notes-list')!
     if (filtered.length === 0) {
       listEl.innerHTML = workProject
-        ? '<p class="muted">Geen verwerkte projectnoten gevonden. Koppel eerst noten aan het project.</p>'
-        : '<p class="muted">Geen verwerkte nota\'s in dit thema.</p>'
+        ? '<p class="muted">Geen verwerkte projectnotities gevonden. Koppel eerst notities aan het project.</p>'
+        : '<p class="muted">Geen verwerkte notities in dit thema.</p>'
       updateGenerateState()
       return
     }
@@ -471,8 +471,8 @@ export async function mountBook(root: HTMLElement): Promise<void> {
     const ids = selectedNoteIds()
     const info = document.getElementById('generate-info')!
     info.textContent = ids.length < 2
-      ? 'Selecteer minimaal 2 nota\'s.'
-      : `${ids.length} nota's geselecteerd.`
+      ? 'Selecteer minimaal 2 notities.'
+      : `${ids.length} notities geselecteerd.`
     genAction?.setDisabled(ids.length < 2)
     genAction?.refreshEstimate()
   }
@@ -557,7 +557,7 @@ export async function mountBook(root: HTMLElement): Promise<void> {
         </header>
         ${c.summary ? `<p class="muted">${escHtml(c.summary)}</p>` : ''}
         <ul class="saved-outline">
-          ${c.outline.map(s => `<li><strong>${escHtml(s.heading)}</strong> <span class="muted">— ${s.note_ids.length} nota's</span></li>`).join('')}
+          ${c.outline.map(s => `<li><strong>${escHtml(s.heading)}</strong> <span class="muted">— ${s.note_ids.length} notities</span></li>`).join('')}
         </ul>
         <div class="saved-actions">
           <button class="btn btn-primary saved-write">Schrijf →</button>
@@ -627,7 +627,7 @@ function renderSectionEditor(
         <textarea data-section-intent="${i}" rows="2">${escHtml(s.intent)}</textarea>
       </label>
       <div class="field">
-        <span class="field-label">Nota's (${s.note_ids.length})</span>
+        <span class="field-label">Notities (${s.note_ids.length})</span>
         <div class="plan-section-notes" data-section-notes="${i}">
           ${s.note_ids.map(id => `<label class="chip-check"><input type="checkbox" value="${id}" checked/> ${escHtml(labelOf(id))}</label>`).join('')}
         </div>

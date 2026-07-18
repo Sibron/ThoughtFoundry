@@ -11,95 +11,38 @@ import {
 import { NOTE_TYPES, NOTE_TYPE_ORDER } from '../lib/noteTypes'
 import { renderTopbar, attachTopbar, renderGuidanceBanner } from '../lib/nav'
 import { navigateTo } from '../router'
-import { mountSearch } from './search'
-import { mountGraph } from './graph'
-import { mountConnections } from './connections'
 import { injectShellStyles } from './denktools'
-import { esc as escHtml, errMsg, showToast } from '../lib/crud-list'
+import { esc as escHtml, errMsg, showToast, showUndoToast, formatRelative } from '../lib/crud-list'
 
 export async function renderInbox(app: HTMLElement): Promise<void> {
+  // Back-compat for pre-restructure deep-links (/inbox?view=…): graph and
+  // connections moved to the Verbanden shell; search became the topbar overlay.
+  const params = new URLSearchParams(window.location.hash.split('?')[1] ?? '')
+  const requestedView = params.get('view')
+  const viewAlias: Record<string, string> = { zoeken: 'search', graaf: 'graph', verbindingen: 'connections' }
+  const view = requestedView ? (viewAlias[requestedView] ?? requestedView) : null
+  if (view === 'graph' || view === 'connections') {
+    params.set('view', view)
+    navigateTo('/verbanden?' + params.toString())  // carries focus= along
+    return
+  }
+
   app.innerHTML = `
     ${renderTopbar('Vangbak', 'inbox')}
-    <div class="inbox-view-toggle focus-hide" id="inbox-view-toggle">
-      <button class="shell-tab" data-view="list" aria-current="true">Lijst</button>
-      <button class="shell-tab" data-view="search">Zoeken</button>
-      <button class="shell-tab" data-view="graph">Graaf</button>
-      <button class="shell-tab" data-view="connections">Verbindingen</button>
-    </div>
-    <div id="inbox-view">
-      <div id="inbox-list-view"></div>
-      <div id="inbox-aux-view" hidden></div>
-    </div>
+    <div id="inbox-view"></div>
     <div class="toast" id="toast"></div>
   `
   injectShellStyles()
   attachTopbar()
 
-  const listView = document.getElementById('inbox-list-view')!
-  const auxView = document.getElementById('inbox-aux-view')!
-  const toggle = document.getElementById('inbox-view-toggle')!
+  await mountInboxList(document.getElementById('inbox-view')!)
 
-  // The list holds expensive state (status/type filters, search text, selection,
-  // loaded pages, scroll), so it is mounted once and only hidden/shown. Zoeken,
-  // Graaf and Verbindingen are "re-finding" views without state worth keeping —
-  // they mount fresh into a separate aux container.
-  type AuxView = 'search' | 'graph' | 'connections'
-  let current: 'list' | AuxView = 'list'
-  let auxLoading = false
-  let auxDesired: AuxView | null = null
-
-  // Single in-flight aux mount; re-mount if a newer view was requested mid-load
-  // so the last-clicked view wins (guards against fast switching).
-  async function showAux(v: AuxView): Promise<void> {
-    auxDesired = v
-    if (auxLoading) return
-    auxLoading = true
-    try {
-      while (auxDesired) {
-        const t: AuxView = auxDesired
-        auxView.innerHTML = ''
-        if (t === 'search') await mountSearch(auxView)
-        else if (t === 'graph') await mountGraph(auxView)
-        else await mountConnections(auxView)
-        if (auxDesired === t) break
-      }
-    } finally {
-      auxLoading = false
-    }
+  if (view === 'search') {
+    // The old /search route (and the PWA "Zoeken" shortcut) land here; the
+    // overlay reads any ?q= from the hash itself.
+    const { openSearchOverlay } = await import('../lib/search-overlay')
+    void openSearchOverlay()
   }
-
-  toggle.querySelectorAll<HTMLButtonElement>('.shell-tab').forEach(btn => {
-    btn.addEventListener('click', async () => {
-      const v = btn.dataset['view'] as 'list' | AuxView
-      if (v === current) return
-      current = v
-      toggle.querySelectorAll('.shell-tab').forEach(b => b.removeAttribute('aria-current'))
-      btn.setAttribute('aria-current', 'true')
-      if (v === 'list') {
-        // Stop any pending aux mount and reveal the preserved list. Don't clear
-        // aux content here — an in-flight mount may still be writing into it.
-        auxDesired = null
-        auxView.hidden = true
-        listView.hidden = false
-      } else {
-        listView.hidden = true
-        auxView.hidden = false
-        await showAux(v)
-      }
-    })
-  })
-
-  // Deep-links: /inbox?view=search|graph|verbindingen (used by the old
-  // /search and /graph routes, Vandaag's CTA's, and "Bekijk in graaf" entries).
-  const params = new URLSearchParams(window.location.hash.split('?')[1] ?? '')
-  const requestedView = params.get('view')
-  const viewAlias: Record<string, string> = { zoeken: 'search', graaf: 'graph', verbindingen: 'connections' }
-  const view = requestedView ? (viewAlias[requestedView] ?? requestedView) : null
-  if (view === 'search' || view === 'graph' || view === 'connections') {
-    toggle.querySelector<HTMLButtonElement>(`[data-view="${view}"]`)?.click()
-  }
-
-  await mountInboxList(listView)
 }
 
 export async function mountInboxList(root: HTMLElement): Promise<void> {
@@ -118,7 +61,7 @@ export async function mountInboxList(root: HTMLElement): Promise<void> {
           const m = NOTE_TYPES[t]
           return `<button class="type-pill" data-note-type="${t}" style="--pill-color:${m.color}">${escHtml(m.label)}</button>`
         }).join('')}
-        <button class="type-pill orphan-pill" id="orphan-pill" title="Notities zonder enkele link of thema">⚓ Wees-notities</button>
+        <button class="type-pill orphan-pill" id="orphan-pill" title="Notities zonder enkele verbinding of thema">Losse notities</button>
       </div>
       <div class="orphan-banner focus-hide" id="orphan-banner" hidden></div>
       <div class="inbox-toolbar">
@@ -275,7 +218,7 @@ export async function mountInboxList(root: HTMLElement): Promise<void> {
       const capped = pool.length === 300 ? '+' : ''
       banner.hidden = false
       banner.innerHTML = `
-        <span>Je hebt <strong>${orphans.length}${capped}</strong> losse notities zonder enkele verbinding.</span>
+        <span>${orphans.length}${capped} notities staan nog los — verbind ze als je wilt.</span>
         <button class="btn btn-ghost btn-sm" id="orphan-show">Toon</button>
         <button class="orphan-dismiss" id="orphan-dismiss" title="Verberg">✕</button>
       `
@@ -301,16 +244,39 @@ export async function mountInboxList(root: HTMLElement): Promise<void> {
 
   function renderList(): void {
     const notes = visibleNotes()
+    updateTypePills()
     if (notes.length === 0) {
+      const noFilters = !searchText && !statusFilter && !noteTypeFilter && !orphanMode
       listEl.innerHTML = searchText
         ? '<div class="inbox-empty">Niets in de geladen lijst. Diep zoeken? Gebruik Zoek in de bovenbalk.</div>'
-        : '<div class="inbox-empty">Geen notities gevonden.</div>'
+        : noFilters && allNotes.length === 0
+          ? `<div class="inbox-empty inbox-empty-intro">
+               <p><strong>Zo werkt het:</strong></p>
+               <p>1. <strong>Vang</strong> elke gedachte zodra die opkomt.</p>
+               <p>2. <strong>Verwerk</strong> ze hier — één voor één, geef ze een plek.</p>
+               <p>3. <strong>Verbind</strong> ze en zie patronen ontstaan.</p>
+             </div>`
+          : '<div class="inbox-empty">Geen notities gevonden.</div>'
       selectAllEl.checked = false
       return
     }
     listEl.innerHTML = notes.map(note => renderNoteRow(note, selected.has(note.id))).join('')
     attachRowListeners()
     selectAllEl.checked = notes.length > 0 && notes.every(n => selected.has(n.id))
+  }
+
+  // Only offer type filters that can actually filter something: pills for
+  // types present in the loaded notes, and no pill row at all when every
+  // note has the same type.
+  function updateTypePills(): void {
+    const row = document.getElementById('inbox-type-pills')
+    if (!row) return
+    const present = new Set(allNotes.map(n => n.note_type ?? 'fleeting'))
+    row.querySelectorAll<HTMLButtonElement>('.type-pill[data-note-type]').forEach(pill => {
+      const t = pill.dataset['noteType']
+      if (t) pill.hidden = !present.has(t as NoteType) && noteTypeFilter !== t
+    })
+    row.hidden = present.size <= 1 && !orphanMode && !noteTypeFilter
   }
 
   function updateBulkBar(): void {
@@ -333,19 +299,17 @@ export async function mountInboxList(root: HTMLElement): Promise<void> {
         renderList()
         updateBulkBar()
 
-        let undone = false
-        showToastWithUndo(`${ids.length} nota${ids.length === 1 ? '' : "'s"} verwijderd`, () => {
-          undone = true
-          allNotes = [...removed, ...allNotes].sort(
-            (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-          )
-          renderList()
-          updateBulkBar()
-        })
-        setTimeout(async () => {
-          if (undone) return
-          try { await bulkDelete(ids) } catch { showToast('Verwijderen mislukt.') }
-        }, 5000)
+        showUndoToast(`${ids.length} notitie${ids.length === 1 ? '' : "s"} verwijderd`,
+          async () => {
+            try { await bulkDelete(ids) } catch { showToast('Verwijderen mislukt.') }
+          },
+          () => {
+            allNotes = [...removed, ...allNotes].sort(
+              (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+            )
+            renderList()
+            updateBulkBar()
+          })
       } else {
         const newStatus: NoteStatus = action === 'archive' ? 'archief' : 'inbox'
         await bulkUpdateStatus(ids, newStatus)
@@ -375,9 +339,15 @@ export async function mountInboxList(root: HTMLElement): Promise<void> {
         selectAllEl.checked = allNotes.every(n => selected.has(n.id))
       })
 
-      row.querySelector('.row-header')?.addEventListener('click', () => {
+      const header = row.querySelector<HTMLElement>('.row-header')
+      header?.addEventListener('click', () => {
         const expanded = row.classList.toggle('expanded')
         row.querySelector('.row-detail')!.setAttribute('aria-hidden', String(!expanded))
+        header.setAttribute('aria-expanded', String(expanded))
+      })
+      // role="button" promises Enter/Space activation
+      header?.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); header.click() }
       })
 
       row.querySelector('.row-edit-btn')?.addEventListener('click', (e) => {
@@ -395,16 +365,14 @@ export async function mountInboxList(root: HTMLElement): Promise<void> {
         renderList()
         updateBulkBar()
 
-        let undone = false
-        showToastWithUndo('Nota verwijderd', () => {
-          undone = true
-          allNotes.splice(noteIdx, 0, note)
-          renderList()
-        })
-        setTimeout(async () => {
-          if (undone) return
-          try { await deleteNote(id) } catch { showToast('Verwijderen mislukt.') }
-        }, 5000)
+        showUndoToast('Notitie verwijderd',
+          async () => {
+            try { await deleteNote(id) } catch { showToast('Verwijderen mislukt.') }
+          },
+          () => {
+            allNotes.splice(noteIdx, 0, note)
+            renderList()
+          })
       })
     })
   }
@@ -413,8 +381,9 @@ export async function mountInboxList(root: HTMLElement): Promise<void> {
 
 function renderNoteRow(note: Note, isSelected: boolean): string {
   const preview = note.ai_title ?? note.content.slice(0, 200)
-  const date = relativeDate(note.created_at)
+  const date = formatRelative(note.created_at)
   const badgeClass = `badge badge-${note.status}`
+  const statusLabel = note.status === 'inbox' ? 'Vangbak' : note.status === 'verwerkt' ? 'Verwerkt' : 'Archief'
   const typeMeta = NOTE_TYPES[note.note_type ?? 'fleeting']
   const typeBadge = `<span class="note-type-badge" style="background:${typeMeta?.color ?? '#888'}">${escHtml(typeMeta?.label ?? note.note_type ?? '')}</span>`
   return `
@@ -427,7 +396,7 @@ function renderNoteRow(note: Note, isSelected: boolean): string {
           <div class="row-preview">${escHtml(preview)}${!note.ai_title && note.content.length > 200 ? '…' : ''}</div>
           <div class="row-meta">
             ${typeBadge}
-            <span class="${badgeClass}">${escHtml(note.status)}</span>
+            <span class="${badgeClass}">${statusLabel}</span>
             <span class="row-date">${date}</span>
           </div>
         </div>
@@ -445,33 +414,6 @@ function renderNoteRow(note: Note, isSelected: boolean): string {
       </div>
     </div>
   `
-}
-
-function relativeDate(iso: string): string {
-  const now = new Date()
-  const d = new Date(iso)
-  const diffMs = now.getTime() - d.getTime()
-  const diffDays = Math.floor(diffMs / 86400000)
-  if (diffDays === 0) return 'vandaag'
-  if (diffDays === 1) return 'gisteren'
-  if (diffDays < 7) return `${diffDays} dagen geleden`
-  if (diffDays < 30) return `${Math.floor(diffDays / 7)} weken geleden`
-  return d.toLocaleDateString('nl-NL', { day: 'numeric', month: 'short', year: 'numeric' })
-}
-
-
-
-
-function showToastWithUndo(msg: string, onUndo: () => void): void {
-  const toast = document.getElementById('toast') as HTMLDivElement | null
-  if (!toast) return
-  toast.innerHTML = `${escHtml(msg)} <button class="toast-undo">Ongedaan maken</button>`
-  toast.classList.add('show')
-  toast.querySelector<HTMLButtonElement>('.toast-undo')?.addEventListener('click', () => {
-    onUndo()
-    toast.classList.remove('show')
-  })
-  setTimeout(() => toast.classList.remove('show'), 5000)
 }
 
 function injectInboxStyles(): void {
@@ -528,6 +470,8 @@ function injectInboxStyles(): void {
       text-align: center;
       padding: var(--s-7) 0;
     }
+    .inbox-empty-intro { display: flex; flex-direction: column; gap: var(--s-2); }
+    .inbox-empty-intro strong { color: var(--text); }
     .inbox-row {
       background: var(--surface);
       border: 1px solid var(--border);

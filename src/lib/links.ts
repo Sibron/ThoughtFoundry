@@ -43,7 +43,7 @@ export async function createLink(input: {
   type?: LinkType
   reason?: string
 }): Promise<NoteLink> {
-  if (input.sourceId === input.targetId) throw new Error('Een nota kan niet aan zichzelf gelinkt worden.')
+  if (input.sourceId === input.targetId) throw new Error('Een notitie kan niet aan zichzelf gelinkt worden.')
 
   const { data: userData } = await supabase.auth.getUser()
   const userId = userData.user?.id

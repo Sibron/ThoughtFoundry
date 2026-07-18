@@ -5,6 +5,7 @@
 // closes it too (the router swaps the page underneath).
 
 import { mountSearch } from '../pages/search'
+import { trapFocus } from './focus-trap'
 
 export async function openSearchOverlay(): Promise<void> {
   if (document.getElementById('search-overlay')) return
@@ -23,19 +24,24 @@ export async function openSearchOverlay(): Promise<void> {
     </div>
   `
   document.body.appendChild(overlay)
+  const releaseFocus = trapFocus(overlay)
 
   const close = () => {
     document.removeEventListener('keydown', onKey)
+    window.removeEventListener('hashchange', onHash)
+    releaseFocus()
     overlay.remove()
   }
   const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') close() }
+  const onHash = () => close()
 
   overlay.querySelector('.search-overlay-scrim')?.addEventListener('click', close)
   overlay.querySelector('.search-overlay-close')?.addEventListener('click', close)
   document.addEventListener('keydown', onKey)
 
   // Result taps navigate — close the overlay so the target page is visible.
-  window.addEventListener('hashchange', close, { once: true })
+  // Removed in close() (an Esc/scrim close would otherwise leak the listener).
+  window.addEventListener('hashchange', onHash)
 
   await mountSearch(document.getElementById('search-overlay-body')!)
 }

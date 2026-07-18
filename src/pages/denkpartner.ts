@@ -10,13 +10,13 @@ export async function mountDenkpartner(root: HTMLElement): Promise<void> {
     <div class="dp-body">
       <div class="dp-card">
         <p class="dp-intro">
-          Denkpartner analyseert jouw nota's en stelt 4-5 scherpe vragen die je blinde vlekken blootleggen. Jij typt je antwoorden — die worden direct opgeslagen als nieuwe nota's.
+          Denkpartner analyseert jouw notities en stelt 4-5 scherpe vragen die je blinde vlekken blootleggen. Jij typt je antwoorden — die worden direct opgeslagen als nieuwe notities.
         </p>
 
         <fieldset class="field dp-scope">
           <legend class="field-label">Bereik</legend>
           <div class="scope-row">
-            <label class="scope-opt"><input type="radio" name="scope" value="all" checked /> Alle nota's</label>
+            <label class="scope-opt"><input type="radio" name="scope" value="all" checked /> Alle notities</label>
             <label class="scope-opt"><input type="radio" name="scope" value="tag" /> Op tag</label>
             <label class="scope-opt"><input type="radio" name="scope" value="theme" /> Op thema</label>
           </div>
@@ -32,7 +32,7 @@ export async function mountDenkpartner(root: HTMLElement): Promise<void> {
       <div id="dp-questions" class="dp-questions" hidden></div>
 
       <div id="dp-save-all" hidden>
-        <button class="btn btn-primary" id="btn-save-all">Alle antwoorden opslaan als nota's</button>
+        <button class="btn btn-primary" id="btn-save-all">Alle antwoorden opslaan als notities</button>
         <p class="muted">Lege antwoorden worden overgeslagen. De tag <code>denkpartner</code> wordt automatisch toegevoegd.</p>
       </div>
     </div>
@@ -145,7 +145,7 @@ export async function mountDenkpartner(root: HTMLElement): Promise<void> {
     }
 
     if (saved > 0 && failed === 0) {
-      showToast(`${saved} antwoord${saved === 1 ? '' : 'en'} opgeslagen als nota${saved === 1 ? '' : "'s"}`)
+      showToast(`${saved} antwoord${saved === 1 ? '' : 'en'} opgeslagen als notitie${saved === 1 ? '' : "s"}`)
       document.getElementById('dp-questions')!.hidden = true
       document.getElementById('dp-save-all')!.hidden = true
       questions = []
@@ -159,7 +159,7 @@ export async function mountDenkpartner(root: HTMLElement): Promise<void> {
     }
 
     btn.disabled = false
-    btn.textContent = 'Alle antwoorden opslaan als nota\'s'
+    btn.textContent = 'Alle antwoorden opslaan als notities'
   }
 }
 

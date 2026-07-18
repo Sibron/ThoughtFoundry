@@ -3,7 +3,7 @@
  * Returns a stop() function that removes the indicator when the call finishes.
  *
  * Usage:
- *   const stop = startAiThinking(btn, ['Nota lezen…', 'Verbindingen zoeken…'])
+ *   const stop = startAiThinking(btn, ['Notitie lezen…', 'Verbindingen zoeken…'])
  *   try { await callAI() } finally { stop() }
  */
 export function startAiThinking(btn: HTMLButtonElement, phases: string[]): () => void {
@@ -43,33 +43,33 @@ export function startAiThinking(btn: HTMLButtonElement, phases: string[]): () =>
 /** Preset phase lists for each AI feature */
 export const AI_PHASES = {
   process: [
-    'Nota lezen…',
+    'Notitie lezen…',
     'Kernideeën herkennen…',
     'Passende thema\'s zoeken…',
     'Verbindingen leggen…',
     'Suggesties formuleren…',
   ],
   book: [
-    'Nota\'s doornemen…',
+    'Notities doornemen…',
     'Structuur bedenken…',
     'Verhaallijnen verbinden…',
     'Tekst uitwerken…',
     'Afronden…',
   ],
   denkpartner: [
-    'Jouw nota\'s lezen…',
+    'Jouw notities lezen…',
     'Patronen herkennen…',
     'Kritische vragen formuleren…',
     'Bijna klaar…',
   ],
   spark: [
-    'Relevante nota\'s zoeken…',
+    'Relevante notities zoeken…',
     'Verbindingen leggen…',
     'Synthese schrijven…',
     'Afronden…',
   ],
   clusters: [
-    'Nota\'s doorzoeken…',
+    'Notities doorzoeken…',
     'Overeenkomsten analyseren…',
     'Clusters vormen…',
     'Resultaten verwerken…',

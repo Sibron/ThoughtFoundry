@@ -19,7 +19,7 @@ export async function mountSpark(root: HTMLElement): Promise<void> {
     <div class="spark-body">
       <div class="spark-card">
         <p class="spark-intro">
-          Voer een thema of vraag in. Spark zoekt jouw nota's die het beste passen en schrijft een synthese in de stijl van jouw keuze. Alles op basis van jouw eigen gedachten.
+          Voer een thema of vraag in. Spark zoekt jouw notities die het beste passen en schrijft een synthese in de stijl van jouw keuze. Alles op basis van jouw eigen gedachten.
         </p>
 
         <label class="field">
@@ -87,13 +87,13 @@ export async function mountSpark(root: HTMLElement): Promise<void> {
       const result = await runSpark({ query, outputType, model, overrideCap })
 
       if (!result.synthesis) {
-        showToast(result.message ?? 'Geen passende nota\'s gevonden.')
+        showToast(result.message ?? 'Geen passende notities gevonden.')
         return result.usage
       }
 
       document.getElementById('spark-result')!.hidden = false
       document.getElementById('result-meta')!.innerHTML =
-        `Synthese op basis van <strong>${result.matchCount}</strong> passende nota${result.matchCount === 1 ? '' : "'s"}` +
+        `Synthese op basis van <strong>${result.matchCount}</strong> passende notitie${result.matchCount === 1 ? '' : "s"}` +
         (result.retrieval ? ` · gevonden via ${result.retrieval === 'semantisch' ? 'betekenis' : 'woorden'}` : '') +
         (result.usage ? ` · ${formatUsd(result.usage.costUsd)}` : '')
 
