@@ -10,10 +10,10 @@ export async function mountClusters(root: HTMLElement): Promise<void> {
     <div class="clusters-body">
       <div class="clusters-intro-card">
         <p class="clusters-intro">
-          AI analyseert je verwerkte nota's en detecteert 2-4 impliciete thema-clusters — patronen die je nog niet bewust als thema hebt gelabeld, inclusief welke permanente nota ontbreekt.
+          AI analyseert je verwerkte notities en detecteert 2-4 impliciete thema-clusters — patronen die je nog niet bewust als thema hebt gelabeld, inclusief welke permanente notitie ontbreekt.
         </p>
         <div class="clusters-run-row" id="clusters-action-host"></div>
-        <p class="muted">Vereist minimaal 5 verwerkte nota's.</p>
+        <p class="muted">Vereist minimaal 5 verwerkte notities.</p>
       </div>
 
       <div id="clusters-result" hidden></div>
@@ -40,7 +40,7 @@ export async function mountClusters(root: HTMLElement): Promise<void> {
       }
 
       resultEl.innerHTML = `
-        <p class="clusters-meta">${result.clusters.length} cluster${result.clusters.length === 1 ? '' : 's'} gevonden in ${result.noteCount ?? '?'} verwerkte nota's</p>
+        <p class="clusters-meta">${result.clusters.length} cluster${result.clusters.length === 1 ? '' : 's'} gevonden in ${result.noteCount ?? '?'} verwerkte notities</p>
         <div class="clusters-list" id="clusters-list">
           ${result.clusters.map((c, i) => renderCluster(c, i)).join('')}
         </div>
@@ -73,17 +73,17 @@ export async function mountClusters(root: HTMLElement): Promise<void> {
         <div class="cluster-header">
           <span class="cluster-index">${i + 1}</span>
           <h3 class="cluster-name">${escHtml(c.name)}</h3>
-          <span class="cluster-count">${c.note_ids.length} nota${c.note_ids.length === 1 ? '' : "'s"}</span>
+          <span class="cluster-count">${c.note_ids.length} notitie${c.note_ids.length === 1 ? '' : "s"}</span>
         </div>
         <p class="cluster-theme">${escHtml(c.implicit_theme)}</p>
         <div class="cluster-missing">
-          <span class="missing-label">Ontbrekende nota</span>
+          <span class="missing-label">Ontbrekende notitie</span>
           <p class="missing-text">${escHtml(c.missing_note)}</p>
-          <button class="btn btn-ghost btn-sm" id="cluster-create-${i}">Aanmaken als nota</button>
+          <button class="btn btn-ghost btn-sm" id="cluster-create-${i}">Aanmaken als notitie</button>
         </div>
         ${c.note_ids.length > 0 ? `
           <div class="cluster-notes">
-            <span class="cluster-notes-label">Nota's in dit cluster</span>
+            <span class="cluster-notes-label">Notities in dit cluster</span>
             <div class="cluster-note-pills">
               ${c.note_ids.map(id => `<span class="cluster-pill" data-id="${id}">laden…</span>`).join('')}
             </div>
@@ -112,11 +112,11 @@ export async function mountClusters(root: HTMLElement): Promise<void> {
         } catch { /* skip self/duplicate/missing */ }
       }
       btn.textContent = 'Aangemaakt ✓'
-      showToast(linked ? `Nota aangemaakt en aan ${linked} nota's gekoppeld` : 'Nota aangemaakt in inbox')
+      showToast(linked ? `Notitie aangemaakt en aan ${linked} notities gekoppeld` : 'Notitie aangemaakt in inbox')
     } catch (err) {
       showToast(`Mislukt: ${errMsg(err)}`)
       btn.disabled = false
-      btn.textContent = 'Aanmaken als nota'
+      btn.textContent = 'Aanmaken als notitie'
     }
   }
 }

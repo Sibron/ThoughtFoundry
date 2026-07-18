@@ -65,7 +65,7 @@ export async function mountGraph(root: HTMLElement): Promise<void> {
               <option value="">Alle</option>
             </select>
           </label>
-          <input type="search" id="graph-search" class="graph-search" placeholder="Zoek nota…" aria-label="Zoek een nota in de graaf" />
+          <input type="search" id="graph-search" class="graph-search" placeholder="Zoek notitie…" aria-label="Zoek een notitie in de graaf" />
           <label class="graph-filter graph-toggle">
             <input type="checkbox" id="graph-theme-edges" />
             Toon thema-verbanden
@@ -153,7 +153,7 @@ export async function mountGraph(root: HTMLElement): Promise<void> {
   if (notes.length === 0) {
     document.getElementById('graph-canvas-wrap')!.innerHTML = `
       <div class="graph-empty">
-        <h2>Nog geen nota's</h2>
+        <h2>Nog geen notities</h2>
         <p>Capture eerst wat ideeën, verwerk ze, en kom dan terug om de graaf te zien.</p>
         <button class="btn btn-primary" id="graph-empty-capture">Naar Vangbak</button>
       </div>
@@ -359,11 +359,11 @@ export async function mountGraph(root: HTMLElement): Promise<void> {
     const stats = document.getElementById('graph-stats')!
     const noteCount = nodes.filter(n => n.kind === 'note').length
     if (usingTemporalFallback) {
-      stats.textContent = `${noteCount} nota's · Tijdclusters (thema's nog niet gekoppeld)`
+      stats.textContent = `${noteCount} notities · Tijdclusters (thema's nog niet gekoppeld)`
       return
     }
     const parts = [
-      `${noteCount} nota's`,
+      `${noteCount} notities`,
       `${edges.filter(e => e.kind === 'explicit').length} expliciete links`,
       `${themes.length} thema's`,
     ]
@@ -377,7 +377,7 @@ export async function mountGraph(root: HTMLElement): Promise<void> {
     svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
     svg.setAttribute('class', 'graph-svg')
     svg.setAttribute('role', 'application')
-    svg.setAttribute('aria-label', 'Kennisgraaf van je nota’s. Sleep een knoop om te verplaatsen, scroll om te zoomen.')
+    svg.setAttribute('aria-label', 'Kennisgraaf van je notities. Sleep een knoop om te verplaatsen, scroll om te zoomen.')
     applyView()
     wrap.appendChild(svg)
     attachViewControls(svg)
@@ -508,7 +508,7 @@ export async function mountGraph(root: HTMLElement): Promise<void> {
     aside.innerHTML = `
       <h3 class="sidebar-title" style="color:${t.color}">${escHtml(t.name)}</h3>
       ${t.description ? `<p class="muted">${escHtml(t.description)}</p>` : ''}
-      <p class="muted">${members.length} nota's in beeld</p>
+      <p class="muted">${members.length} notities in beeld</p>
       <button class="btn btn-ghost" id="theme-focus-filter">Filter op dit thema</button>
       <ul class="sidebar-links">
         ${members.slice(0, 20).map(m =>
@@ -765,7 +765,7 @@ export async function mountGraph(root: HTMLElement): Promise<void> {
       <p class="sidebar-content">${escHtml(note.content)}</p>
       ${note.ai_summary ? `<p class="sidebar-summary"><em>${escHtml(note.ai_summary)}</em></p>` : ''}
       ${(note.tags ?? []).length ? `<div class="sidebar-tags">${note.tags.map(t => `<span class="badge">${escHtml(t)}</span>`).join('')}</div>` : ''}
-      <button class="btn btn-ghost btn-sm" id="sidebar-open-note">Open nota →</button>
+      <button class="btn btn-ghost btn-sm" id="sidebar-open-note">Open notitie →</button>
 
       <h4 class="sidebar-subtitle">Expliciete links (${explicit.length})</h4>
       <ul class="sidebar-links">
@@ -788,7 +788,7 @@ export async function mountGraph(root: HTMLElement): Promise<void> {
       <details class="sidebar-add-link">
         <summary>+ Link toevoegen</summary>
         <select id="link-target">
-          <option value="">— kies nota —</option>
+          <option value="">— kies notitie —</option>
           ${nodes
             .filter(o => o.kind === 'note' && o.id !== n.id)
             .map(o => `<option value="${o.id}">${escHtml(getNoteTitle(o.note!, 60))}</option>`)
@@ -889,7 +889,7 @@ export async function mountGraph(root: HTMLElement): Promise<void> {
     const aside = document.getElementById('graph-sidebar')!
     aside.innerHTML = `
       <h3 class="sidebar-title">Geen voorstellen</h3>
-      <p class="muted">Er zijn geen nieuwe semantische verbanden gevonden. Dit kan ook betekenen dat je nota's nog geen embeddings hebben — die maken slimme suggesties mogelijk.</p>
+      <p class="muted">Er zijn geen nieuwe semantische verbanden gevonden. Dit kan ook betekenen dat je notities nog geen embeddings hebben — die maken slimme suggesties mogelijk.</p>
       <button class="btn btn-ghost" data-nav="settings" id="bridge-settings">Naar Instellingen</button>
     `
     document.getElementById('bridge-settings')?.addEventListener('click', () => navigateTo('/settings'))
@@ -909,7 +909,7 @@ export async function mountGraph(root: HTMLElement): Promise<void> {
     const aside = document.getElementById('graph-sidebar')!
     aside.innerHTML = `
       <h3 class="sidebar-title">Voorgestelde verbindingen (${bridges.length})</h3>
-      <p class="muted">Semantisch verwante nota's die nog niet gelinkt zijn en geen thema delen. Vink aan wat klopt en koppel in één keer.</p>
+      <p class="muted">Semantisch verwante notities die nog niet gelinkt zijn en geen thema delen. Vink aan wat klopt en koppel in één keer.</p>
       <ul class="sugg-bridge-list">
         ${bridges.map((b, i) => {
           const enr = enrichment?.get(pairKey(b.a_id, b.b_id))
@@ -918,7 +918,7 @@ export async function mountGraph(root: HTMLElement): Promise<void> {
           <li class="sugg-bridge-row">
             <label class="sugg-bridge-check">
               <input type="checkbox" class="bridge-check" data-idx="${i}" ${checked} />
-              <span>${escHtml(noteLabel(b.a_id))} <span class="muted">↔</span> ${escHtml(noteLabel(b.b_id))} <span class="muted">(${(b.similarity * 100).toFixed(0)}%)</span></span>
+              <span>${escHtml(noteLabel(b.a_id))} <span class="muted">↔</span> ${escHtml(noteLabel(b.b_id))} <span class="muted">(${b.similarity >= 0.72 ? 'sterk verwant' : 'verrassend'})</span></span>
             </label>
             <select class="bridge-type" data-idx="${i}">${typeOptsFor(enr?.type ?? 'related')}</select>
             ${enr?.reason ? `<span class="sugg-bridge-reason">${escHtml(enr.reason)}</span>` : ''}

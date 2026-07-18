@@ -1,36 +1,25 @@
-// "Vandaag" — the home dashboard. Books are the goals, so the screen answers
-// three questions the moment it opens: (1) what am I working toward and is
-// there momentum, (2) what wants my attention now, (3) where do I drop this
-// thought — a quick-capture box keeps capture one keystroke away even though
-// the full capture page moved one tap out.
+// "Vandaag" — the goals dashboard (reachable via Meer). Books are the goals,
+// so the screen answers two questions the moment it opens: (1) what am I
+// working toward and is there momentum, (2) what wants my attention now.
+// Capture lives on its own primary tab, so there is no quick-capture box here.
 //
-// Loading is best-effort and after-paint: the quick capture is interactive
-// immediately; goal cards and week stats fill in when their queries land, and
-// render nothing (rather than an error wall) when offline.
+// Loading is best-effort and after-paint: goal cards and week stats fill in
+// when their queries land, and render nothing (rather than an error wall)
+// when offline.
 
-import { insertNote, queueOfflineNote, countByStatus, fetchConnectedNoteIds, fetchNotes } from '../lib/notes'
+import { countByStatus, fetchConnectedNoteIds, fetchAllNotes } from '../lib/notes'
 import { fetchProjects, fetchProjectNoteIds, BOOK_STATUSES, type BookProject } from '../lib/projects'
 import { fetchChaptersByProject, fetchSectionStats, type ChapterSectionStats } from '../lib/chapters'
 import { fetchWeekStats, countCreatedThisWeek } from '../lib/weekstats'
 import { getReviewWeekday } from '../lib/user-settings'
 import { renderTopbar, attachTopbar, isAiEnabled } from '../lib/nav'
-import { showToast, esc, errMsg } from '../lib/crud-list'
-import { embedNote } from '../lib/ai'
+import { esc } from '../lib/crud-list'
 import { navigateTo } from '../router'
 
 export async function renderVandaag(app: HTMLElement): Promise<void> {
   app.innerHTML = `
     ${renderTopbar('Vandaag', 'vandaag')}
     <div class="vd-body">
-      <section class="vd-capture-card">
-        <textarea id="vd-capture" class="vd-capture-input" rows="2"
-          placeholder="Wat denk je nu? Gooi het erin…"></textarea>
-        <div class="vd-capture-row">
-          <button class="btn btn-primary" id="vd-save" disabled>Opslaan</button>
-          <button class="btn btn-ghost" id="vd-more">Meer velden →</button>
-        </div>
-      </section>
-
       <section class="vd-section" id="vd-goals-section">
         <header class="vd-section-head">
           <h2 class="vd-h2">Doelen</h2>
@@ -51,52 +40,11 @@ export async function renderVandaag(app: HTMLElement): Promise<void> {
   injectVandaagStyles()
   attachTopbar()
 
-  wireQuickCapture()
-  document.getElementById('vd-more')?.addEventListener('click', () => navigateTo('/capture'))
   document.getElementById('vd-goals-manage')?.addEventListener('click', () => navigateTo('/library?tab=book'))
 
   // Fill in after paint; each block independently best-effort.
   void renderGoals()
   void renderWeek()
-}
-
-// ── Quick capture ───────────────────────────────────────────────────────────
-
-function wireQuickCapture(): void {
-  const textarea = document.getElementById('vd-capture') as HTMLTextAreaElement
-  const saveBtn = document.getElementById('vd-save') as HTMLButtonElement
-
-  textarea.addEventListener('input', () => {
-    saveBtn.disabled = textarea.value.trim() === ''
-  })
-  textarea.addEventListener('keydown', (e) => {
-    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && !saveBtn.disabled) saveBtn.click()
-  })
-
-  saveBtn.addEventListener('click', async () => {
-    const content = textarea.value.trim()
-    if (!content) return
-    saveBtn.disabled = true
-    try {
-      if (navigator.onLine) {
-        const saved = await insertNote({ content, note_type: 'fleeting' })
-        void embedNote(saved.id).catch(() => {})
-        showToast('Opgeslagen')
-      } else {
-        await queueOfflineNote({ content, note_type: 'fleeting' })
-        showToast('Opgeslagen (offline wachtrij)')
-      }
-      textarea.value = ''
-    } catch (err) {
-      showToast(`Opslaan mislukt: ${errMsg(err)}`)
-      saveBtn.disabled = false
-      return
-    }
-    saveBtn.disabled = true
-    textarea.focus()
-  })
-
-  textarea.focus()
 }
 
 // ── Doelen (active book projects) ───────────────────────────────────────────
@@ -132,6 +80,10 @@ async function renderGoals(): Promise<void> {
     host.innerHTML = cards.join('')
     host.querySelectorAll<HTMLElement>('[data-goal-nav]').forEach(el => {
       el.addEventListener('click', () => navigateTo(el.dataset['goalNav']!))
+      // role="button" promises Enter/Space activation
+      el.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); el.click() }
+      })
     })
   } catch {
     host.innerHTML = '<p class="muted">Doelen konden niet laden.</p>'
@@ -152,22 +104,38 @@ function goalCard(
     : ''
   const momentum = thisWeek > 0 ? ` · <strong>+${thisWeek} deze week</strong>` : ''
   const progressParts = [
-    `${noteCount} ${noteCount === 1 ? 'noot' : 'noten'}`,
+    `${noteCount} ${noteCount === 1 ? 'notitie' : 'notities'}`,
     chapterCount ? `${chapterCount} ${chapterCount === 1 ? 'hoofdstuk' : 'hoofdstukken'}` : null,
     words ? `${words} woorden` : null,
   ].filter(Boolean).join(' · ')
 
-  // One suggested next action per goal, cheapest signal first.
+  // One suggested next action per goal, cheapest signal first — and the card
+  // navigates to where that action actually happens.
+  const projectsTab = '/library?tab=book&booktab=projects'
   let action: string
-  if (noteCount === 0) action = 'Koppel je eerste noten aan dit project'
-  else if (chapterCount === 0 && isAiEnabled()) action = 'Genereer je eerste hoofdstuk uit projectnoten'
-  else if (chapterCount > 0 && words === 0) action = 'Open de schrijfstudio en schrijf je eerste sectie'
-  else if (inboxCount > 0 && isAiEnabled()) action = `Verwerk je vangbak (${inboxCount}) — voedt je projecten`
-  else if (isAiEnabled()) action = 'Schrijf verder, of vraag een gap-analyse'
-  else action = 'Blijf noten koppelen en verbinden'
+  let nav: string
+  if (noteCount === 0) {
+    action = 'Koppel je eerste notities aan dit project'
+    nav = projectsTab
+  } else if (chapterCount === 0 && isAiEnabled()) {
+    action = 'Genereer je eerste hoofdstuk uit projectnotities'
+    nav = `/library?tab=book&project=${p.id}`
+  } else if (chapterCount > 0 && words === 0) {
+    action = 'Open de schrijfstudio en schrijf je eerste sectie'
+    nav = '/library?tab=book&booktab=chapters'
+  } else if (inboxCount > 0 && isAiEnabled()) {
+    action = `Verwerk je vangbak (${inboxCount}) — voedt je projecten`
+    nav = '/process'
+  } else if (isAiEnabled()) {
+    action = 'Schrijf verder, of vraag een gap-analyse'
+    nav = projectsTab
+  } else {
+    action = 'Blijf notities koppelen en verbinden'
+    nav = projectsTab
+  }
 
   return `
-    <div class="vd-goal-card" data-goal-nav="/library?tab=book&booktab=projects" role="button" tabindex="0"
+    <div class="vd-goal-card" data-goal-nav="${nav}" role="button" tabindex="0"
          style="border-left: 3px solid ${status.color}">
       <div class="vd-goal-top">
         <span class="vd-goal-status" style="color:${status.color}">${esc(status.label)}</span>
@@ -206,9 +174,9 @@ async function renderWeek(): Promise<void> {
       </div>
       <div class="vd-week-ctas">
         ${inboxCount > 0 ? `<button class="btn btn-ghost btn-sm" data-week-nav="${isAiEnabled() ? '/process' : '/inbox'}">Verwerk vangbak (${inboxCount})</button>` : ''}
-        ${orphans ? `<button class="btn btn-ghost btn-sm" data-week-nav="/inbox">Wezen: ${orphans} losse notities</button>` : ''}
-        <button class="btn btn-ghost btn-sm" data-week-nav="/inbox?view=verbindingen">Voorgestelde verbindingen</button>
-        <button class="btn btn-ghost btn-sm" data-week-nav="/inbox?view=graph">Bekijk je graaf</button>
+        ${orphans ? `<button class="btn btn-ghost btn-sm" data-week-nav="/inbox">${orphans} losse notities</button>` : ''}
+        <button class="btn btn-ghost btn-sm" data-week-nav="/verbanden?view=verbindingen">Voorgestelde verbindingen</button>
+        <button class="btn btn-ghost btn-sm" data-week-nav="/verbanden?view=graph">Bekijk je graaf</button>
       </div>
     `
     host.querySelectorAll<HTMLElement>('[data-week-nav]').forEach(el => {
@@ -221,7 +189,7 @@ async function renderWeek(): Promise<void> {
 
 async function countOrphans(): Promise<number> {
   const connected = await fetchConnectedNoteIds()
-  const pool = await fetchNotes(0, 300)
+  const pool = await fetchAllNotes()
   return pool.filter(n => n.status !== 'archief' && !connected.has(n.id)).length
 }
 
@@ -243,21 +211,6 @@ function injectVandaagStyles(): void {
       width: 100%;
       margin: 0 auto;
     }
-    .vd-capture-card {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-left: 3px solid var(--accent);
-      border-radius: var(--r-md);
-      padding: var(--s-3);
-      display: flex; flex-direction: column; gap: var(--s-2);
-    }
-    .vd-capture-input {
-      border: none; background: transparent; resize: none;
-      font-size: var(--fs-lg); line-height: 1.5; outline: none;
-      font-family: inherit; color: var(--text);
-    }
-    .vd-capture-row { display: flex; gap: var(--s-2); }
-    .vd-capture-row .btn { width: auto; }
     .vd-section { display: flex; flex-direction: column; gap: var(--s-2); }
     .vd-section-head { display: flex; align-items: baseline; justify-content: space-between; }
     .vd-h2 { font-size: var(--fs-lg); font-weight: 600; }

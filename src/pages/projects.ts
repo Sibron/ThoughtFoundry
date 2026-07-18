@@ -68,7 +68,7 @@ function mount(body: HTMLDivElement, projects: BookProject[]): void {
     create: createProject,
     update: updateProject,
     renderMain: (items) => `
-      <p class="muted proj-intro">Boekprojecten zijn ideegedreven containers. Elke noot kan aan meerdere projecten gekoppeld worden. AI-gap-analyse werkt per project.</p>
+      <p class="muted proj-intro">Boekprojecten zijn ideegedreven containers. Elke notitie kan aan meerdere projecten gekoppeld worden. AI-gap-analyse werkt per project.</p>
       ${items.length === 0
         ? '<p class="crud-empty">Nog geen projecten. Maak er een aan via het formulier.</p>'
         : items.map(p => renderProjectCard(p)).join('')
@@ -90,19 +90,37 @@ async function mountDetail(project: BookProject, host: HTMLElement, ctx: CrudDet
   let projectChapters: Chapter[] = []
   let chapterStats = new Map<string, ChapterSectionStats>()
 
+  // A failed load must not masquerade as "no notes/chapters yet".
+  let loadError = false
+
   async function loadNotes(): Promise<void> {
     try {
       noteIds = await fetchProjectNoteIds(project.id)
       notes = noteIds.length > 0 ? await fetchNotesByIds(noteIds) : []
-    } catch { /* show empty */ }
+    } catch { loadError = true }
   }
   async function loadChapters(): Promise<void> {
     try {
       projectChapters = await fetchChaptersByProject(project.id)
       chapterStats = await fetchSectionStats().catch(() => new Map())
-    } catch { /* show empty */ }
+    } catch { loadError = true }
   }
   await Promise.all([loadNotes(), loadChapters()])
+
+  if (loadError) {
+    host.innerHTML = `
+      <div class="crud-detail-wrap">
+        <button class="btn btn-ghost crud-back" id="pd-error-back">← Terug</button>
+        <div class="crud-detail">
+          <p class="muted">Laden mislukt. Controleer je verbinding.</p>
+          <button class="btn btn-ghost" id="pd-retry">Opnieuw proberen</button>
+        </div>
+      </div>
+    `
+    document.getElementById('pd-error-back')?.addEventListener('click', () => ctx.back())
+    document.getElementById('pd-retry')?.addEventListener('click', () => void mountDetail(project, host, ctx))
+    return
+  }
 
   /** Manuscript order: saved ordering first, then any chapters not yet ordered. */
   function orderedChapters(): Chapter[] {
@@ -152,7 +170,7 @@ async function mountDetail(project: BookProject, host: HTMLElement, ctx: CrudDet
     document.getElementById('pd-edit-btn')?.addEventListener('click', () => ctx.edit(project))
     document.getElementById('pd-delete-btn')?.addEventListener('click', () => {
       // Soft-delete: back to the list now, API delete after the undo window.
-      // Nota's blijven bestaan.
+      // Notities blijven bestaan.
       ctx.remove(project.id)
       showUndoToast(`Project "${project.title}" verwijderd`,
         async () => {
@@ -233,7 +251,7 @@ async function mountDetail(project: BookProject, host: HTMLElement, ctx: CrudDet
         excludeIds: noteIds,
         onConfirm: async (ids) => {
           await addNotesToProject(project.id, ids)
-          showToast(`${ids.length} ${ids.length === 1 ? 'noot' : 'noten'} gekoppeld`)
+          showToast(`${ids.length} ${ids.length === 1 ? 'notitie' : 'notities'} gekoppeld`)
           await loadNotes()
           render()
         }
@@ -265,7 +283,7 @@ async function mountDetail(project: BookProject, host: HTMLElement, ctx: CrudDet
         estimateInputChars: () => notes.length * 400 + 1200,
         phases: ['Project doornemen…', 'Witte plekken zoeken…', 'Tegenargumenten wegen…', 'Analyse schrijven…'],
         beforeRun: () => {
-          if (notes.length === 0) { showToast('Voeg eerst noten toe aan dit project'); return false }
+          if (notes.length === 0) { showToast('Voeg eerst notities toe aan dit project'); return false }
           if (!isAiEnabled()) { showToast('Zet AI aan in Instellingen voor gap-analyse'); return false }
           return true
         },
@@ -289,7 +307,7 @@ function renderNotesTab(notes: Note[]): string {
       <button class="btn btn-ghost" id="proj-attach-btn">+ Noten koppelen</button>
     </div>
     ${notes.length === 0
-      ? '<p class="muted">Nog geen noten gekoppeld aan dit project. Koppel ze hier, of via het veld Boekprojecten in de nota-editor.</p>'
+      ? '<p class="muted">Nog geen notities gekoppeld aan dit project. Koppel ze hier, of via het veld Boekprojecten in de notitie-editor.</p>'
       : `<div class="proj-notes-list">
           ${notes.map(n => `
             <div class="crud-note-row proj-note-row" data-note-id="${n.id}" role="button" tabindex="0">
@@ -306,7 +324,7 @@ function renderNotesTab(notes: Note[]): string {
 function renderGapTab(result: string | null): string {
   return `
     <div class="gap-wrap">
-      <p class="muted">AI analyseert je huidige noten en wijst op witte plekken, ontbrekende tegenargumenten en risico's. Vereist minimaal 1 noot.</p>
+      <p class="muted">AI analyseert je huidige notities en wijst op witte plekken, ontbrekende tegenargumenten en risico's. Vereist minimaal 1 notitie.</p>
       <div id="gap-action-host"></div>
       <div id="gap-result-wrap">${result ? renderGapResult(result) : ''}</div>
     </div>
@@ -324,10 +342,10 @@ function renderGapResult(result: string): string {
 function renderChaptersTab(chapters: Chapter[], stats: Map<string, ChapterSectionStats>): string {
   return `
     <div class="proj-notes-tools">
-      <button class="btn btn-ghost" id="proj-new-chapter">Nieuw hoofdstuk uit projectnoten →</button>
+      <button class="btn btn-ghost" id="proj-new-chapter">Nieuw hoofdstuk uit projectnotities →</button>
     </div>
     ${chapters.length === 0
-      ? '<p class="muted">Nog geen hoofdstukken voor dit project. Start er een vanuit je projectnoten.</p>'
+      ? '<p class="muted">Nog geen hoofdstukken voor dit project. Start er een vanuit je projectnotities.</p>'
       : `<div class="proj-notes-list">
           ${chapters.map(c => {
             const s = stats.get(c.id)
@@ -351,7 +369,7 @@ function renderManuscriptTab(ordered: Chapter[], stats: Map<string, ChapterSecti
       <button class="btn btn-primary" id="proj-export-manuscript">Exporteer manuscript (.md)</button>
       ${totalWords ? `<span class="muted">${totalWords} geschreven woorden</span>` : ''}
     </div>
-    <p class="muted">Titel, kernvraag en beschrijving vormen het voorwerk; daarna volgen de hoofdstukken in deze volgorde. Geschreven secties exporteren als proza, ongeschreven secties als nota-bundel.</p>
+    <p class="muted">Titel, kernvraag en beschrijving vormen het voorwerk; daarna volgen de hoofdstukken in deze volgorde. Geschreven secties exporteren als proza, ongeschreven secties als notitie-bundel.</p>
     ${ordered.length === 0
       ? '<p class="muted">Nog geen hoofdstukken voor dit project.</p>'
       : `<div class="proj-notes-list">

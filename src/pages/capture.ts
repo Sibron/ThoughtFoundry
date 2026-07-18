@@ -9,8 +9,8 @@ import { embedNote, frameSource, generateSourceInsights, fetchSupadataUsage, typ
 import { createAiAction } from '../lib/ai-action'
 import { AI_PHASES } from '../lib/ai-thinking'
 import { renderTopbar, attachTopbar, renderGuidanceBanner } from '../lib/nav'
-import { navigateTo } from '../router'
-import { esc as escHtml, showToast } from '../lib/crud-list'
+import { navigateTo, onRouteLeave } from '../router'
+import { esc as escHtml, showToast, formatRelative } from '../lib/crud-list'
 
 const DRAFT_KEY = 'capture_draft'
 
@@ -28,11 +28,8 @@ export async function renderCapture(app: HTMLElement): Promise<void> {
   // Best-effort flush on render — the helper itself returns silently if offline.
   flushOfflineQueue().catch(() => { /* silent */ })
 
-  // Load sources for the picker (non-blocking)
+  // Sources for the picker — fetched below, once populateSources exists.
   let sources: Source[] = []
-  if (navigator.onLine) {
-    fetchSources().then(s => { sources = s }).catch(() => {})
-  }
 
   app.innerHTML = `
     ${renderTopbar('ThoughtFoundry', 'capture', '<span class="online-indicator" id="online-indicator" title=""></span>')}
@@ -92,12 +89,18 @@ export async function renderCapture(app: HTMLElement): Promise<void> {
         </div>
       </details>
 
+      <details class="capture-extra" id="ontdek-details">
+        <summary class="capture-extra-toggle">Ontdekken</summary>
+        <div class="ontdek-fields">
+          <button class="btn btn-ghost btn-sm" id="btn-surprise">Verras me</button>
+          <button class="btn btn-ghost btn-sm" id="btn-onthisday">Op deze dag</button>
+          <button class="btn btn-ghost btn-sm" id="btn-connect">Verbind twee</button>
+        </div>
+      </details>
+
       <div class="capture-footer">
         <button class="btn btn-primary" id="save-btn" disabled>Opslaan</button>
         <span class="capture-session" id="capture-session" hidden></span>
-        <button class="btn btn-ghost btn-sm" id="btn-surprise">Verras me</button>
-        <button class="btn btn-ghost btn-sm" id="btn-onthisday">Op deze dag</button>
-        <button class="btn btn-ghost btn-sm" id="btn-connect">Verbind twee</button>
       </div>
 
       <div class="capture-recent" id="capture-recent"></div>
@@ -192,7 +195,11 @@ export async function renderCapture(app: HTMLElement): Promise<void> {
     const draft = loadDraftObj()
     if (draft.sourceId) sourceIdEl.value = draft.sourceId
   }
-  setTimeout(populateSources, 800)
+  // Populate when the fetch actually lands (a fixed timeout loses the race on
+  // slow connections and would leave the picker empty until a full reload).
+  if (navigator.onLine) {
+    fetchSources().then(s => { sources = s; populateSources() }).catch(() => { /* picker stays minimal */ })
+  }
 
   // Load recent notes once for similarity checking (zero-cost, client-side only)
   let recentNotes: Note[] = []
@@ -328,14 +335,14 @@ export async function renderCapture(app: HTMLElement): Promise<void> {
     // Prefer an unprocessed note (the pile that wants attention), else anything.
     let note = await fetchRandomNote('inbox').catch(() => null)
     if (!note) note = await fetchRandomNote().catch(() => null)
-    if (!renderSurfaced(note, '')) showToast('Geen nota\'s gevonden')
+    if (!renderSurfaced(note, '')) showToast('Geen notities gevonden')
   }
 
   const showOnThisDay = async () => {
     lastSurfaceMode = 'onthisday'
     const note = await fetchOnThisDay().catch(() => null)
-    if (!renderSurfaced(note, note ? relTime(note.created_at) : '')) {
-      showToast('Nog geen oudere nota om terug te halen')
+    if (!renderSurfaced(note, note ? formatRelative(note.created_at) : '')) {
+      showToast('Nog geen oudere notitie om terug te halen')
     }
   }
 
@@ -462,7 +469,7 @@ export async function renderCapture(app: HTMLElement): Promise<void> {
 
   const onOnline = async () => {
     const flushed = await flushOfflineQueue()
-    if (flushed > 0) showToast(`${flushed} offline-nota('s) gesynchroniseerd`)
+    if (flushed > 0) showToast(`${flushed} offline-notitie(s) gesynchroniseerd`)
     recentNotes = await fetchNotes(0, 50).catch(() => recentNotes)
     await refreshOnlineIndicator()
     await refreshRecent()
@@ -470,6 +477,12 @@ export async function renderCapture(app: HTMLElement): Promise<void> {
   const onOffline = () => refreshOnlineIndicator()
   window.addEventListener('online', onOnline)
   window.addEventListener('offline', onOffline)
+  // Window listeners outlive the page's DOM — without this, every visit to
+  // Capture stacked another pair, so one reconnect flushed/toasted N times.
+  onRouteLeave(() => {
+    window.removeEventListener('online', onOnline)
+    window.removeEventListener('offline', onOffline)
+  })
 }
 
 function loadDraftObj(): Draft {
@@ -574,10 +587,10 @@ function setupSourceAnalysis(): void {
     try {
       const { usage } = await fetchSupadataUsage()
       if (usage && usage.used != null && usage.limit != null) {
-        usageEl.textContent = `Supadata: ${usage.used} / ${usage.limit} credits deze maand`
+        usageEl.textContent = `Bron-analyses: ${usage.used} van ${usage.limit} gebruikt deze maand`
         usageEl.hidden = false
       } else if (usage && usage.remaining != null) {
-        usageEl.textContent = `Supadata: nog ${usage.remaining} credits deze maand`
+        usageEl.textContent = `Bron-analyses: nog ${usage.remaining} deze maand`
         usageEl.hidden = false
       } else {
         usageEl.hidden = true
@@ -897,11 +910,11 @@ async function refreshOnlineIndicator(): Promise<void> {
   if (!navigator.onLine) {
     el.textContent = queue > 0 ? `⚫ offline (${queue})` : '⚫ offline'
     el.className = 'online-indicator offline'
-    el.title = `Offline${queue > 0 ? ` — ${queue} nota('s) wachten op sync` : ''}`
+    el.title = `Offline${queue > 0 ? ` — ${queue} notitie(s) wachten op sync` : ''}`
   } else if (queue > 0) {
     el.textContent = `🟡 sync (${queue})`
     el.className = 'online-indicator sync'
-    el.title = `${queue} nota('s) wachten op sync`
+    el.title = `${queue} notitie(s) wachten op sync`
   } else {
     el.textContent = '🟢 online'
     el.className = 'online-indicator online'
@@ -909,16 +922,6 @@ async function refreshOnlineIndicator(): Promise<void> {
   }
 }
 
-
-function relTime(iso: string): string {
-  const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000)
-  if (days < 1) return 'vandaag'
-  if (days === 1) return 'gisteren'
-  if (days < 14) return `${days} dagen geleden`
-  if (days < 60) return `${Math.floor(days / 7)} weken geleden`
-  if (days < 365) return `${Math.floor(days / 30)} maanden geleden`
-  return `${Math.floor(days / 365)} jaar geleden`
-}
 
 
 function injectCaptureStyles(): void {
@@ -1140,7 +1143,14 @@ function injectCaptureStyles(): void {
       min-height: 52px;
       font-size: var(--fs-base);
     }
-    .capture-footer .btn-sm {
+    .ontdek-fields {
+      display: flex;
+      flex-wrap: wrap;
+      gap: var(--s-2);
+      padding: var(--s-3) var(--s-4);
+    }
+    .ontdek-fields .btn {
+      width: auto;
       min-height: unset;
       font-size: var(--fs-sm);
       padding: var(--s-2) var(--s-3);

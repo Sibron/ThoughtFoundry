@@ -35,12 +35,13 @@ import { SECTIONS } from '../lib/sections'
 import { rankBySimilarity } from '../lib/similarity'
 import { fetchNeighbors } from '../lib/semantic'
 import { processNote, AiBudgetError } from '../lib/ai'
+import { preferredModel } from '../lib/ai-action'
 import { renderTopbar, attachTopbar, isAiEnabled } from '../lib/nav'
-import { navigateTo, navigateBack } from '../router'
+import { navigateTo, navigateBack, setLeaveGuard, onRouteLeave } from '../router'
 import { esc as escHtml, errMsg, formatDate, showToast, showUndoToast } from '../lib/crud-list'
 
 const STATUS_LABELS: Record<NoteStatus, string> = {
-  inbox: 'Inbox',
+  inbox: 'Vangbak',
   verwerkt: 'Verwerkt',
   archief: 'Archief'
 }
@@ -50,7 +51,7 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
   if (!id) { navigateTo('/inbox'); return }
 
   app.innerHTML = `
-    ${renderTopbar('Nota bewerken', 'inbox')}
+    ${renderTopbar('Notitie bewerken', 'inbox')}
     <div class="note-body"><div class="note-loading">Laden…</div></div>
     <div class="toast" id="toast"></div>
   `
@@ -83,7 +84,7 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
 
   if (!note) {
     document.querySelector('.note-body')!.innerHTML =
-      `<div class="note-error">Nota niet gevonden. <button class="btn-inline" id="back-inbox">Naar inbox</button></div>`
+      `<div class="note-error">Notitie niet gevonden. <button class="btn-inline" id="back-inbox">Naar inbox</button></div>`
     document.getElementById('back-inbox')?.addEventListener('click', () => navigateTo('/inbox'))
     return
   }
@@ -101,7 +102,29 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
 
   let tagsState: string[] = [...(current.tags ?? [])]
 
+  // All edits live only in the DOM until Opslaan — guard every way out
+  // (bottom nav, back, related-note cards, reload) against silent loss.
+  let cleanSnapshot = ''
+
+  function formSnapshot(): string {
+    return JSON.stringify([collectUpdate(), checkedThemeIds().sort(), checkedProjectIds().sort()])
+  }
+
+  function isDirty(): boolean {
+    // The delete flow replaces the form (guard must not fire on its navigation).
+    if (!document.getElementById('f-content')) return false
+    return formSnapshot() !== cleanSnapshot
+  }
+
   renderForm()
+
+  setLeaveGuard(() => !isDirty() ||
+    confirm('Je hebt niet-opgeslagen wijzigingen. Weet je zeker dat je deze pagina wilt verlaten?'))
+  const onBeforeUnload = (e: BeforeUnloadEvent) => {
+    if (isDirty()) { e.preventDefault(); e.returnValue = '' }
+  }
+  window.addEventListener('beforeunload', onBeforeUnload)
+  onRouteLeave(() => window.removeEventListener('beforeunload', onBeforeUnload))
 
   function renderForm(): void {
     const body = document.querySelector('.note-body') as HTMLElement
@@ -132,10 +155,16 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
           ).join('')
       : '<span class="muted">Nog geen boekprojecten. Maak ze aan via Bibliotheek → Boek → Projecten.</span>'
 
+    // Collapsed groups auto-open when they hold content, so nothing existing
+    // is ever hidden — only empty ballast starts folded.
+    const hasMeerVelden = Boolean(current.core_idea || current.use_for || current.ai_summary || current.mini_notes || current.section)
+    const hasOrganiseren = noteThemeIds.length > 0 || noteProjectIds.length > 0
+    const hasBron = Boolean(current.source_id || current.source_url || current.source_title || current.source_author)
+
     body.innerHTML = `
       <article class="note-card">
         <header class="note-head">
-          <h1 class="note-h1">Nota</h1>
+          <h1 class="note-h1">Notitie</h1>
           <span class="muted">Aangemaakt ${formatDate(current.created_at)}${current.processed_at ? ` · verwerkt ${formatDate(current.processed_at)}` : ''}</span>
         </header>
 
@@ -156,28 +185,8 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
         </label>
 
         <label class="field">
-          <span class="field-label">Kernidee</span>
-          <textarea id="f-core" rows="2" placeholder="De essentie in één zin…">${escHtml(current.core_idea ?? '')}</textarea>
-        </label>
-
-        <label class="field">
-          <span class="field-label">Gebruik voor</span>
-          <input type="text" id="f-usefor" value="${escHtml(current.use_for ?? '')}" placeholder="Waarvoor wil je dit gebruiken?" />
-        </label>
-
-        <label class="field">
           <span class="field-label">Uitwerking</span>
           <textarea id="f-content" rows="6">${escHtml(current.content)}</textarea>
-        </label>
-
-        <label class="field">
-          <span class="field-label">Samenvatting</span>
-          <textarea id="f-summary" rows="3" placeholder="1-2 zinnen kerngedachte…">${escHtml(current.ai_summary ?? '')}</textarea>
-        </label>
-
-        <label class="field">
-          <span class="field-label">Extra notitie</span>
-          <textarea id="f-mini" rows="2">${escHtml(current.mini_notes ?? '')}</textarea>
         </label>
 
         <fieldset class="field">
@@ -186,47 +195,85 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
           <input type="text" id="tag-input" class="tag-input" placeholder="Typ een tag en druk Enter…" />
         </fieldset>
 
-        <label class="field">
-          <span class="field-label">Hoofdstuk-sectie</span>
-          <select id="f-section">
-            <option value=""${!current.section ? ' selected' : ''}>(geen)</option>
-            ${sectionOptions}
-          </select>
-        </label>
+        <details class="note-group" id="note-group-meer"${hasMeerVelden ? ' open' : ''}>
+          <summary class="note-group-toggle">Meer velden</summary>
+          <div class="note-group-fields">
+            <label class="field">
+              <span class="field-label">Kernidee</span>
+              <textarea id="f-core" rows="2" placeholder="De essentie in één zin…">${escHtml(current.core_idea ?? '')}</textarea>
+            </label>
+            <label class="field">
+              <span class="field-label">Gebruik voor</span>
+              <input type="text" id="f-usefor" value="${escHtml(current.use_for ?? '')}" placeholder="Waarvoor wil je dit gebruiken?" />
+            </label>
+            <label class="field">
+              <span class="field-label">Samenvatting</span>
+              <textarea id="f-summary" rows="3" placeholder="1-2 zinnen kerngedachte…">${escHtml(current.ai_summary ?? '')}</textarea>
+            </label>
+            <label class="field">
+              <span class="field-label">Extra notitie</span>
+              <textarea id="f-mini" rows="2">${escHtml(current.mini_notes ?? '')}</textarea>
+            </label>
+            <label class="field">
+              <span class="field-label">Hoofdstuk-sectie</span>
+              <select id="f-section">
+                <option value=""${!current.section ? ' selected' : ''}>(geen)</option>
+                ${sectionOptions}
+              </select>
+            </label>
+          </div>
+        </details>
 
-        <fieldset class="field">
-          <legend class="field-label">Thema's</legend>
-          <div class="chip-group">${themeChecks}</div>
-        </fieldset>
+        <details class="note-group" id="note-group-organiseren"${hasOrganiseren ? ' open' : ''}>
+          <summary class="note-group-toggle">Organiseren</summary>
+          <div class="note-group-fields">
+            <fieldset class="field">
+              <legend class="field-label">Thema's</legend>
+              <div class="chip-group">${themeChecks}</div>
+            </fieldset>
+            <fieldset class="field">
+              <legend class="field-label">Boekprojecten</legend>
+              <div class="chip-group">${projectChecks}</div>
+            </fieldset>
+          </div>
+        </details>
 
-        <fieldset class="field">
-          <legend class="field-label">Boekprojecten</legend>
-          <div class="chip-group">${projectChecks}</div>
-        </fieldset>
+        <details class="note-group" id="note-group-bron"${hasBron ? ' open' : ''}>
+          <summary class="note-group-toggle">Bron</summary>
+          <div class="note-group-fields">
+            <fieldset class="field">
+              <legend class="field-label">Bron</legend>
+              <select id="f-source">
+                <option value=""${!current.source_id ? ' selected' : ''}>— Geen gekoppelde bron —</option>
+                ${sourceOptions}
+              </select>
+              <input type="text" id="f-source-url" value="${escHtml(current.source_url ?? '')}" placeholder="URL (losse bronverwijzing)" />
+              <input type="text" id="f-source-title" value="${escHtml(current.source_title ?? '')}" placeholder="Titel" />
+              <input type="text" id="f-source-author" value="${escHtml(current.source_author ?? '')}" placeholder="Auteur" />
+            </fieldset>
+          </div>
+        </details>
 
-        <fieldset class="field">
-          <legend class="field-label">Bron</legend>
-          <select id="f-source">
-            <option value=""${!current.source_id ? ' selected' : ''}>— Geen gekoppelde bron —</option>
-            ${sourceOptions}
-          </select>
-          <input type="text" id="f-source-url" value="${escHtml(current.source_url ?? '')}" placeholder="URL (losse bronverwijzing)" />
-          <input type="text" id="f-source-title" value="${escHtml(current.source_title ?? '')}" placeholder="Titel" />
-          <input type="text" id="f-source-author" value="${escHtml(current.source_author ?? '')}" placeholder="Auteur" />
-        </fieldset>
-
-        <fieldset class="field">
-          <legend class="field-label">Links (Zettelkasten)</legend>
-          <div class="link-list" id="link-list"></div>
-          <button class="btn btn-ghost btn-sm" type="button" id="link-add-open">+ Link toevoegen</button>
-          <div class="ai-link-suggestions" id="ai-link-suggestions"></div>
-          <div class="suggested-links" id="suggested-links"></div>
-        </fieldset>
+        <details class="note-group" id="note-group-verbindingen"${links.length > 0 ? ' open' : ''}>
+          <summary class="note-group-toggle">Verbindingen</summary>
+          <div class="note-group-fields">
+            <fieldset class="field">
+              <legend class="field-label">Verbonden notities</legend>
+              <div class="link-list" id="link-list"></div>
+              <button class="btn btn-ghost btn-sm" type="button" id="link-add-open">+ Verbinding toevoegen</button>
+              <div class="ai-link-suggestions" id="ai-link-suggestions"></div>
+              <div class="suggested-links" id="suggested-links"></div>
+            </fieldset>
+            <section class="field" id="related-notes-section">
+              <span class="field-label">Verwante notities</span>
+              <div class="related-notes-list" id="related-notes-list">Laden…</div>
+            </section>
+          </div>
+        </details>
 
         ${isAiEnabled() ? `
         <div class="note-ai">
           <button class="btn btn-ghost btn-sm" id="ai-prefill">AI-suggesties ophalen</button>
-          <label class="muted note-ai-model"><input type="checkbox" id="ai-prefill-sonnet" /> Sonnet (beter, ~3× duurder)</label>
           <span class="muted">Vult titel, samenvatting, tags en sectie voor. Niets wordt opgeslagen tot je opslaat.</span>
           <div class="ai-theme-suggestions" id="ai-theme-suggestions"></div>
         </div>` : ''}
@@ -238,11 +285,6 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
           <button class="btn btn-ghost" id="back-btn">Terug</button>
           <button class="btn btn-danger" id="delete-btn">Verwijderen</button>
         </div>
-
-        <section class="field" id="related-notes-section">
-          <span class="field-label">Verwante notities</span>
-          <div class="related-notes-list" id="related-notes-list">Laden…</div>
-        </section>
       </article>
     `
 
@@ -253,6 +295,7 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
     wireActions()
     void loadRelatedNotes()
     void loadSuggestedLinks()
+    cleanSnapshot = formSnapshot()
   }
 
   // ── Suggested links ───────────────────────────────────────────────────────--
@@ -277,7 +320,12 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
 
     if (ranked.length === 0) {
       let pool: Note[] = []
-      try { pool = await fetchNotes(0, 300) } catch { return }
+      try { pool = await fetchNotes(0, 300) }
+      catch {
+        // Auxiliary panel — no retry button, but don't disguise failure as "geen suggesties".
+        box.innerHTML = '<span class="muted">Suggesties konden niet laden.</span>'
+        return
+      }
       const candidates = pool.filter(n => n.id !== id && !linkedSet.has(n.id))
       ranked = rankBySimilarity(current, candidates, 5)
         .map(({ note }) => ({ id: note.id, label: getNoteTitle(note, 60) }))
@@ -289,8 +337,8 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
       .map(([k, v]) => `<option value="${k}"${k === 'related' ? ' selected' : ''}>${escHtml(v)}</option>`)
       .join('')
     const heading = semantic
-      ? 'Misschien verwant (semantisch):'
-      : 'Misschien verwant (op basis van woorden &amp; tags):'
+      ? 'Misschien verwant (op betekenis):'
+      : 'Misschien verwant (op woorden &amp; tags):'
     box.innerHTML = `
       <div class="ai-sugg-label">${heading}</div>
       ${ranked.map(r => `
@@ -401,7 +449,7 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
         <div class="link-row" data-link-id="${l.id}">
           <span class="link-dir">${dir}</span>
           <span class="link-label">${escHtml(label)}</span>
-          <select class="link-type" data-link-id="${l.id}"${l.source_id === id ? '' : ' disabled title="Richting wordt vanaf de bron-nota bepaald"'}>${typeOpts}</select>
+          <select class="link-type" data-link-id="${l.id}"${l.source_id === id ? '' : ' disabled title="Richting wordt vanaf de bron-notitie bepaald"'}>${typeOpts}</select>
           <button class="link-del btn-ghost btn-sm" data-link-id="${l.id}" title="Verwijder link">✕</button>
         </div>`
     }).join('')
@@ -550,11 +598,19 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
     }
   }
 
+  function checkedThemeIds(): string[] {
+    return Array.from(document.querySelectorAll<HTMLInputElement>('.theme-check:checked')).map(c => c.value)
+  }
+
+  function checkedProjectIds(): string[] {
+    return Array.from(document.querySelectorAll<HTMLInputElement>('.project-check:checked')).map(c => c.value)
+  }
+
   async function save(extra?: Partial<NoteUpdate>): Promise<boolean> {
     const updates = { ...collectUpdate(), ...extra }
     if (!updates.content) { showToast('Uitwerking mag niet leeg zijn.'); return false }
-    const themeIds = Array.from(document.querySelectorAll<HTMLInputElement>('.theme-check:checked')).map(c => c.value)
-    const projectIds = Array.from(document.querySelectorAll<HTMLInputElement>('.project-check:checked')).map(c => c.value)
+    const themeIds = checkedThemeIds()
+    const projectIds = checkedProjectIds()
     try {
       const saved = await updateNote(id, updates)
       Object.assign(current, saved)
@@ -563,6 +619,7 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
       noteThemeIds = themeIds
       await setNoteProjects(id, projectIds)
       noteProjectIds = projectIds
+      cleanSnapshot = formSnapshot()
       return true
     } catch (err) {
       showToast(`Opslaan mislukt: ${errMsg(err)}`)
@@ -590,14 +647,14 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
     document.getElementById('back-btn')?.addEventListener('click', () => navigateBack('/inbox'))
 
     document.getElementById('show-in-graph')?.addEventListener('click', () =>
-      navigateTo(`/inbox?view=graph&focus=${id}`))
+      navigateTo(`/verbanden?view=graph&focus=${id}`))
 
     document.getElementById('delete-btn')?.addEventListener('click', () => {
       // Soft-delete: the editor makes way immediately; the API delete only
       // runs after the undo window closes (undo restores the form in place).
       const body = document.querySelector('.note-body') as HTMLElement
-      body.innerHTML = '<div class="note-loading">Nota verwijderd…</div>'
-      showUndoToast('Nota verwijderd',
+      body.innerHTML = '<div class="note-loading">Notitie verwijderd…</div>'
+      showUndoToast('Notitie verwijderd',
         async () => {
           try { await deleteNote(id); navigateBack('/inbox') }
           catch (err) { showToast(`Verwijderen mislukt: ${errMsg(err)}`); renderForm() }
@@ -610,8 +667,7 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
       btn.disabled = true
       btn.textContent = 'Bezig…'
       try {
-        const model = (document.getElementById('ai-prefill-sonnet') as HTMLInputElement | null)?.checked
-          ? 'claude-sonnet-4-6' as const : 'claude-haiku-4-5' as const
+        const model = preferredModel()
         let result: Awaited<ReturnType<typeof processNote>>
         try {
           result = await processNote(id, model)
@@ -625,6 +681,12 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
         if (suggestion.title) set('f-title', suggestion.title)
         if (suggestion.summary) set('f-summary', suggestion.summary)
         if (suggestion.section) (document.getElementById('f-section') as HTMLSelectElement).value = suggestion.section
+        // Samenvatting/sectie live in the collapsed "Meer velden" group — open
+        // it so the user can see what the AI filled in.
+        if (suggestion.summary || suggestion.section) {
+          const meer = document.getElementById('note-group-meer') as HTMLDetailsElement | null
+          if (meer) meer.open = true
+        }
         for (const tag of suggestion.tags ?? []) {
           if (!tagsState.includes(tag)) tagsState.push(tag)
         }
@@ -634,6 +696,14 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
           const cb = document.querySelector<HTMLInputElement>(`.theme-check[value="${tid}"]`)
           if (cb) cb.checked = true
         })
+        if (suggestion.matched_theme_ids?.length) {
+          const org = document.getElementById('note-group-organiseren') as HTMLDetailsElement | null
+          if (org) org.open = true
+        }
+        if (suggestion.related_note_ids?.length) {
+          const verb = document.getElementById('note-group-verbindingen') as HTMLDetailsElement | null
+          if (verb) verb.open = true
+        }
         await renderAiLinkSuggestions(suggestion.related_note_ids ?? [])
         renderNewThemeHint(suggestion.new_themes ?? [])
         showToast('Suggesties ingevuld — controleer en sla op')
@@ -686,6 +756,27 @@ function injectNoteStyles(): void {
     .note-head { display: flex; flex-direction: column; gap: 2px; }
     .note-h1 { font-size: var(--fs-lg); font-weight: 600; }
     .note-row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s-3); }
+    .note-group {
+      border: 1px solid var(--border);
+      border-radius: var(--r-md);
+      overflow: hidden;
+    }
+    .note-group-toggle {
+      padding: var(--s-3) var(--s-4);
+      cursor: pointer;
+      font-size: var(--fs-sm);
+      color: var(--text-muted);
+      list-style: none;
+      user-select: none;
+    }
+    .note-group-toggle::-webkit-details-marker { display: none; }
+    .note-group[open] .note-group-toggle { border-bottom: 1px solid var(--border); }
+    .note-group-fields {
+      display: flex;
+      flex-direction: column;
+      gap: var(--s-3);
+      padding: var(--s-3) var(--s-4);
+    }
     .field { display: flex; flex-direction: column; gap: var(--s-1); border: none; padding: 0; margin: 0; }
     .field-label { font-size: var(--fs-sm); color: var(--text-muted); font-weight: 500; }
     .field textarea, .field input, .field select { width: 100%; }
