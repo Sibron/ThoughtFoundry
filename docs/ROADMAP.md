@@ -18,19 +18,19 @@ lower daily friction. One shippable commit per milestone.
 
 | # | Milestone | Status |
 |---|-----------|--------|
-| M0 | Vestige & docs cleanup (stale embedding-era leftovers, schema drift) | in progress |
-| M1 | Foundations: server-side budget cap, gap-analysis via invoke, indexes/RLS | |
-| M2 | Shared AI-action component (model choice + cost estimate everywhere) | |
-| M3 | Semantic core: embed-text fn, matchNotes client, semantic Spark, embed-on-capture | |
-| M4 | Global search (topbar overlay) + semantic mode + route redirects | |
-| M5 | Project↔note wiring + context-aware back-nav | |
-| M6 | "Vandaag" dashboard home: projects-as-goals, momentum, weekoverzicht | |
-| M7 | Verbindingen review queue (4th inbox view) + dismissals | |
-| M8 | Graaf overhaul: theme hubs, degree sizing, LOD labels, filters, focus deep-link | |
-| M9 | Schrijfstudio 1: chapter_sections schema + editor + verwante gedachten | |
-| M10 | Schrijfstudio 2: write-section AI (draft/rewrite/tighten/continue) + revisions | |
-| M11 | Eén boekpijplijn: project tabs + prose-first manuscript export | |
-| M12 | Consistency sweep: undo-toast deletes, helper dedup | |
+| M0 | Vestige & docs cleanup (stale embedding-era leftovers, schema drift) | done (2026-07-20: backup-tabellen weg, security-hardening migratie, FTP/docs-drift gefixt) |
+| M1 | Foundations: server-side budget cap, gap-analysis via invoke, indexes/RLS | done |
+| M2 | Shared AI-action component (model choice + cost estimate everywhere) | done |
+| M3 | Semantic core: embed-text fn, matchNotes client, semantic Spark, embed-on-capture | done |
+| M4 | Global search (topbar overlay) + semantic mode + route redirects | done |
+| M5 | Project↔note wiring + context-aware back-nav | done |
+| M6 | "Vandaag" dashboard home: projects-as-goals, momentum, weekoverzicht | done |
+| M7 | Verbindingen review queue (4th inbox view) + dismissals | done |
+| M8 | Graaf overhaul: theme hubs, degree sizing, LOD labels, filters, focus deep-link | done |
+| M9 | Schrijfstudio 1: chapter_sections schema + editor + verwante gedachten | done |
+| M10 | Schrijfstudio 2: write-section AI (draft/rewrite/tighten/continue) + revisions | done |
+| M11 | Eén boekpijplijn: project tabs + prose-first manuscript export | done |
+| M12 | Consistency sweep: undo-toast deletes, helper dedup | done |
 
 ---
 
@@ -105,7 +105,7 @@ Success criteria:
 - Supabase Edge Functions
 - Claude models (Haiku for fast processing, Sonnet for deeper generation)
 - Free embeddings via the Supabase Edge runtime's built-in gte-small model + pgvector
-- Static deploy via GitHub Actions + FTP
+- Static deploy via GitHub Actions + GitHub Pages (`.github/workflows/deploy.yml`)
 
 ### Key paths
 - `src/pages/*` - UI screens
@@ -120,12 +120,10 @@ Build/client:
 
 Server/edge:
 - `ANTHROPIC_API_KEY` (required)
+- `SUPADATA_API_KEY` (optional — automatische YouTube-transcripts in analyze-source; zonder key valt de app terug op handmatig plakken)
 
 Deploy:
-- `FTP_SERVER`
-- `FTP_USERNAME`
-- `FTP_PASSWORD`
-- `FTP_SERVER_DIR`
+- geen extra secrets; `deploy.yml` bouwt met de twee `VITE_*` repo-secrets en publiceert naar GitHub Pages
 
 ---
 
@@ -381,7 +379,7 @@ No parallel large PR streams. Prefer one scoped PR at a time.
 | blank local app | env values | verify `.env` values |
 | PWA install not available | HTTPS | fix SSL first |
 | login fails in prod | Supabase URL config | ensure site URL is registered |
-| FTP deploy fails | secret names | verify exact secret keys |
+| Pages deploy fails | `VITE_*` repo-secrets + Pages enabled | check Actions log, verify exact secret keys |
 
 ---
 
