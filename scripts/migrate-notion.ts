@@ -9,6 +9,10 @@
  *
  * Output:
  *   scripts/migration-export.json  (ready to import in ThoughtFoundry Settings)
+ *
+ * Status: de import is op 2026-06-19 uitgevoerd; de data staat live. Sinds
+ * migratie 20260718_simplify_model bestaan notes.note_type en notes.tags niet
+ * meer — dit script schrijft die velden daarom niet meer naar de export.
  */
 
 import { parse } from 'csv-parse/sync'
@@ -59,7 +63,6 @@ interface MigrationNote {
   content: string
   ai_title: string
   ai_summary: string | null
-  note_type: NoteType
   status: 'verwerkt'
   section: Section | null
   core_idea: string | null
@@ -67,10 +70,10 @@ interface MigrationNote {
   source_author: string | null
   source_title: string | null
   source_id: string | null
-  tags: string[]
   processed_at: string
   created_at: string
   // Internal — not written to JSON
+  _noteType: NoteType
   _rawUuid: string
   _areas: string[]
   _ideaUuids: string[]
@@ -299,8 +302,8 @@ function parseCreatedAt(str: string): string {
 }
 
 // ── Note processing (replicates the app's process-note pipeline) ──────────────
-// ThoughtFoundry's processor fills: ai_title, ai_summary, tags, section, the
-// note_type, status='verwerkt' + theme/note links. core_idea and use_for are
+// ThoughtFoundry's processor fills: ai_title, ai_summary, section,
+// status='verwerkt' + theme/note links. core_idea and use_for are
 // deliberately left for the user's manual reflection step, so we leave them
 // null here to stay faithful to the product. See docs/ROADMAP.md and
 // supabase/functions/process-note/index.ts.
@@ -378,31 +381,6 @@ function assignSection(noteType: NoteType, areas: string[], title: string): Sect
   if (areas.some(a => THEORY_THEMES.has(a))) return 'theoretische_onderbouwing'
   if (areas.some(a => METHOD_THEMES.has(a))) return 'methodieken'
   return 'ondersteunende_concepten'
-}
-
-/** Slugify a theme name into a tag: lowercase, hyphenated, ascii-ish. */
-function slugifyTag(name: string): string {
-  return name
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '') // strip accents
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-}
-
-/** Build up to 5 lowercase, hyphenated tags from the note's themes. */
-function generateTags(areas: string[]): string[] {
-  const seen = new Set<string>()
-  const out: string[] = []
-  for (const a of areas) {
-    const slug = slugifyTag(a)
-    if (slug && !seen.has(slug)) {
-      seen.add(slug)
-      out.push(slug)
-    }
-    if (out.length >= 5) break
-  }
-  return out
 }
 
 /**
@@ -593,8 +571,6 @@ function main() {
     const section = assignSection(noteType, areas, title)
     const aiTitle = title.length > 80 ? title.slice(0, 79).trimEnd() + '…' : title
     const aiSummary = generateSummary(cleanBody, title)
-    // Persons become tags alongside the theme-derived tags (capped at 5).
-    const tags = [...new Set([...generateTags(areas), ...persons.map(p => slugifyTag(p.name))])].slice(0, 5)
 
     if (rawUuid) notionUuidToDbId.set(rawUuid, dbId)
 
@@ -603,7 +579,6 @@ function main() {
       content,
       ai_title: aiTitle,
       ai_summary: aiSummary,
-      note_type: noteType,
       status: 'verwerkt',
       section: section || null,
       core_idea: null, // manual reflection field — left for the user
@@ -611,9 +586,9 @@ function main() {
       source_author: primaryPerson?.name ?? null,
       source_title: mediaTitle,
       source_id: primaryPerson ? (sourceByName.get(primaryPerson.name)?.id ?? null) : null,
-      tags,
       processed_at: createdAt,
       created_at: createdAt,
+      _noteType: noteType,
       _rawUuid: rawUuid ?? '',
       _areas: areas,
       _ideaUuids: parseIdeaUuids(row.Ideas),
@@ -673,7 +648,7 @@ function main() {
 
   // Strip internal fields before serializing
   const cleanNotes = notes.map(
-    ({ _rawUuid: _r, _areas: _a, _ideaUuids: _i, _primaryPersonName: _p, ...rest }) => rest,
+    ({ _noteType: _t, _rawUuid: _r, _areas: _a, _ideaUuids: _i, _primaryPersonName: _p, ...rest }) => rest,
   )
 
   const payload = {
@@ -693,7 +668,7 @@ function main() {
 
   const noteTypeBreakdown = Object.entries(
     notes.reduce<Record<string, number>>((acc, n) => {
-      acc[n.note_type] = (acc[n.note_type] ?? 0) + 1
+      acc[n._noteType] = (acc[n._noteType] ?? 0) + 1
       return acc
     }, {}),
   )
