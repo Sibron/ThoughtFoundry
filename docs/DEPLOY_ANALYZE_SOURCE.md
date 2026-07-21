@@ -781,3 +781,16 @@ wordt door YouTube regelmatig geblokkeerd vanaf datacenter-IP's. In dat geval
 toont de app automatisch een tekstvak — plak daar het transcript (YouTube →
 beschrijving → "Transcript weergeven" → kopiëren) en analyseer opnieuw. De
 titel en maker worden dan alsnog automatisch ingevuld via oEmbed.
+
+## Bijbehorende functie: `supadata-usage`
+
+Naast `analyze-source` bestaat er een kleine companion-functie
+`supabase/functions/supadata-usage` die het Supadata-quotum opvraagt
+(`api.supadata.ai/v1/me`), zodat de app kan tonen hoeveel van de ~100 gratis
+video's/maand verbruikt zijn. Deploy 'm op dezelfde manier
+(`supabase functions deploy supadata-usage` of via het dashboard). Zonder
+`SUPADATA_API_KEY` geeft hij een leeg resultaat terug — ongevaarlijk.
+
+(N.B. de eenmalige testfunctie `supadata-usage-probe` in het dashboard is een
+overblijfsel van het uitproberen en kan daar verwijderd worden; hij staat niet
+in de repo.)
