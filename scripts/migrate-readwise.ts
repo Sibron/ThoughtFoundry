@@ -13,8 +13,11 @@
  * which is exactly what the in-app "Oude notities AI-verwerken" feature looks
  * for (see fetchNoteIdsNeedingReprocess in src/lib/notes.ts). So after importing
  * the JSON you can run that feature to give every highlight a proper AI title,
- * summary, themes and section — while content, mini_notes, note_type and the
- * source fields are preserved.
+ * summary, themes and section — while content, mini_notes and the source
+ * fields are preserved.
+ *
+ * Sinds migratie 20260718_simplify_model bestaan notes.note_type en notes.tags
+ * niet meer; Readwise document-tags landen daarom op de bron (sources.tags).
  *
  * Usage:
  *   READWISE_EXPORT_DIR=/path/to/unzipped/Readwise npx tsx scripts/migrate-readwise.ts
@@ -54,7 +57,6 @@ interface NoteRecord {
   content: string
   mini_notes: string | null
   status: 'verwerkt'
-  note_type: 'literature'
   core_idea: null
   use_for: null
   source_id: string
@@ -63,7 +65,6 @@ interface NoteRecord {
   source_url: string | null
   ai_title: string
   ai_summary: string
-  tags: string[]
   section: null
   processed_at: string
   created_at: string
@@ -295,11 +296,9 @@ function main() {
       year: null,
       url: meta.url,
       summary: null,
-      tags: [],
+      tags: [...new Set(meta.tags.map(slugifyTag).filter(Boolean))].slice(0, 5),
     }
     sources.push(source)
-
-    const noteTags = [...new Set(meta.tags.map(slugifyTag).filter(Boolean))].slice(0, 5)
 
     const parsed = parseHighlights(highlightLines)
     for (const h of parsed) {
@@ -315,7 +314,6 @@ function main() {
         content: h.content,
         mini_notes: h.note,
         status: 'verwerkt',
-        note_type: 'literature',
         core_idea: null,
         use_for: null,
         source_id: source.id,
@@ -324,7 +322,6 @@ function main() {
         source_url: h.url ?? meta.url,
         ai_title: fallbackTitle(h.content),
         ai_summary: fallbackSummary(h.content),
-        tags: noteTags,
         section: null,
         processed_at: stamp,
         created_at: stamp,

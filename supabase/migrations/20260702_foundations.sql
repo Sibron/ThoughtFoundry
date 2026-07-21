@@ -10,12 +10,20 @@ create policy "user_settings_delete" on public.user_settings
   for delete using (auth.uid() = user_id);
 
 -- ── 2) Missing indexes for common filters ───────────────────────────────────
--- tags is filtered with array containment (denkpartner scope, tag search):
--- without a GIN index that is a sequential scan per query.
-create index if not exists notes_tags_gin on public.notes using gin(tags);
--- note_type pills (inbox) and section grouping (theme-sections, book) both
--- filter on these columns per user.
-create index if not exists notes_user_note_type on public.notes(user_id, note_type);
+-- tags (array containment) and note_type (inbox pills) were dropped by
+-- 20260718_simplify_model; on a fresh rebuild from schema.sql these columns
+-- never exist at all, so both indexes are guarded on column existence.
+do $$
+begin
+  if exists (select 1 from information_schema.columns
+             where table_schema = 'public' and table_name = 'notes' and column_name = 'tags') then
+    create index if not exists notes_tags_gin on public.notes using gin(tags);
+  end if;
+  if exists (select 1 from information_schema.columns
+             where table_schema = 'public' and table_name = 'notes' and column_name = 'note_type') then
+    create index if not exists notes_user_note_type on public.notes(user_id, note_type);
+  end if;
+end $$;
 create index if not exists notes_user_section on public.notes(user_id, section)
   where section is not null;
 
