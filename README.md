@@ -4,6 +4,17 @@ A mobile-first, Dutch-language PWA for capturing thoughts and sources,
 turning them into AI-assisted insights and Zettelkasten-style linked notes,
 and weaving them into book manuscripts. Capture → process → connect → write.
 
+## What it does
+
+Capture a thought or a source in one tap -- from the app, or by sharing a page to it from
+anywhere on your phone. ThoughtFoundry then helps turn that raw capture into something
+usable: Claude proposes a title, a summary, the themes it belongs to and the existing notes
+it connects to, and you accept or edit each one. Over time the notes form a linked
+Zettelkasten you can search semantically, see as a graph, and pull together into chapters
+and a book manuscript.
+
+It is built for one person, works offline for capture, and installs as a PWA.
+
 ## Tech stack
 
 - **Frontend**: Vite + TypeScript, no framework (vanilla DOM rendering, hash-based router in `src/router.ts`).
