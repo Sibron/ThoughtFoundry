@@ -142,8 +142,15 @@ problem, the decision, and what was deliberately left undone.
 
 ## Testing
 
-`npm test` (Vitest, jsdom) and `npm run build` (`tsc && vite build`). `ci.yml` runs both on
-pull requests. Tests live in `tests/`, one file per module under test.
+`npm test` (Vitest, `node` environment) and `npm run build` (`tsc && vite build`). `ci.yml`
+runs both on pull requests. Tests live in `tests/`, one file per module under test.
+
+There is deliberately **no DOM environment**: nothing under test renders. `tests/setup.ts`
+supplies a ~20-line `localStorage` stub, which is the only browser API the modules under
+test touch -- `lib/supabase.ts` reads stored credentials at import time. jsdom was tried and
+removed: it is a whole browser for one key-value store, and jsdom 30 requires Node >= 22.22
+while `ci.yml` pins Node 20, so it passed locally and failed in CI. Keep it that way; a test
+needing a real DOM is a signal to reach for a stub, or to argue the case explicitly.
 
 Covered today -- the pure modules, no Supabase and no network:
 `lib/similarity.ts`, `lib/markdown.ts` (escaping first: it writes into `innerHTML` and
@@ -154,7 +161,8 @@ renders text `analyze-source` fetched from arbitrary sites), `lib/manuscript.ts`
 **Still uncovered, and the honest list of where a regression can still land silently:**
 - `lib/exporter.ts` -- the v1/v2/v3 payload migrations and the theme/source id remapping.
   The most valuable next suite; needs a fake PostgREST or a Supabase branch.
-- The offline IndexedDB queue in `lib/notes.ts` -- jsdom has no IndexedDB.
+- The offline IndexedDB queue in `lib/notes.ts` -- the `node` environment has no IndexedDB;
+  `fake-indexeddb` in `tests/setup.ts` would be the smallest way in.
 - Every rendering path. There are no DOM tests at all.
 
 `tsconfig.json` now includes `tests` as well as `src`, so anything a test imports gets
