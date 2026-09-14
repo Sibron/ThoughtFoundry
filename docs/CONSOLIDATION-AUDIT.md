@@ -1,8 +1,37 @@
 # Feature & Tab Consolidatie-audit
 
-> Status: **aanbeveling** (geen code-wijzigingen aan de app — dit document is de deliverable).
+> Status: **historisch — uitgevoerd**. Dit was een aanbeveling (2026-06-24); de
+> vier samenvoegingen A·B·C·D zijn sindsdien gebouwd. Bewaard als het *waarom*
+> achter de huidige navigatie, niet als openstaand werk.
 > Scope: **volledig** — alle vier de samenvoegingen (A·B·C·D) opgenomen.
-> Datum: 2026-06-24.
+> Datum: 2026-06-24. Uitgevoerd: 2026-07.
+
+## Wat er sindsdien gebeurd is
+
+Alles hieronder is geïmplementeerd. Concreet, in de code van vandaag:
+
+| Aanbeveling | Waar het nu leeft |
+|---|---|
+| Merge A — Denktools | `src/pages/denktools.ts` (tabs Spark · Denkpartner · Clusters) |
+| Merge B + C — Bibliotheek | `src/pages/library.ts` (tabs Thema's · Bronnen · Boek) |
+| Merge D — Zoeken | topbar-overlay `src/lib/search-overlay.ts`, op elk scherm |
+| Merge D — Graaf | `src/pages/verbanden.ts` (tabs Graaf · Verbindingen) |
+| Oude routes | redirects in `src/main.ts`, zodat bookmarks blijven werken |
+
+De code-niveau-duplicatie uit Deel 2 is ook opgeruimd: `lib/crud-list.ts`
+(split-pane CRUD), `lib/cost.ts` (`renderCostNote`), `getNoteTitle` in
+`lib/notes.ts`, `lib/ai-action.ts` (één AI-trigger) en — sinds de opruim-audit
+van 2026-09 — `lib/shell.ts`, dat de drie identieke tab-shells vervangt.
+
+De navigatie is daarna nóg verder ingedikt: de bottom-bar is nu de kernflow
+(Vangen · Vangbak · Verwerken · Verbanden), en Vandaag, Bibliotheek,
+Schrijfstudio, Denktools en Instellingen zitten achter "Meer". Zie
+`src/lib/nav.ts`; die is de bron van waarheid voor de navigatie, niet dit
+document.
+
+---
+
+*Oorspronkelijk document hieronder, ongewijzigd bewaard.*
 
 ## Waarom deze audit
 
@@ -149,3 +178,6 @@ architectuurproblemen — opruimen is optioneel en kan na de tab-consolidatie.
 Als je later de implementatie wilt, is de natuurlijke volgorde:
 **Merge D (laagste risico) → Merge A → Merge C + B**, telkens met de in-page
 tab-switcher van `src/pages/book.ts` als blauwdruk.
+
+> *Afgerond in 2026-07 — in die volgorde. Zie "Wat er sindsdien gebeurd is"
+> bovenaan.*
