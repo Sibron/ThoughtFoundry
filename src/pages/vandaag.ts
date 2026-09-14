@@ -71,9 +71,14 @@ async function renderGoals(): Promise<void> {
     const stats = await fetchSectionStats().catch(() => new Map<string, ChapterSectionStats>())
 
     const cards = await Promise.all(projects.map(async p => {
-      const noteIds = await fetchProjectNoteIds(p.id).catch(() => [] as string[])
+      // The note ids and the chapters are independent queries; only the
+      // this-week count depends on the ids. Awaiting all three in a row cost
+      // three serial round-trips per goal card.
+      const [noteIds, chapters] = await Promise.all([
+        fetchProjectNoteIds(p.id).catch(() => [] as string[]),
+        fetchChaptersByProject(p.id).catch(() => []),
+      ])
       const thisWeek = await countCreatedThisWeek(noteIds).catch(() => 0)
-      const chapters = await fetchChaptersByProject(p.id).catch(() => [])
       const words = chapters.reduce((sum, c) => sum + (stats.get(c.id)?.words ?? 0), 0)
       return goalCard(p, noteIds.length, thisWeek, inboxCount, chapters.length, words)
     }))
