@@ -8,6 +8,32 @@
 
 import { supabase } from './supabase'
 
+// ── Similarity thresholds ───────────────────────────────────────────────────
+// gte-small cosine similarity, calibrated by eye on real notes. These were
+// loose numbers scattered across six files (0.45 in three, 0.72 in three, the
+// band endpoints in two more), which made "retune the band" — issue #36 — a
+// hunt rather than an edit. One place now.
+
+/** Below this a "find me notes like X" hit is too thin to show. */
+export const MATCH_MIN_SIMILARITY = 0.45
+
+/** At or above this a pair reads as plainly related rather than surprising. */
+export const STRONG_SIMILARITY = 0.72
+
+/** Near-duplicates start here; a bridge above it tells the user nothing new. */
+export const NEAR_DUPLICATE_SIMILARITY = 0.85
+
+/** Below this the relation is too thin to judge. */
+export const BRIDGE_MIN_SIMILARITY = 0.55
+
+/**
+ * Upper end of the default bridge band. Deliberately 0.82 and NOT
+ * NEAR_DUPLICATE_SIMILARITY: it mirrors the `band_hi` default baked into the
+ * semantic_bridges SQL, so a caller that passes no band gets the same result
+ * from the client as from psql. Retuning either means retuning both — see #36.
+ */
+export const BRIDGE_MAX_SIMILARITY = 0.82
+
 export interface Neighbor {
   id: string
   ai_title: string | null
@@ -40,14 +66,14 @@ export async function fetchNeighbors(noteId: string, count = 8): Promise<Neighbo
 
 /**
  * Non-obvious bridges: semantically close pairs that aren't linked and share no
- * theme. Band defaults mirror the SQL (0.55–0.82) — related, not near-duplicate.
+ * theme — related, not near-duplicate.
  */
 export async function fetchSemanticBridges(
   opts: { bandLo?: number; bandHi?: number; max?: number } = {}
 ): Promise<BridgePair[]> {
   const { data, error } = await supabase.rpc('semantic_bridges', {
-    band_lo: opts.bandLo ?? 0.55,
-    band_hi: opts.bandHi ?? 0.82,
+    band_lo: opts.bandLo ?? BRIDGE_MIN_SIMILARITY,
+    band_hi: opts.bandHi ?? BRIDGE_MAX_SIMILARITY,
     max_pairs: opts.max ?? 20
   })
   if (error) throw error

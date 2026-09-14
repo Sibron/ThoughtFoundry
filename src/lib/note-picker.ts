@@ -7,7 +7,7 @@
 // survives searching — ticked notes stay ticked while the list changes.
 
 import { fetchNotes, fetchNotesByIds, getNoteTitle, type Note } from './notes'
-import { embedText, matchNotes, hasEmbeddings } from './semantic'
+import { embedText, matchNotes, hasEmbeddings, MATCH_MIN_SIMILARITY } from './semantic'
 import { showToast, esc, errMsg } from './crud-list'
 import { trapFocus } from './focus-trap'
 
@@ -127,7 +127,7 @@ export function openNotePicker(opts: NotePickerOptions): void {
         return
       }
       const vec = await embedText(opts.seedText!)
-      const hits = (await matchNotes(vec, 12)).filter(h => h.similarity >= 0.45 && !exclude.has(h.id))
+      const hits = (await matchNotes(vec, 12)).filter(h => h.similarity >= MATCH_MIN_SIMILARITY && !exclude.has(h.id))
       if (hits.length === 0) { showToast('Geen passende notities gevonden'); return }
       const notes = await fetchNotesByIds(hits.map(h => h.id))
       const order = new Map(hits.map((h, i) => [h.id, i]))

@@ -60,10 +60,6 @@ export async function mountDenkpartner(root: HTMLElement): Promise<void> {
 
   createAiAction(document.getElementById('dp-action-host')!, {
     label: 'Vragen genereren',
-    defaultModel: 'claude-haiku-4-5',
-    expectedOutputTokens: 700,
-    // Server sends up to 50 notes (~350 chars each) as context.
-    estimateInputChars: () => 18_000,
     phases: AI_PHASES.denkpartner,
     beforeRun: () => {
       const scope = document.querySelector<HTMLInputElement>('input[name="scope"]:checked')?.value ?? 'all'
