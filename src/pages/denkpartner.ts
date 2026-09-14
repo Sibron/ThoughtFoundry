@@ -210,10 +210,6 @@ function injectDpStyles(): void {
       flex-wrap: wrap;
     }
     .dp-actions .btn { width: auto; }
-    .cost-note {
-      font-size: var(--fs-sm);
-      color: var(--text-muted);
-    }
     .dp-questions {
       display: flex;
       flex-direction: column;
