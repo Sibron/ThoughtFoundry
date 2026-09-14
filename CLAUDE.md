@@ -70,10 +70,10 @@ writes nothing. The note changes only when the user accepts it.
   projects apply theirs automatically at startup. Same discipline, different mechanism.
 - **Rendering is client-side string templates**, not server-rendered Jinja. A page is
   `render*(app: HTMLElement)`, which replaces `app.innerHTML` and re-attaches listeners.
-- **There are no tests.** The whole automated gate is `tsc && vite build` in `ci.yml`. This
-  is the honest state, not an aspiration to write around: where the other projects say
-  "tests are part of the feature", this one cannot yet. See "Testing" below for where to
-  start.
+- **Tests are thin, not absent.** Vitest covers the pure modules only; everything that
+  touches Supabase, IndexedDB or the DOM is still verified by hand. Where the other
+  projects say "tests are part of the feature", here that holds for `lib/` logic and not
+  yet for a page. See "Testing" below.
 - **AI runs server-side in Deno**, not in the app process, so it can hold the key and
   enforce the budget. `_shared/anthropic.ts` calls the REST API with `fetch` rather than
   the SDK, to keep the cold start small.
@@ -129,22 +129,42 @@ Dark mode is defined twice on purpose: by `prefers-color-scheme` and by `[data-t
 
 **Shared UI lives in `src/lib/` as functions, not components** -- `crud-list.ts` is the
 closest thing to a real component and is the one to extend for a new
-sidebar-form-plus-grid screen. `ai-action.ts` is the single way an AI feature is triggered;
-do not invent a second.
+sidebar-form-plus-grid screen. `shell.ts` owns the tabbed host used by Bibliotheek,
+Denktools and Verbanden; a new tabbed screen is a `renderShell()` call, not a fourth copy.
+`ai-action.ts` is the single way an AI feature is triggered; do not invent a second.
+
+**Every route is loaded on demand** from `main.ts`, so the capture screen does not wait on
+the graph engine. A new page is a `() => guard(async () => (await import('./pages/x')).renderX)`
+entry, never a static import.
 
 **Commits** get an imperative one-line subject in plain language, then prose explaining the
 problem, the decision, and what was deliberately left undone.
 
 ## Testing
 
-**There are none today.** `npm run build` (`tsc && vite build`) is the only gate, and
-`ci.yml` runs exactly that on pull requests.
+`npm test` (Vitest, jsdom) and `npm run build` (`tsc && vite build`). `ci.yml` runs both on
+pull requests. Tests live in `tests/`, one file per module under test.
 
-This is the largest known gap in this project. The cheapest useful start is unit tests over
-the pure modules, which need no Supabase and no DOM: `lib/similarity.ts`, `lib/markdown.ts`,
-`lib/exporter.ts` (the v1/v2/v3 payload migrations especially), and `lib/manuscript.ts`.
-Note that `tsconfig.json` includes only `src`, so `supabase/functions/` is never
-typechecked -- an edge function can break without `npm run build` noticing.
+Covered today -- the pure modules, no Supabase and no network:
+`lib/similarity.ts`, `lib/markdown.ts` (escaping first: it writes into `innerHTML` and
+renders text `analyze-source` fetched from arbitrary sites), `lib/manuscript.ts`,
+`lib/cost.ts` (cap thresholds, via a mocked client), `fetchAllRows` + `isUuid` in
+`lib/supabase.ts`, `lib/sections.ts`, and `functions/_shared/anthropic.ts`.
+
+**Still uncovered, and the honest list of where a regression can still land silently:**
+- `lib/exporter.ts` -- the v1/v2/v3 payload migrations and the theme/source id remapping.
+  The most valuable next suite; needs a fake PostgREST or a Supabase branch.
+- The offline IndexedDB queue in `lib/notes.ts` -- jsdom has no IndexedDB.
+- Every rendering path. There are no DOM tests at all.
+
+`tsconfig.json` now includes `tests` as well as `src`, so anything a test imports gets
+typechecked -- which is how `functions/_shared/anthropic.ts` is covered. The rest of
+`supabase/functions/` is still not typechecked by `npm run build`; an edge function can
+break without the build noticing. Importing a module from a test is currently the only way
+to pull it into `tsc`.
+
+When a bug is fixed, add the test that fails against the old code first, and say in the
+commit that you checked it fails. `tests/manuscript.test.ts` is the worked example.
 
 ## AI calls
 
@@ -160,7 +180,12 @@ Every call is a Deno edge function in `supabase/functions/`; the browser only ev
 - `_shared/supabase.ts`'s `getUserClient(req)` forwards the caller's `Authorization` header
   so **RLS still applies inside the function**. Use it rather than a service-role client.
 - `logUsage()` writes `ai_usage` on every call. Skipping it makes the cost page wrong.
-- Never log prompt bodies or keys.
+- Never log prompt bodies or keys, and never log a third-party API's raw response body
+  either -- an account endpoint can carry more than you asked for.
+- **Narrow `body.model` through `resolveModel()`.** The request interface's TS union is a
+  compile-time fiction over `await req.json()`, and the anon key is public. An unpriced
+  model makes `estimateCost()` return a value that has no entry in `PRICING`; a `NaN` in
+  `ai_usage.cost_usd` makes the monthly cap compare false forever.
 - Embeddings are free: the Supabase Edge runtime's built-in `gte-small` (384 dims). No key,
   no cost -- so embedding more is cheap, and calling Claude for it would be a mistake.
 - Prompts are Dutch, demand JSON-only output, and every id the model returns is validated
