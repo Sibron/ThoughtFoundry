@@ -36,7 +36,17 @@ export async function resolveChapterSections(c: Chapter): Promise<ManuscriptSect
   return c.outline
 }
 
-export function renderChapterMarkdown(ch: ManuscriptChapter, notes: Note[]): string {
+const FOOTER_PREFIX = '*Gegenereerd via ThoughtFoundry'
+
+function footerLines(): string[] {
+  return ['---', `${FOOTER_PREFIX} — ${new Date().toLocaleDateString('nl-NL')}*`]
+}
+
+export function renderChapterMarkdown(
+  ch: ManuscriptChapter,
+  notes: Note[],
+  opts: { footer?: boolean } = {}
+): string {
   const byId: Record<string, Note> = {}
   notes.forEach(n => { byId[n.id] = n })
 
@@ -62,7 +72,7 @@ export function renderChapterMarkdown(ch: ManuscriptChapter, notes: Note[]): str
     })
   })
 
-  lines.push('---', `*Gegenereerd via ThoughtFoundry — ${new Date().toLocaleDateString('nl-NL')}*`)
+  if (opts.footer !== false) lines.push(...footerLines())
   return lines.join('\n')
 }
 
@@ -88,13 +98,14 @@ export function renderBookMarkdown(
 
   chapters.forEach((c, i) => {
     lines.push('---', '')
-    const md = renderChapterMarkdown({ ...c, title: `Hoofdstuk ${i + 1}: ${c.title}` }, notes)
-    // Strip the trailing "Gegenereerd via" footer per chapter
-    const trimmed = md.split('\n---\n')[0]
-    lines.push(trimmed, '')
+    // Ask for the chapter WITHOUT its footer rather than cutting it off after
+    // the fact: the old code split on the first "\n---\n", and a note whose own
+    // text contains a markdown horizontal rule produced exactly that sequence —
+    // silently truncating the chapter, and everything after it, from the export.
+    lines.push(renderChapterMarkdown({ ...c, title: `Hoofdstuk ${i + 1}: ${c.title}` }, notes, { footer: false }), '')
   })
 
-  lines.push('---', `*Gegenereerd via ThoughtFoundry — ${new Date().toLocaleDateString('nl-NL')}*`)
+  lines.push(...footerLines())
   return lines.join('\n')
 }
 
