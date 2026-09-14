@@ -54,6 +54,22 @@ export async function fetchAllRows<T>(
   return all
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/**
+ * Is this string a well-formed UUID?
+ *
+ * Every row id in this app is a uuid, but ids also arrive from the URL
+ * (`#/note?id=…`) and get interpolated into PostgREST `.or()` filter strings,
+ * which are a little query language of their own. Checking the shape first
+ * means a malformed or hand-edited id produces a clean "not found" instead of
+ * a confusing PostgREST 400 — and it keeps crafted filter syntax out of the
+ * query entirely.
+ */
+export function isUuid(value: string | null | undefined): value is string {
+  return !!value && UUID_RE.test(value)
+}
+
 /** Persist user-supplied credentials and reload so the client picks them up. */
 export function saveSupabaseConfig(url: string, anonKey: string): void {
   localStorage.setItem(STORAGE_URL_KEY, url.trim())

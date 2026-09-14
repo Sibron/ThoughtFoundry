@@ -4,7 +4,7 @@
 // Nothing is written here; the client persists accepted links after review.
 
 import { corsHeaders, jsonResponse } from '../_shared/cors.ts'
-import { callAnthropic, estimateCost, parseJsonFromResponse } from '../_shared/anthropic.ts'
+import { callAnthropic, estimateCost, parseJsonFromResponse, resolveModel, sanitizePersona } from '../_shared/anthropic.ts'
 import { getUserClient, requireUserId, logUsage } from '../_shared/supabase.ts'
 import { enforceBudget } from '../_shared/budget.ts'
 
@@ -55,7 +55,8 @@ Deno.serve(async (req: Request) => {
   const pairs = (body.pairs ?? []).slice(0, MAX_PAIRS)
   if (pairs.length === 0) return jsonResponse({ error: 'pairs required' }, 400)
 
-  const model = body.model ?? 'claude-haiku-4-5'
+  // body.model is untrusted client input — narrow it to a priced model.
+  const model = resolveModel(body.model, 'claude-haiku-4-5')
   const supabase = getUserClient(req)
 
   let userId: string
@@ -96,7 +97,7 @@ Deno.serve(async (req: Request) => {
   }).join('\n\n')
 
   const userPrompt = `## Kandidaat-paren (${validPairs.length})\n\n${pairBlock}\n\nGeef je beoordeling als JSON.`
-  const system = [body.persona?.trim(), SYSTEM_PROMPT].filter(Boolean).join('\n\n')
+  const system = [sanitizePersona(body.persona), SYSTEM_PROMPT].filter(Boolean).join('\n\n')
 
   let result
   try {

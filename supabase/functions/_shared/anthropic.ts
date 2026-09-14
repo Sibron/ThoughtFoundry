@@ -26,13 +26,40 @@ const PRICING: Record<AnthropicModel, { input: number; output: number }> = {
   'claude-opus-4-7':   { input: 5.0,  output: 25.0 }
 }
 
+/**
+ * Narrow an untrusted `body.model` to a model this app actually offers.
+ *
+ * The model arrives from the browser, and the anon key is world-readable, so
+ * the TS union on the request interface is a compile-time fiction. Without this
+ * an arbitrary string reaches the API — and, worse, a model absent from PRICING
+ * makes estimateCost() return NaN, which is then written to ai_usage.cost_usd.
+ * `sum()` over a NaN row is NaN, and `NaN >= cap` is false, so a single such
+ * call would disable the monthly budget guard permanently.
+ */
+export function resolveModel(value: unknown, fallback: AnthropicModel): AnthropicModel {
+  return typeof value === 'string' && value in PRICING ? value as AnthropicModel : fallback
+}
+
 export function estimateCost(
   model: AnthropicModel,
   inputTokens: number,
   outputTokens: number
 ): number {
-  const p = PRICING[model]
-  return (inputTokens * p.input + outputTokens * p.output) / 1_000_000
+  // Defence in depth: never return NaN even if an unpriced model slips through
+  // (see resolveModel) — a NaN cost silently defeats the budget cap.
+  const p = PRICING[model] ?? PRICING['claude-sonnet-4-6']
+  const cost = (inputTokens * p.input + outputTokens * p.output) / 1_000_000
+  return Number.isFinite(cost) ? cost : 0
+}
+
+/**
+ * Persona text is user-authored and prepended to every system prompt. Cap it so
+ * a runaway value can't quietly inflate input tokens (and cost) on every call.
+ */
+export const MAX_PERSONA_CHARS = 2000
+
+export function sanitizePersona(value: unknown): string {
+  return typeof value === 'string' ? value.trim().slice(0, MAX_PERSONA_CHARS) : ''
 }
 
 export async function callAnthropic(opts: {

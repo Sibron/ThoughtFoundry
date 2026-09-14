@@ -2,7 +2,7 @@
 // and corpus risks for a given book project.
 
 import { corsHeaders, jsonResponse } from '../_shared/cors.ts'
-import { callAnthropic, estimateCost } from '../_shared/anthropic.ts'
+import { callAnthropic, estimateCost, resolveModel, sanitizePersona } from '../_shared/anthropic.ts'
 import { getUserClient, requireUserId, logUsage } from '../_shared/supabase.ts'
 import { enforceBudget } from '../_shared/budget.ts'
 
@@ -30,7 +30,8 @@ Deno.serve(async (req: Request) => {
   try { body = await req.json() } catch { return jsonResponse({ error: 'Invalid JSON' }, 400) }
   if (!body.projectId?.trim()) return jsonResponse({ error: 'projectId required' }, 400)
 
-  const model = body.model ?? 'claude-sonnet-4-6'
+  // body.model is untrusted client input — narrow it to a priced model.
+  const model = resolveModel(body.model, 'claude-sonnet-4-6')
   const supabase = getUserClient(req)
 
   let userId: string
@@ -91,7 +92,7 @@ Deno.serve(async (req: Request) => {
 
   const userPrompt = `## Project\n\n${projectBlock}\n\n## Nota's in dit project (${notes.length})\n\n${notesBlock}\n\n## Jouw analyse\n\nGeef een gestructureerde gap-analyse met de volgende vier secties:\n\n## WITTE PLEKKEN\nWelke thema's, perspectieven of aspecten van de kernvraag ontbreken volledig in het huidige corpus?\n\n## ONTBREKENDE TEGENARGUMENTEN\nWelke tegenwerpingen, kritiek of afwijkende standpunten zijn niet vertegenwoordigd?\n\n## ONUITGEWERKTE VRAGEN\nWelke vragen of deelthema's zijn aangeraakt maar niet uitgewerkt?\n\n## RISICO VAN HET HUIDIGE CORPUS\nWelke aannames, blinde vlekken of structurele zwakheden zitten er in het huidige corpus als geheel?`
 
-  const system = [body.persona?.trim(), BASE_SYSTEM].filter(Boolean).join('\n\n')
+  const system = [sanitizePersona(body.persona), BASE_SYSTEM].filter(Boolean).join('\n\n')
 
   let result
   try {
