@@ -169,10 +169,6 @@ function injectSparkStyles(): void {
       flex-wrap: wrap;
     }
     .spark-actions .btn { width: auto; }
-    .cost-note {
-      font-size: var(--fs-sm);
-      color: var(--text-muted);
-    }
     .spark-result {
       background: var(--surface);
       border: 1px solid var(--border);

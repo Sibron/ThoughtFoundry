@@ -157,7 +157,6 @@ function injectClustersStyles(): void {
       flex-wrap: wrap;
     }
     .clusters-run-row .btn { width: auto; }
-    .cost-note { font-size: var(--fs-sm); color: var(--text-muted); }
     .clusters-meta {
       font-size: var(--fs-sm);
       color: var(--text-muted);
