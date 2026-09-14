@@ -205,8 +205,12 @@ Every call is a Deno edge function in `supabase/functions/`; the browser only ev
 npm install
 cp .env.example .env    # VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY
 npm run dev
-npm run build           # tsc typecheck + bundle -- the only gate
+npm test                # Vitest over the pure modules
+npm run build           # tsc typecheck + bundle
 ```
+
+`npm test` and `npm run build` are both gates -- `ci.yml` runs them in that order on every
+pull request. See "Testing" above for what they do and do not cover.
 
 Credentials are read from `localStorage` first and the build-time env second, so a deployed
 build can be pointed at another project from the Settings page without rebuilding.
