@@ -6,3 +6,6 @@ dist
 
 # Generated Readwise import (personal highlights) — regenerate with scripts/migrate-readwise.ts
 scripts/readwise-export.json
+
+# Generated Notion import (personal notes) — regenerate with scripts/migrate-notion.ts
+scripts/migration-export.json

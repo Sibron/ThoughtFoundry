@@ -1,4 +1,4 @@
-import { supabase, fetchAllRows } from './supabase'
+import { supabase, fetchAllRows, isUuid } from './supabase'
 
 export type LinkType = 'builds_on' | 'contradicts' | 'related'
 
@@ -26,6 +26,9 @@ export async function fetchLinks(): Promise<NoteLink[]> {
 }
 
 export async function fetchLinksForNote(noteId: string): Promise<NoteLink[]> {
+  // Interpolated into a PostgREST filter expression below — refuse anything
+  // that isn't a plain uuid rather than letting it reach the query language.
+  if (!isUuid(noteId)) return []
   const { data, error } = await supabase
     .from('note_links')
     .select('*')
@@ -41,6 +44,8 @@ export async function createLink(input: {
   reason?: string
 }): Promise<NoteLink> {
   if (input.sourceId === input.targetId) throw new Error('Een notitie kan niet aan zichzelf gelinkt worden.')
+  // Both ids are interpolated into the PostgREST `.or()` filter below.
+  if (!isUuid(input.sourceId) || !isUuid(input.targetId)) throw new Error('Ongeldige notitie-id.')
 
   const { data: userData } = await supabase.auth.getUser()
   const userId = userData.user?.id

@@ -10,7 +10,7 @@
 // textarea and re-call with `pastedText`.
 
 import { corsHeaders, jsonResponse } from '../_shared/cors.ts'
-import { callAnthropic, estimateCost, parseJsonFromResponse } from '../_shared/anthropic.ts'
+import { callAnthropic, estimateCost, parseJsonFromResponse, resolveModel, sanitizePersona } from '../_shared/anthropic.ts'
 import { getUserClient, requireUserId, logUsage } from '../_shared/supabase.ts'
 import { enforceBudget } from '../_shared/budget.ts'
 
@@ -144,7 +144,8 @@ Deno.serve(async (req: Request) => {
     if (!isSafeUrl(url)) return jsonResponse({ error: 'URL not allowed' }, 400)
   }
 
-  const model = body.model ?? 'claude-haiku-4-5'
+  // body.model is untrusted client input — narrow it to a priced model.
+  const model = resolveModel(body.model, 'claude-haiku-4-5')
   const supabase = getUserClient(req)
 
   let userId: string
@@ -218,7 +219,7 @@ Deno.serve(async (req: Request) => {
   const stage = body.stage // undefined = legacy one-shot, else 'frame' | 'insights'
 
   const system = [
-    body.persona?.trim(),
+    sanitizePersona(body.persona),
     stage === 'frame' ? FRAMING_SYSTEM_PROMPT
       : stage === 'insights' ? INSIGHTS_SYSTEM_PROMPT
       : SYSTEM_PROMPT

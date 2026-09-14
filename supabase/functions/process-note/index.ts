@@ -3,7 +3,7 @@
 // The user accepts/edits each field client-side; the function does NOT mutate the note.
 
 import { corsHeaders, jsonResponse } from '../_shared/cors.ts'
-import { callAnthropic, estimateCost, parseJsonFromResponse } from '../_shared/anthropic.ts'
+import { callAnthropic, estimateCost, parseJsonFromResponse, resolveModel, sanitizePersona } from '../_shared/anthropic.ts'
 import { getUserClient, requireUserId, logUsage } from '../_shared/supabase.ts'
 import { enforceBudget } from '../_shared/budget.ts'
 
@@ -83,7 +83,8 @@ Deno.serve(async (req: Request) => {
   try { body = await req.json() } catch { return jsonResponse({ error: 'Invalid JSON' }, 400) }
   if (!body.noteId) return jsonResponse({ error: 'noteId required' }, 400)
 
-  const model = body.model ?? 'claude-haiku-4-5'
+  // body.model is untrusted client input — narrow it to a priced model.
+  const model = resolveModel(body.model, 'claude-haiku-4-5')
   const supabase = getUserClient(req)
 
   let userId: string
@@ -123,7 +124,7 @@ Deno.serve(async (req: Request) => {
 
   const userPrompt = buildUserPrompt(note, themes, contextNotes)
 
-  const system = [body.persona?.trim(), SYSTEM_PROMPT].filter(Boolean).join('\n\n')
+  const system = [sanitizePersona(body.persona), SYSTEM_PROMPT].filter(Boolean).join('\n\n')
 
   let result
   try {
