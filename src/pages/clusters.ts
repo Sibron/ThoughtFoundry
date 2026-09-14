@@ -24,10 +24,6 @@ export async function mountClusters(root: HTMLElement): Promise<void> {
 
   createAiAction(document.getElementById('clusters-action-host')!, {
     label: 'Clusters detecteren',
-    defaultModel: 'claude-sonnet-4-6',
-    expectedOutputTokens: 800,
-    // Server sends up to 100 processed notes (~300 chars each).
-    estimateInputChars: () => 30_000,
     phases: AI_PHASES.clusters,
     run: async (model, overrideCap) => {
       const result = await detectClusters({ model, overrideCap })

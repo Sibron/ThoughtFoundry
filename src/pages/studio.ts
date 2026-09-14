@@ -10,7 +10,7 @@ import {
   type Chapter, type SectionRow
 } from '../lib/chapters'
 import { fetchNotesByIds, getNoteTitle, type Note } from '../lib/notes'
-import { embedText, matchNotes, hasEmbeddings } from '../lib/semantic'
+import { embedText, matchNotes, hasEmbeddings, MATCH_MIN_SIMILARITY } from '../lib/semantic'
 import { renderMarkdownHtml, countWords } from '../lib/markdown'
 import { writeSection, type WriteSectionMode } from '../lib/ai'
 import { createAiAction } from '../lib/ai-action'
@@ -187,11 +187,8 @@ export async function renderStudio(app: HTMLElement): Promise<void> {
       return ta.value.slice(ta.selectionStart, ta.selectionEnd).trim()
     }
 
-    const action = createAiAction(host.querySelector<HTMLElement>('#studio-ai-action')!, {
+    createAiAction(host.querySelector<HTMLElement>('#studio-ai-action')!, {
       label: 'AI-hulp uitvoeren',
-      defaultModel: 'claude-sonnet-4-6',
-      expectedOutputTokens: 900,
-      estimateInputChars: () => s.note_ids.length * 400 + (s.content_md?.length ?? 0) + 800,
       phases: ['Notities doornemen…', 'Toon vangen…', 'Proza schrijven…', 'Bijschaven…'],
       beforeRun: () => {
         flushSave()
@@ -222,7 +219,6 @@ export async function renderStudio(app: HTMLElement): Promise<void> {
         return usage
       },
     })
-    modeEl.addEventListener('change', () => action.refreshEstimate())
   }
 
   function showProposal(s: SectionRow, mode: WriteSectionMode, selection: string, text: string): void {
@@ -450,7 +446,7 @@ export async function renderStudio(app: HTMLElement): Promise<void> {
       const seed = (s.content_md?.trim() || [s.heading, s.intent].filter(Boolean).join('\n')).slice(0, 2000)
       if (!seed) { showToast('Schrijf eerst iets of geef de sectie een kop'); return }
       const vec = await embedText(seed)
-      const hits = (await matchNotes(vec, 8)).filter(h => h.similarity >= 0.45 && !s.note_ids.includes(h.id))
+      const hits = (await matchNotes(vec, 8)).filter(h => h.similarity >= MATCH_MIN_SIMILARITY && !s.note_ids.includes(h.id))
       if (hits.length === 0) {
         host.innerHTML = '<span class="muted">Geen nieuwe verwante gedachten gevonden.</span>'
         return

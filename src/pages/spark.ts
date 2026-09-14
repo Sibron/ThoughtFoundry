@@ -2,7 +2,8 @@ import { runSpark } from '../lib/ai'
 import { formatUsd } from '../lib/cost'
 import { AI_PHASES } from '../lib/ai-thinking'
 import { createAiAction } from '../lib/ai-action'
-import { showToast, esc as escHtml } from '../lib/crud-list'
+import { renderMarkdownHtml } from '../lib/markdown'
+import { showToast } from '../lib/crud-list'
 
 const OUTPUT_TYPES = [
   { value: 'reflectie',     label: 'Persoonlijke reflectie' },
@@ -70,12 +71,8 @@ export async function mountSpark(root: HTMLElement): Promise<void> {
   })
 
   const queryEl = document.getElementById('spark-query') as HTMLTextAreaElement
-  const action = createAiAction(document.getElementById('spark-action-host')!, {
+  createAiAction(document.getElementById('spark-action-host')!, {
     label: 'Spark starten',
-    defaultModel: 'claude-sonnet-4-6',
-    expectedOutputTokens: 900,
-    // Server sends the top-20 matching notes (~400 chars each) + prompt scaffolding.
-    estimateInputChars: () => 9_000 + queryEl.value.length,
     phases: AI_PHASES.spark,
     beforeRun: () => {
       if (!queryEl.value.trim()) { showToast('Vul een thema of vraag in'); return false }
@@ -97,12 +94,11 @@ export async function mountSpark(root: HTMLElement): Promise<void> {
         (result.retrieval ? ` · gevonden via ${result.retrieval === 'semantisch' ? 'betekenis' : 'woorden'}` : '') +
         (result.usage ? ` · ${formatUsd(result.usage.costUsd)}` : '')
 
-      document.getElementById('result-body')!.innerHTML = renderMarkdown(result.synthesis)
+      document.getElementById('result-body')!.innerHTML = renderMarkdownHtml(result.synthesis)
       document.getElementById('result-body')!.scrollIntoView({ behavior: 'smooth', block: 'start' })
       return result.usage
     },
   })
-  queryEl.addEventListener('input', () => action.refreshEstimate())
 
   document.getElementById('spark-copy')?.addEventListener('click', () => {
     const text = document.getElementById('result-body')?.innerText ?? ''
@@ -111,37 +107,6 @@ export async function mountSpark(root: HTMLElement): Promise<void> {
 }
 
 
-
-function inlineMd(text: string): string {
-  return escHtml(text)
-    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    .replace(/\*([^*]+?)\*/g, '<em>$1</em>')
-    .replace(/_([^_]+?)_/g, '<em>$1</em>')
-}
-
-function renderMarkdown(text: string): string {
-  const lines = text.split('\n')
-  const html: string[] = []
-  let inList = false
-
-  for (const rawLine of lines) {
-    if (/^#{1,2}\s/.test(rawLine)) {
-      if (inList) { html.push('</ul>'); inList = false }
-      html.push(`<h3 class="spark-heading">${inlineMd(rawLine.replace(/^#{1,2}\s+/, ''))}</h3>`)
-    } else if (/^[-*]\s/.test(rawLine)) {
-      if (!inList) { html.push('<ul class="spark-list">'); inList = true }
-      html.push(`<li>${inlineMd(rawLine.slice(2))}</li>`)
-    } else if (rawLine.trim() === '') {
-      if (inList) { html.push('</ul>'); inList = false }
-    } else {
-      if (inList) { html.push('</ul>'); inList = false }
-      html.push(`<p>${inlineMd(rawLine)}</p>`)
-    }
-  }
-
-  if (inList) html.push('</ul>')
-  return html.join('')
-}
 
 function injectSparkStyles(): void {
   if (document.getElementById('spark-styles')) return
@@ -228,20 +193,29 @@ function injectSparkStyles(): void {
       margin-bottom: var(--s-2);
     }
     .result-body p:last-child { margin-bottom: 0; }
-    .spark-heading {
+    /* Synthesis markup comes from lib/markdown.ts — style its elements
+       directly rather than class names this page used to emit itself. */
+    .result-body h2, .result-body h3, .result-body h4, .result-body h5 {
       font-size: var(--fs-lg);
       font-weight: 600;
       margin-top: var(--s-3);
       margin-bottom: var(--s-1);
     }
-    .spark-list {
+    .result-body ul, .result-body ol {
       padding-left: var(--s-5);
       display: flex;
       flex-direction: column;
       gap: var(--s-1);
       margin-bottom: var(--s-2);
     }
-    .spark-list li { line-height: 1.6; }
+    .result-body li { line-height: 1.6; }
+    .result-body blockquote {
+      border-left: 2px solid var(--border);
+      padding-left: var(--s-3);
+      color: var(--text-muted);
+      margin-bottom: var(--s-2);
+    }
+    .result-body a { color: var(--accent); }
     .result-actions {
       display: flex;
       gap: var(--s-2);

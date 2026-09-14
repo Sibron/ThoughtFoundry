@@ -7,7 +7,8 @@
 // dismissal never comes back, on any device (connection_dismissals). Optional
 // per-batch AI typing via the existing enrich-links function.
 
-import { fetchSemanticBridges, hasEmbeddings, fetchDismissedPairKeys, dismissPair, type BridgePair } from '../lib/semantic'
+import { fetchSemanticBridges, hasEmbeddings, fetchDismissedPairKeys, dismissPair,
+  BRIDGE_MIN_SIMILARITY, STRONG_SIMILARITY, NEAR_DUPLICATE_SIMILARITY, type BridgePair } from '../lib/semantic'
 import { createLink, LINK_TYPE_LABELS, type LinkType } from '../lib/links'
 import { fetchNotesByIds, getNoteTitle, type Note } from '../lib/notes'
 import { enrichLinks } from '../lib/ai'
@@ -16,11 +17,12 @@ import { isAiEnabled } from '../lib/nav'
 import { showToast, esc, errMsg } from '../lib/crud-list'
 import { navigateTo } from '../router'
 
-// Band presets calibrated for gte-small cosine similarity: above ~0.85 pairs
-// are near-duplicates, below ~0.55 the relation gets too thin to judge.
+// Two slices of the similarity range shared with the rest of the app
+// (lib/semantic.ts): "verrassend" is related-but-not-obvious, "dichtbij" runs
+// up to the near-duplicate line.
 const BANDS = {
-  verrassend: { label: 'Verrassend', lo: 0.55, hi: 0.72 },
-  dichtbij:   { label: 'Dichtbij',   lo: 0.72, hi: 0.85 },
+  verrassend: { label: 'Verrassend', lo: BRIDGE_MIN_SIMILARITY, hi: STRONG_SIMILARITY },
+  dichtbij:   { label: 'Dichtbij',   lo: STRONG_SIMILARITY,     hi: NEAR_DUPLICATE_SIMILARITY },
 } as const
 type BandKey = keyof typeof BANDS
 
@@ -63,9 +65,6 @@ export async function mountConnections(root: HTMLElement): Promise<void> {
   if (isAiEnabled()) {
     createAiAction(root.querySelector<HTMLElement>('#conn-ai-host')!, {
       label: 'Leg uit (AI)',
-      defaultModel: 'claude-haiku-4-5',
-      expectedOutputTokens: 500,
-      estimateInputChars: () => pairs.length * 400 + 800,
       phases: ['Paren lezen…', 'Relaties benoemen…', 'Redenen formuleren…'],
       beforeRun: () => {
         if (pairs.length === 0) { showToast('Geen voorstellen om uit te leggen'); return false }
@@ -150,7 +149,7 @@ export async function mountConnections(root: HTMLElement): Promise<void> {
           ${pairSide(b)}
         </div>
         <div class="conn-meta">
-          <span class="conn-sim">${p.similarity >= 0.72 ? 'sterk verwant' : 'verrassend verwant'}</span>
+          <span class="conn-sim">${p.similarity >= STRONG_SIMILARITY ? 'sterk verwant' : 'verrassend verwant'}</span>
           <span class="conn-reason" hidden></span>
         </div>
         <div class="conn-actions">
