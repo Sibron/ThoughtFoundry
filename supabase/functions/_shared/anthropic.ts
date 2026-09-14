@@ -37,7 +37,13 @@ const PRICING: Record<AnthropicModel, { input: number; output: number }> = {
  * call would disable the monthly budget guard permanently.
  */
 export function resolveModel(value: unknown, fallback: AnthropicModel): AnthropicModel {
-  return typeof value === 'string' && value in PRICING ? value as AnthropicModel : fallback
+  // hasOwnProperty, not `in`: `in` walks the prototype chain, so 'toString'
+  // and 'constructor' would pass — and PRICING['toString'] is a function whose
+  // .input is undefined, which is the NaN cost this guard exists to prevent.
+  // (Same idiom as the route lookup in src/router.ts, for the same reason.)
+  return typeof value === 'string' && Object.prototype.hasOwnProperty.call(PRICING, value)
+    ? value as AnthropicModel
+    : fallback
 }
 
 export function estimateCost(
