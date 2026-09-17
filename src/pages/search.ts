@@ -1,6 +1,6 @@
 import { fetchNotes, fetchNotesByIds, getNoteTitle, type Note } from '../lib/notes'
 import { rankByQuery } from '../lib/similarity'
-import { embedText, matchNotes, hasEmbeddings } from '../lib/semantic'
+import { embedText, matchNotes, hasEmbeddings, MATCH_MIN_SIMILARITY } from '../lib/semantic'
 import { navigateTo } from '../router'
 import { formatDate, esc as escHtml, errMsg } from '../lib/crud-list'
 
@@ -89,7 +89,7 @@ export async function mountSearch(root: HTMLElement): Promise<void> {
       const vec = await embedText(q)
       const hits = await matchNotes(vec, 20)
       if (q !== lastQuery) return
-      const strong = hits.filter(h => h.similarity >= 0.45)
+      const strong = hits.filter(h => h.similarity >= MATCH_MIN_SIMILARITY)
       if (strong.length === 0) {
         resultsEl.innerHTML = `<p class="search-hint">Niets gevonden dat lijkt op "${escHtml(q)}".</p>`
         return

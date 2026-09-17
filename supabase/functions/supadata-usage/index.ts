@@ -4,21 +4,20 @@
 //
 // Supadata's GET /v1/me response shape isn't publicly documented, so the
 // parser probes for credit-ish numeric fields by name rather than hard-coding
-// a path, and echoes `raw` for verification. No-ops (usage:null) when
-// SUPADATA_API_KEY is unset. verify_jwt is enforced at the platform level, so
-// only logged-in users reach this.
+// a path. No-ops (usage:null) when SUPADATA_API_KEY is unset.
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS'
-}
-function jsonResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
-}
+import { corsHeaders, jsonResponse } from '../_shared/cors.ts'
+import { getUserClient, requireUserId } from '../_shared/supabase.ts'
 
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
+
+  // This reports the quota of the app owner's shared Supadata account, so it
+  // must never answer an anonymous caller. verify_jwt covers this at the
+  // platform level; checking here too keeps the guarantee inside the repo and
+  // matches every sibling function.
+  try { await requireUserId(getUserClient(req)) }
+  catch { return jsonResponse({ error: 'Unauthorized' }, 401) }
 
   const key = Deno.env.get('SUPADATA_API_KEY')
   if (!key) return jsonResponse({ usage: null, reason: 'no_key' })
@@ -42,10 +41,6 @@ Deno.serve(async (req: Request) => {
 
   let body: unknown
   try { body = JSON.parse(text) } catch { return jsonResponse({ usage: null, reason: 'bad_json' }) }
-
-  // Log the raw shape once so the exact field names can be verified via logs
-  // (the public docs omit them). Safe: only aggregate credit counts, no key.
-  console.log('[supadata-usage] /v1/me raw', JSON.stringify(body).slice(0, 800))
 
   const usage = normalizeUsage(body)
   return jsonResponse({ usage, plan: readPlan(body) })

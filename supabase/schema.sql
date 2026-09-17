@@ -247,10 +247,21 @@ create table if not exists public.sources (
   updated_at  timestamptz not null default now()
 );
 
-alter table public.notes
-  add constraint notes_source_id_fk
-  foreign key (source_id) references public.sources(id) on delete set null
-  not valid;
+-- The only statement in this file that isn't natively idempotent: `add
+-- constraint` has no `if not exists`, so a re-run of this snapshot used to
+-- fail here with "constraint already exists" — despite the header promising
+-- it is safe to re-run. Guarded instead.
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint where conname = 'notes_source_id_fk'
+  ) then
+    alter table public.notes
+      add constraint notes_source_id_fk
+      foreign key (source_id) references public.sources(id) on delete set null
+      not valid;
+  end if;
+end $$;
 
 -- ── Zettelkasten model: book_projects ───────────────────────────────────────
 create table if not exists public.book_projects (

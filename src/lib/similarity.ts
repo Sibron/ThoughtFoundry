@@ -52,6 +52,23 @@ function sharedCount(a: Set<string>, b: Set<string>): number {
   return c
 }
 
+/**
+ * Jaccard overlap (0-1) between two notes — a *normalised* score, unlike the
+ * raw shared-token count rankBySimilarity uses. Length-independent, which is
+ * what near-duplicate detection needs: a long note shares many words with
+ * everything, so a raw count would flag it against any short one.
+ */
+export function overlapRatio(a: SimNote, b: SimNote): number {
+  const ta = noteTokens(a)
+  const tb = noteTokens(b)
+  if (ta.size === 0 || tb.size === 0) return 0
+  const shared = sharedCount(ta, tb)
+  return shared / (ta.size + tb.size - shared)
+}
+
+/** Near-duplicate threshold for the capture-time "Lijkt op…" hint. */
+export const DUPLICATE_RATIO = 0.25
+
 export interface Scored<T> { note: T; score: number }
 
 /**

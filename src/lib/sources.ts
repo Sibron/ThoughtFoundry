@@ -49,12 +49,6 @@ export async function fetchSources(): Promise<Source[]> {
   return (data ?? []) as Source[]
 }
 
-export async function fetchSource(id: string): Promise<Source | null> {
-  const { data, error } = await supabase.from('sources').select('*').eq('id', id).maybeSingle()
-  if (error) throw error
-  return (data ?? null) as Source | null
-}
-
 export async function createSource(input: SourceInsert): Promise<Source> {
   const { data: userData } = await supabase.auth.getUser()
   const userId = userData.user?.id

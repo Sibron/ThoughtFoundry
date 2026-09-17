@@ -6,7 +6,7 @@
 // shows it as a PROPOSAL; nothing is persisted here.
 
 import { corsHeaders, jsonResponse } from '../_shared/cors.ts'
-import { callAnthropic, estimateCost, type AnthropicModel } from '../_shared/anthropic.ts'
+import { callAnthropic, estimateCost, resolveModel, sanitizePersona } from '../_shared/anthropic.ts'
 import { getUserClient, requireUserId, logUsage } from '../_shared/supabase.ts'
 import { enforceBudget } from '../_shared/budget.ts'
 
@@ -53,7 +53,8 @@ Deno.serve(async (req: Request) => {
   try { body = await req.json() } catch { return jsonResponse({ error: 'Invalid JSON' }, 400) }
   if (!body.mode || !(body.mode in MODE_INSTRUCTIONS)) return jsonResponse({ error: 'mode required' }, 400)
 
-  const model: AnthropicModel = body.model ?? 'claude-sonnet-4-6'
+  // body.model is untrusted client input — narrow it to a priced model.
+  const model = resolveModel(body.model, 'claude-sonnet-4-6')
   const supabase = getUserClient(req)
 
   let userId: string
@@ -137,7 +138,7 @@ Deno.serve(async (req: Request) => {
   }
   parts.push(`## Jouw taak\n\n${MODE_INSTRUCTIONS[body.mode]}${body.instruction?.trim() ? `\n\nExtra aanwijzing van de auteur: ${body.instruction.trim()}` : ''}`)
 
-  const system = [body.persona?.trim(), BASE_SYSTEM].filter(Boolean).join('\n\n')
+  const system = [sanitizePersona(body.persona), BASE_SYSTEM].filter(Boolean).join('\n\n')
 
   let result
   try {

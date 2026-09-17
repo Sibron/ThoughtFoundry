@@ -1,10 +1,10 @@
 import { insertNote, queueOfflineNote, flushOfflineQueue, offlineQueueSize, fetchNotes, fetchNotesByIds, fetchRandomNote, fetchOnThisDay, getNoteTitle, type NoteInsert, type Note } from '../lib/notes'
-import { fetchSemanticBridges, hasEmbeddings, fetchDismissedPairKeys, type BridgePair } from '../lib/semantic'
+import { fetchSemanticBridges, hasEmbeddings, fetchDismissedPairKeys, BRIDGE_MIN_SIMILARITY, STRONG_SIMILARITY, type BridgePair } from '../lib/semantic'
 import { fetchSources, createSource, SOURCE_TYPES, SOURCE_TYPE_ORDER, type Source, type SourceType } from '../lib/sources'
 import { fetchLinks, createLink } from '../lib/links'
 import { openLinkModal } from '../lib/link-modal'
 import { fetchAllNoteThemes } from '../lib/themes'
-import { findSurprisingPair, pairKey, rankBySimilarity, type SurprisingPair } from '../lib/similarity'
+import { findSurprisingPair, overlapRatio, pairKey, rankBySimilarity, DUPLICATE_RATIO, type SurprisingPair } from '../lib/similarity'
 import { embedNote, frameSource, generateSourceInsights, fetchSupadataUsage, type FrameSourceResult, type SourceFraming, type SourceInsightProposal, type SourceCount } from '../lib/ai'
 import { createAiAction } from '../lib/ai-action'
 import { AI_PHASES } from '../lib/ai-thinking'
@@ -153,7 +153,10 @@ export async function renderCapture(app: HTMLElement): Promise<void> {
   const sessionEl = document.getElementById('capture-session') as HTMLSpanElement
 
   // Session counter: persisted via localStorage, keyed by calendar date.
+  // The key changes every day and nothing ever cleaned the old ones up, so a
+  // year of use left 365 dead entries behind. Only today's is of any use.
   const TODAY_KEY = `tf_today_count_${new Date().toDateString()}`
+  pruneOldDayCounters(TODAY_KEY)
   const getTodayCount = (): number => parseInt(localStorage.getItem(TODAY_KEY) ?? '0', 10)
   const incrementTodayCount = (): number => {
     const n = getTodayCount() + 1
@@ -390,7 +393,7 @@ export async function renderCapture(app: HTMLElement): Promise<void> {
     if (semanticPairs) return semanticPairs
     if (!(await hasEmbeddings())) { semanticPairs = []; return semanticPairs }
     const [bridges, dismissed] = await Promise.all([
-      fetchSemanticBridges({ bandLo: 0.55, bandHi: 0.72, max: 20 }),
+      fetchSemanticBridges({ bandLo: BRIDGE_MIN_SIMILARITY, bandHi: STRONG_SIMILARITY, max: 20 }),
       fetchDismissedPairKeys().catch(() => new Set<string>())
     ])
     semanticPairs = bridges.filter(p => !dismissed.has(`${p.a_id}|${p.b_id}`))
@@ -485,46 +488,40 @@ export async function renderCapture(app: HTMLElement): Promise<void> {
   })
 }
 
+/** Drop every `tf_today_count_*` entry except today's. */
+function pruneOldDayCounters(keep: string): void {
+  try {
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const key = localStorage.key(i)
+      if (key && key.startsWith('tf_today_count_') && key !== keep) localStorage.removeItem(key)
+    }
+  } catch { /* storage unavailable — the counter is cosmetic either way */ }
+}
+
 function loadDraftObj(): Draft {
   const raw = localStorage.getItem(DRAFT_KEY)
   if (!raw) return {}
   try { return JSON.parse(raw) as Draft } catch { return {} }
 }
 
+/**
+ * Near-duplicate check behind the "Lijkt op…" hint under the capture box.
+ *
+ * This used to carry its own tokenizer — a second, slightly different one
+ * living next to the shared lib/similarity.ts tokenizer that the related-note
+ * card on the SAME screen used. Two notions of "similar" a few pixels apart.
+ * Both now run on the shared tokens, so the hint and the card agree (and the
+ * hint inherits the Dutch stopword list, which it never had).
+ */
 function findSimilarNote(input: string, notes: Note[]): Note | null {
-  const inputWords = tokenize(input)
-  if (inputWords.size === 0) return null
-
+  const draft = { id: '', content: input, ai_title: null, ai_summary: null }
   let bestNote: Note | null = null
   let bestScore = 0
-
   for (const note of notes) {
-    const noteWords = tokenize(note.ai_title ? note.ai_title + ' ' + note.content : note.content)
-    const intersection = countIntersection(inputWords, noteWords)
-    const union = inputWords.size + noteWords.size - intersection
-    const score = union > 0 ? intersection / union : 0
-    if (score > bestScore) {
-      bestScore = score
-      bestNote = note
-    }
+    const score = overlapRatio(draft, note)
+    if (score > bestScore) { bestScore = score; bestNote = note }
   }
-
-  return bestScore > 0.25 ? bestNote : null
-}
-
-function tokenize(text: string): Set<string> {
-  return new Set(
-    text.toLowerCase()
-      .replace(/[^a-z0-9À-ɏ\s]/g, ' ')
-      .split(/\s+/)
-      .filter(w => w.length > 4)
-  )
-}
-
-function countIntersection(a: Set<string>, b: Set<string>): number {
-  let count = 0
-  for (const w of a) if (b.has(w)) count++
-  return count
+  return bestScore > DUPLICATE_RATIO ? bestNote : null
 }
 
 /**
@@ -629,12 +626,8 @@ function setupSourceAnalysis(): void {
   }
 
   // Stage 1: retrieve + frame the source, then show the question panel.
-  const action = createAiAction(actionHost, {
+  createAiAction(actionHost, {
     label: 'Analyseer bron',
-    expectedOutputTokens: 600,
-    // The page size is unknown before the fetch — assume the server-side
-    // content budget unless the user pasted the text themselves.
-    estimateInputChars: () => pastedEl.value.trim().length || 18_000,
     phases: AI_PHASES.sourceFrame,
     beforeRun: () => {
       const url = urlEl.value.trim()
@@ -666,7 +659,6 @@ function setupSourceAnalysis(): void {
       return res.usage
     },
   })
-  pastedEl.addEventListener('input', () => action.refreshEstimate())
 
   function resetAnalysis(): void {
     proposalEl.hidden = true
@@ -678,7 +670,6 @@ function setupSourceAnalysis(): void {
     pastedEl.value = ''
     meta = null
     content = null
-    action.refreshEstimate()
   }
 
   const COUNT_OPTIONS: { value: SourceCount; label: string }[] = [
@@ -748,8 +739,6 @@ function setupSourceAnalysis(): void {
     const insightHost = questionsEl.querySelector('#analyze-insight-action') as HTMLDivElement
     createAiAction(insightHost, {
       label: 'Genereer inzichten',
-      expectedOutputTokens: 2200,
-      estimateInputChars: () => (content?.length ?? 0) || 4000,
       phases: AI_PHASES.analyzeSource,
       run: async (model, overrideCap) => {
         const count = ((questionsEl.querySelector('input[name="analyze-count"]:checked') as HTMLInputElement | null)?.value ?? 'auto') as SourceCount

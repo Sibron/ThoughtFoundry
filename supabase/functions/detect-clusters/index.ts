@@ -3,7 +3,7 @@
 // This function does NOT modify any notes.
 
 import { corsHeaders, jsonResponse } from '../_shared/cors.ts'
-import { callAnthropic, estimateCost, parseJsonFromResponse } from '../_shared/anthropic.ts'
+import { callAnthropic, estimateCost, parseJsonFromResponse, resolveModel, sanitizePersona } from '../_shared/anthropic.ts'
 import { getUserClient, requireUserId, logUsage } from '../_shared/supabase.ts'
 import { enforceBudget } from '../_shared/budget.ts'
 
@@ -55,7 +55,8 @@ Deno.serve(async (req: Request) => {
   let body: { persona?: string; model?: 'claude-haiku-4-5' | 'claude-sonnet-4-6'; overrideCap?: boolean } = {}
   try { body = await req.json() } catch { /* body is optional */ }
 
-  const model = body.model ?? 'claude-sonnet-4-6'
+  // body.model is untrusted client input — narrow it to a priced model.
+  const model = resolveModel(body.model, 'claude-sonnet-4-6')
   const supabase = getUserClient(req)
 
   let userId: string
@@ -95,7 +96,7 @@ Deno.serve(async (req: Request) => {
 
   const userPrompt = `## Verwerkte nota's (${notes.length})\n\n${noteBlock}\n\nIdentificeer 2-4 impliciete clusters.`
 
-  const system = [body.persona?.trim(), SYSTEM_PROMPT].filter(Boolean).join('\n\n')
+  const system = [sanitizePersona(body.persona), SYSTEM_PROMPT].filter(Boolean).join('\n\n')
 
   let result
   try {

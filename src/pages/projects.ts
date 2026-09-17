@@ -278,9 +278,6 @@ async function mountDetail(project: BookProject, host: HTMLElement, ctx: CrudDet
     if (gapHost) {
       createAiAction(gapHost, {
         label: 'Gap-analyse uitvoeren',
-        defaultModel: 'claude-sonnet-4-6',
-        expectedOutputTokens: 1500,
-        estimateInputChars: () => notes.length * 400 + 1200,
         phases: ['Project doornemen…', 'Witte plekken zoeken…', 'Tegenargumenten wegen…', 'Analyse schrijven…'],
         beforeRun: () => {
           if (notes.length === 0) { showToast('Voeg eerst notities toe aan dit project'); return false }

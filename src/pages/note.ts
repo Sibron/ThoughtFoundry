@@ -28,6 +28,7 @@ import {
 } from '../lib/links'
 import { fetchSources, type Source } from '../lib/sources'
 import { fetchProjects, fetchNoteProjectIds, setNoteProjects, type BookProject } from '../lib/projects'
+import { isUuid } from '../lib/supabase'
 import { openLinkModal } from '../lib/link-modal'
 import { rankBySimilarity } from '../lib/similarity'
 import { fetchNeighbors } from '../lib/semantic'
@@ -44,8 +45,10 @@ const STATUS_LABELS: Record<NoteStatus, string> = {
 }
 
 export async function renderNoteDetail(app: HTMLElement): Promise<void> {
-  const id: string = noteIdFromHash() ?? ''
-  if (!id) { navigateTo('/inbox'); return }
+  // A hand-edited or stale ?id= must land on the inbox, not on a PostgREST error.
+  const rawId = noteIdFromHash()
+  if (!isUuid(rawId)) { navigateTo('/inbox'); return }
+  const id: string = rawId
 
   app.innerHTML = `
     ${renderTopbar('Notitie bewerken', 'inbox')}

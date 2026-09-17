@@ -139,10 +139,12 @@ export async function insertNote(note: NoteInsert): Promise<Note> {
   const { data, error } = await supabase
     .from('notes')
     .insert({ ...note, status: 'inbox', user_id: userId })
-    .select()
+    // Same column list as every read: `.select()` means `*`, which drags the
+    // vector(384) embedding back over the wire on every single save.
+    .select(NOTE_COLUMNS)
     .single()
   if (error) throw error
-  return data as Note
+  return data as unknown as Note
 }
 
 export async function updateNote(id: string, note: NoteUpdate): Promise<Note> {
@@ -150,10 +152,10 @@ export async function updateNote(id: string, note: NoteUpdate): Promise<Note> {
     .from('notes')
     .update(note)
     .eq('id', id)
-    .select()
+    .select(NOTE_COLUMNS)
     .single()
   if (error) throw error
-  return data as Note
+  return data as unknown as Note
 }
 
 export async function deleteNote(id: string): Promise<void> {
