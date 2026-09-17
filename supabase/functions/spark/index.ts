@@ -6,7 +6,7 @@
 // This function does NOT modify any notes.
 
 import { corsHeaders, jsonResponse } from '../_shared/cors.ts'
-import { callAnthropic, estimateCost } from '../_shared/anthropic.ts'
+import { callAnthropic, estimateCost, resolveModel, sanitizePersona } from '../_shared/anthropic.ts'
 import { getUserClient, requireUserId, logUsage } from '../_shared/supabase.ts'
 import { enforceBudget } from '../_shared/budget.ts'
 
@@ -52,7 +52,8 @@ Deno.serve(async (req: Request) => {
   if (!body.query?.trim()) return jsonResponse({ error: 'query required' }, 400)
   if (!body.outputType)    return jsonResponse({ error: 'outputType required' }, 400)
 
-  const model = body.model ?? 'claude-sonnet-4-6'
+  // body.model is untrusted client input — narrow it to a priced model.
+  const model = resolveModel(body.model, 'claude-sonnet-4-6')
   const supabase = getUserClient(req)
 
   try { await requireUserId(supabase) }
@@ -135,7 +136,7 @@ Deno.serve(async (req: Request) => {
 
   const userPrompt = `## Query / thema\n${body.query}\n\n## Geselecteerde nota's (${matched.length})\n\n${noteBlock}\n\n## Jouw taak\n${instruction}`
 
-  const system = [body.persona?.trim(), SYSTEM_PROMPT].filter(Boolean).join('\n\n')
+  const system = [sanitizePersona(body.persona), SYSTEM_PROMPT].filter(Boolean).join('\n\n')
 
   let result
   try {

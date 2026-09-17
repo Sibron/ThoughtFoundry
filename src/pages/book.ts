@@ -146,10 +146,6 @@ export async function mountBook(root: HTMLElement): Promise<void> {
 
     genAction = createAiAction(document.getElementById('generate-action-host')!, {
       label: 'Genereer hoofdstuk',
-      defaultModel: 'claude-sonnet-4-6',
-      expectedOutputTokens: 1200,
-      // Each selected note contributes its summary/content excerpt (~400 chars).
-      estimateInputChars: () => selectedNoteIds().length * 400 + 1500,
       phases: AI_PHASES.book,
       beforeRun: () => {
         if (selectedNoteIds().length < 2) { showToast('Selecteer minimaal 2 notities'); return false }
@@ -239,7 +235,6 @@ export async function mountBook(root: HTMLElement): Promise<void> {
       ? 'Selecteer minimaal 2 notities.'
       : `${ids.length} notities geselecteerd.`
     genAction?.setDisabled(ids.length < 2)
-    genAction?.refreshEstimate()
   }
 
   function showPlanEditor(plan: ChapterPlan, allIds: string[], themeId: string | null): void {

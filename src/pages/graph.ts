@@ -2,7 +2,7 @@ import { getNoteTitle, type Note } from '../lib/notes'
 import { type Theme } from '../lib/themes'
 import { createLink, deleteLink, LINK_TYPE_LABELS, type LinkType, type NoteLink } from '../lib/links'
 import { loadGraphSnapshot, type GraphSnapshot } from '../lib/snapshots'
-import { fetchSemanticBridges, type BridgePair } from '../lib/semantic'
+import { fetchSemanticBridges, STRONG_SIMILARITY, type BridgePair } from '../lib/semantic'
 import { pairKey } from '../lib/similarity'
 import { enrichLinks } from '../lib/ai'
 import { getCostStatus } from '../lib/cost'
@@ -809,7 +809,7 @@ export async function mountGraph(root: HTMLElement): Promise<void> {
           showSidebar(n)
           if (removed) {
             // Non-blocking undo instead of a native confirm() before the fact.
-            showUndoToast('Link verwijderd', async () => {
+            showRevertToast('Link verwijderd', async () => {
               try {
                 const restored = await createLink({
                   sourceId: removed.source_id,
@@ -914,7 +914,7 @@ export async function mountGraph(root: HTMLElement): Promise<void> {
           <li class="sugg-bridge-row">
             <label class="sugg-bridge-check">
               <input type="checkbox" class="bridge-check" data-idx="${i}" ${checked} />
-              <span>${escHtml(noteLabel(b.a_id))} <span class="muted">↔</span> ${escHtml(noteLabel(b.b_id))} <span class="muted">(${b.similarity >= 0.72 ? 'sterk verwant' : 'verrassend'})</span></span>
+              <span>${escHtml(noteLabel(b.a_id))} <span class="muted">↔</span> ${escHtml(noteLabel(b.b_id))} <span class="muted">(${b.similarity >= STRONG_SIMILARITY ? 'sterk verwant' : 'verrassend'})</span></span>
             </label>
             <select class="bridge-type" data-idx="${i}">${typeOptsFor(enr?.type ?? 'related')}</select>
             ${enr?.reason ? `<span class="sugg-bridge-reason">${escHtml(enr.reason)}</span>` : ''}
@@ -1054,8 +1054,17 @@ function runLayout(nodes: GraphNode[], edges: GraphEdge[], iterations: number): 
 }
 
 
-// A toast that offers a single undo action for a few seconds before fading.
-function showUndoToast(msg: string, onUndo: () => void): void {
+/**
+ * Undo toast for an action that has ALREADY been committed — tapping undo
+ * reverses it.
+ *
+ * Deliberately not lib/crud-list.ts's showUndoToast, which is the opposite
+ * shape: it holds the commit back for six seconds and only fires it if you
+ * don't undo. Both are reasonable; mixing them up is not, so this one carries a
+ * name that says which it is. (It used to be called showUndoToast too, which
+ * read exactly like the shared helper this file does not use.)
+ */
+function showRevertToast(msg: string, onUndo: () => void): void {
   const toast = document.getElementById('toast') as HTMLDivElement | null
   if (!toast) return
   toast.innerHTML = `<span>${escHtml(msg)}</span><button type="button" class="toast-undo">Ongedaan maken</button>`

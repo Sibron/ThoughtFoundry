@@ -1,4 +1,4 @@
-import { supabase } from './supabase'
+import { supabase, fetchAllRows } from './supabase'
 
 export interface ExportPayload {
   exported_at: string
@@ -21,20 +21,48 @@ export interface ExportPayload {
   user_settings?: unknown[]
 }
 
+// Stable per-table sort key, so the paged reads below are deterministic.
+// Offset paging over an unordered result can skip and duplicate rows between
+// pages; every one of these tables has a natural primary-key ordering.
+const EXPORT_TABLES: { table: string; orderBy: string[] }[] = [
+  { table: 'notes',                     orderBy: ['id'] },
+  { table: 'themes',                    orderBy: ['id'] },
+  { table: 'note_themes',               orderBy: ['note_id', 'theme_id'] },
+  { table: 'note_links',                orderBy: ['id'] },
+  { table: 'sources',                   orderBy: ['id'] },
+  { table: 'book_projects',             orderBy: ['id'] },
+  { table: 'note_book_projects',        orderBy: ['note_id', 'project_id'] },
+  { table: 'chapters',                  orderBy: ['id'] },
+  { table: 'chapter_sections',          orderBy: ['id'] },
+  { table: 'chapter_section_revisions', orderBy: ['id'] },
+  { table: 'user_settings',             orderBy: ['user_id'] },
+  { table: 'ai_usage',                  orderBy: ['id'] },
+]
+
+/**
+ * Full-account snapshot for the Data-export button.
+ *
+ * Every table is read through `fetchAllRows`. A bare `.select()` stops at
+ * PostgREST's 1000-row default WITHOUT erroring, which is exactly the failure
+ * this export must not have: the user downloads a file they believe is a
+ * complete backup, and it silently ends at note 1000 (and at link 1000, and at
+ * ai_usage row 1000). `ai_usage` and `note_themes` cross that line first.
+ */
 export async function buildExport(): Promise<ExportPayload> {
-  const tables = [
-    'notes', 'themes', 'note_themes', 'note_links', 'sources',
-    'book_projects', 'note_book_projects', 'chapters',
-    'chapter_sections', 'chapter_section_revisions', 'user_settings', 'ai_usage'
-  ] as const
   const out: Partial<ExportPayload> = {
     exported_at: new Date().toISOString(),
     schema_version: 3
   }
-  for (const t of tables) {
-    const { data, error } = await supabase.from(t).select('*')
-    if (error) throw new Error(`${t}: ${error.message}`)
-    ;(out as Record<string, unknown>)[t] = data ?? []
+  for (const { table, orderBy } of EXPORT_TABLES) {
+    try {
+      ;(out as Record<string, unknown>)[table] = await fetchAllRows<unknown>((from, to) => {
+        let q = supabase.from(table).select('*')
+        for (const col of orderBy) q = q.order(col, { ascending: true })
+        return q.range(from, to)
+      })
+    } catch (err) {
+      throw new Error(`${table}: ${err instanceof Error ? err.message : String(err)}`)
+    }
   }
   return out as ExportPayload
 }

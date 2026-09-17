@@ -9,7 +9,7 @@ import {
 } from '../lib/notes'
 import { renderTopbar, attachTopbar, renderGuidanceBanner } from '../lib/nav'
 import { navigateTo } from '../router'
-import { injectShellStyles } from './denktools'
+import { injectShellStyles } from '../lib/shell'
 import { esc as escHtml, errMsg, showToast, showUndoToast, formatRelative } from '../lib/crud-list'
 
 export async function renderInbox(app: HTMLElement): Promise<void> {

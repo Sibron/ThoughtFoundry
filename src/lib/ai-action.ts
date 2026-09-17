@@ -15,8 +15,6 @@
 //
 //   const action = createAiAction(host, {
 //     label: 'Spark starten',
-//     expectedOutputTokens: 900,
-//     estimateInputChars: () => queryEl.value.length + 30_000,
 //     phases: AI_PHASES.spark,
 //     run: async (model, overrideCap) => {
 //       const result = await runSpark({ query, outputType, model, overrideCap })
@@ -44,11 +42,6 @@ export interface AiActionOpts {
   label: string
   /** Models this action supports; resolved via the app-wide quality preference. */
   models?: AiModel[]
-  defaultModel?: AiModel
-  /** Kept for callers; no longer shown (the widget is cost-quiet). */
-  expectedOutputTokens: number
-  /** Kept for callers; no longer shown (the widget is cost-quiet). */
-  estimateInputChars: () => number
   /** Thinking-indicator phases (see AI_PHASES). */
   phases?: string[]
   /**
@@ -62,10 +55,7 @@ export interface AiActionOpts {
 
 export interface AiActionHandle {
   el: HTMLElement
-  /** Kept for callers; a no-op now that no estimate is shown. */
-  refreshEstimate: () => void
   setDisabled: (disabled: boolean) => void
-  selectedModel: () => AiModel
 }
 
 export function createAiAction(host: HTMLElement, opts: AiActionOpts): AiActionHandle {
@@ -129,9 +119,7 @@ export function createAiAction(host: HTMLElement, opts: AiActionOpts): AiActionH
 
   return {
     el,
-    refreshEstimate: () => {},
     setDisabled: (d) => { runBtn.disabled = d },
-    selectedModel: () => preferredModel(models),
   }
 }
 

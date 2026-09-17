@@ -31,6 +31,30 @@ lower daily friction. One shippable commit per milestone.
 | M10 | Schrijfstudio 2: write-section AI (draft/rewrite/tighten/continue) + revisions | done |
 | M11 | Eén boekpijplijn: project tabs + prose-first manuscript export | done |
 | M12 | Consistency sweep: undo-toast deletes, helper dedup | done |
+| M13 | Opruim-audit: export-paging, model-allowlist, route-splitting, eerste tests | done (2026-09) |
+
+### M13 — Opruim-audit (2026-09)
+
+Een diepe audit-en-opruimronde. Wat er veranderd is, en waarom het hier staat:
+
+- **Export verloor data.** `buildExport` las elke tabel met een kale
+  `.select()`, die op 1000 rijen stopt zonder fout. Een "volledige backup" was
+  dat dus niet. Gaat nu door `fetchAllRows`.
+- **Boek-export brak op `---`.** Een notitie met een markdown-streep kapte het
+  hoofdstuk — en alle volgende — uit de export. Geregressietest.
+- **Model-allowlist op de edge functions.** `body.model` ging ongecontroleerd
+  door naar de API; een niet-geprijsd model gaf `NaN` kosten, en `NaN >= cap`
+  is `false` — de maandcap was daarmee permanent te omzeilen.
+- **`scripts/migration-export.json` stond in de repo** met 209 echte notities.
+  Weg uit de working tree en in `.gitignore`. **Staat nog wél in de
+  git-geschiedenis van een publieke repo** — zie issue over history-scrub.
+- **Route-splitting.** De hele app zat in één bundel van 514 kB; vangen wachtte
+  op de graaf-engine. Entry nu 220 kB.
+- **Eerste tests.** Vitest, 76 tests over de pure modules, `npm test` in
+  `ci.yml`. Dit sluit #30 en #31.
+
+Hiermee is "There are no tests" uit `CLAUDE.md` niet langer waar; de gaten die
+er nog zijn staan in de sectie Testing daar.
 
 ---
 
@@ -358,6 +382,14 @@ Manual trigger in `/process` only. Never auto-run on capture save.
 ---
 
 ## 8) Test and Release Protocol
+
+Automated gate (`ci.yml`, runs on every PR):
+1. `npm test` — Vitest over the pure modules (similarity, markdown, manuscript,
+   cost, paging, the edge-function guards).
+2. `npm run build` — `tsc` typecheck + bundle.
+
+Not covered by either, and still manual: the offline IndexedDB queue, the
+export/import round-trip against a real schema, and every rendering path.
 
 For each fase with code changes:
 1. Agent opens PR.

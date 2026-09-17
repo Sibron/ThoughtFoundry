@@ -36,9 +36,12 @@ npm run dev
 Other scripts:
 
 ```bash
+npm test          # Vitest unit tests
 npm run build     # tsc typecheck + vite build
 npm run preview   # preview the production build
 ```
+
+`npm test` and `npm run build` are the two checks CI runs on every pull request.
 
 Edge-function secrets (e.g. `ANTHROPIC_API_KEY`) are set via `supabase secrets set`,
 never in `.env` — they must never reach the browser. See `.env.example` for details.
