@@ -32,6 +32,7 @@ lower daily friction. One shippable commit per milestone.
 | M11 | Eén boekpijplijn: project tabs + prose-first manuscript export | done |
 | M12 | Consistency sweep: undo-toast deletes, helper dedup | done |
 | M13 | Opruim-audit: export-paging, model-allowlist, route-splitting, eerste tests | done (2026-09) |
+| M14 | Open issues weggewerkt: atomisch opslaan, backend-deploy automatisch, import in batches | done (2026-09, PR #59) |
 
 ### M13 — Opruim-audit (2026-09)
 
@@ -46,8 +47,8 @@ Een diepe audit-en-opruimronde. Wat er veranderd is, en waarom het hier staat:
   door naar de API; een niet-geprijsd model gaf `NaN` kosten, en `NaN >= cap`
   is `false` — de maandcap was daarmee permanent te omzeilen.
 - **`scripts/migration-export.json` stond in de repo** met 209 echte notities.
-  Weg uit de working tree en in `.gitignore`. **Staat nog wél in de
-  git-geschiedenis van een publieke repo** — zie issue over history-scrub.
+  Weg uit de working tree en in `.gitignore`. Stond daarna nog in de
+  git-geschiedenis; die is in M14 herschreven (#53).
 - **Route-splitting.** De hele app zat in één bundel van 514 kB; vangen wachtte
   op de graaf-engine. Entry nu 220 kB.
 - **Eerste tests.** Vitest, 76 tests over de pure modules, `npm test` in
@@ -55,6 +56,39 @@ Een diepe audit-en-opruimronde. Wat er veranderd is, en waarom het hier staat:
 
 Hiermee is "There are no tests" uit `CLAUDE.md` niet langer waar; de gaten die
 er nog zijn staan in de sectie Testing daar.
+
+### M14 — Open issues weggewerkt (2026-09, PR #59)
+
+Alle tien open issues opgepakt; wat niet zonder het live project kon staat
+erbij.
+
+- **Git-geschiedenis geschoond (#53).** `scripts/migration-export.json` is met
+  `git filter-repo` uit elke commit op alle branches gehaald en force-gepusht.
+  Gesloten PR's houden via `refs/pull/*` de oude commits vast; die kan alleen
+  GitHub Support opruimen.
+- **Migraties: unieke versies, vers op te bouwen (#49).** Alle bestanden heten nu
+  `YYYYMMDDHHMMSS_slug.sql`. Drie datums hadden twee of drie bestanden, en een fix
+  sorteerde vóór wat hij fixte. `schema.sql` + alle migraties bouwen nu een lege
+  database op en overleven een tweede keer; CI bewijst dat op elke PR. Nog open:
+  de live history-tabel rechtzetten (runbook in `DEPLOY_BACKEND.md`) — het project
+  staat gepauzeerd.
+- **Backend-deploy automatisch (#32).** `deploy-backend.yml`: `deno check` op alle
+  functions en de migratie-replay als poort, dan functions, dan `db push`. Doet
+  niets tot de secrets er zijn, en die horen pas ná het rechtzetten van de
+  history.
+- **Notitie opslaan is één transactie (#55).** RPC `save_note` (security invoker):
+  velden, thema's en projecten samen of niet. Voorheen kon een wegvallende
+  verbinding een notitie al haar thema's kosten.
+- **Verwijderen overleeft het sluiten van de tab (#54).** De ongedaan-maken-toast
+  commit bij `visibilitychange`/`pagehide`, met `keepalive`; een mislukte commit
+  zet de rij terug.
+- **Afgewezen verbindingen in SQL uitgesloten (#56).** De Verbindingen-wachtrij
+  loopt niet meer leeg na 20 afwijzingen. Band-constanten getest; ijken zelf
+  (#36) wacht op echte notities.
+- **AI-kwaliteit volgt het account (#58),** en uitloggen laat geen AI-instellingen
+  meer achter voor de volgende gebruiker.
+- **Import in batches (#57),** met voortgang op de knop; export → import is nu
+  getest tegen een in-memory PostgREST-nep (#30), net als de offline-wachtrij.
 
 ---
 
@@ -134,7 +168,8 @@ Success criteria:
 ### Key paths
 - `src/pages/*` - UI screens
 - `src/lib/*` - app/domain logic
-- `supabase/schema.sql` - idempotent full schema
+- `supabase/schema.sql` - base schema snapshot; run before the migrations on a fresh install
+- `supabase/migrations/*` - every schema change since, applied by `deploy-backend.yml`
 - `supabase/functions/*` - AI/edge runtime
 
 ### Required secrets
@@ -147,7 +182,8 @@ Server/edge:
 - `SUPADATA_API_KEY` (optional — automatische YouTube-transcripts in analyze-source; zonder key valt de app terug op handmatig plakken)
 
 Deploy:
-- geen extra secrets; `deploy.yml` bouwt met de twee `VITE_*` repo-secrets en publiceert naar GitHub Pages
+- frontend: geen extra secrets; `deploy.yml` bouwt met de twee `VITE_*` repo-secrets en publiceert naar GitHub Pages
+- backend: `SUPABASE_ACCESS_TOKEN`, `SUPABASE_PROJECT_REF`, `SUPABASE_DB_URL` voor `deploy-backend.yml` — pas zetten na de eenmalige stap in `docs/DEPLOY_BACKEND.md`
 
 ---
 
@@ -356,7 +392,7 @@ Manual trigger in `/process` only. Never auto-run on capture save.
 ### Data model changes
 - `notes.ai_title` text
 - `notes.processed_at` timestamptz
-- `notes.embedding` vector(384) — gte-small, see `migrations/20260626_embedding_activation.sql`
+- `notes.embedding` vector(384) — gte-small, see `migrations/20260626121750_embedding_activation.sql`
 - `themes`, `note_themes`, `note_links`, `ai_usage`, `chapters`
 
 ### UI
@@ -383,13 +419,18 @@ Manual trigger in `/process` only. Never auto-run on capture save.
 
 ## 8) Test and Release Protocol
 
-Automated gate (`ci.yml`, runs on every PR):
-1. `npm test` — Vitest over the pure modules (similarity, markdown, manuscript,
-   cost, paging, the edge-function guards).
-2. `npm run build` — `tsc` typecheck + bundle.
+Automated gates (run on every PR):
+1. `ci.yml`: `npm test` — Vitest over the pure modules (similarity, markdown, manuscript,
+   cost, paging, the edge-function guards), plus the export/import round-trip
+   and the offline queue against an in-memory PostgREST fake and
+   `fake-indexeddb`.
+2. `ci.yml`: `npm run build` — `tsc` typecheck + bundle.
+3. `backend-checks.yml` — `deno check` over every edge function, and
+   `schema.sql` + every migration applied to an empty Postgres 17 with
+   pgvector, then every migration applied again.
 
-Not covered by either, and still manual: the offline IndexedDB queue, the
-export/import round-trip against a real schema, and every rendering path.
+Not covered by any of them, and still manual: every rendering path, and SQL
+(RPCs, RLS) against the real schema.
 
 For each fase with code changes:
 1. Agent opens PR.

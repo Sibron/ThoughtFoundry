@@ -86,25 +86,9 @@ export async function fetchAllNoteThemes(): Promise<{ note_id: string; theme_id:
   )
 }
 
-export async function setThemesForNote(noteId: string, themeIds: string[]): Promise<void> {
-  const { data: userData } = await supabase.auth.getUser()
-  const userId = userData.user?.id
-  if (!userId) throw new Error('Niet aangemeld')
-
-  // Replace strategy: delete + insert. Cheap because it's per-note.
-  const { error: delErr } = await supabase.from('note_themes').delete().eq('note_id', noteId)
-  if (delErr) throw delErr
-
-  if (themeIds.length === 0) return
-
-  const rows = themeIds.map(theme_id => ({ note_id: noteId, theme_id, user_id: userId }))
-  const { error: insErr } = await supabase.from('note_themes').insert(rows)
-  if (insErr) throw insErr
-}
-
 /**
- * Additive counterpart to `setThemesForNote`: adds links without removing any
- * existing ones. Used by batch re-processing so AI-matched themes are added on
+ * Adds theme links without removing any existing ones. (Replacing a note's
+ * whole set happens in `saveNote`, atomically with the note itself.) Used by batch re-processing so AI-matched themes are added on
  * top of the curated import links instead of replacing them.
  */
 export async function addThemesForNote(noteId: string, themeIds: string[]): Promise<void> {

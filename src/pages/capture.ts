@@ -1,5 +1,5 @@
 import { insertNote, queueOfflineNote, flushOfflineQueue, offlineQueueSize, fetchNotes, fetchNotesByIds, fetchRandomNote, fetchOnThisDay, getNoteTitle, type NoteInsert, type Note } from '../lib/notes'
-import { fetchSemanticBridges, hasEmbeddings, fetchDismissedPairKeys, BRIDGE_MIN_SIMILARITY, STRONG_SIMILARITY, type BridgePair } from '../lib/semantic'
+import { fetchSemanticBridges, hasEmbeddings, BRIDGE_BANDS, type BridgePair } from '../lib/semantic'
 import { fetchSources, createSource, SOURCE_TYPES, SOURCE_TYPE_ORDER, type Source, type SourceType } from '../lib/sources'
 import { fetchLinks, createLink } from '../lib/links'
 import { openLinkModal } from '../lib/link-modal'
@@ -392,11 +392,8 @@ export async function renderCapture(app: HTMLElement): Promise<void> {
   const loadSemanticPairs = async (): Promise<BridgePair[]> => {
     if (semanticPairs) return semanticPairs
     if (!(await hasEmbeddings())) { semanticPairs = []; return semanticPairs }
-    const [bridges, dismissed] = await Promise.all([
-      fetchSemanticBridges({ bandLo: BRIDGE_MIN_SIMILARITY, bandHi: STRONG_SIMILARITY, max: 20 }),
-      fetchDismissedPairKeys().catch(() => new Set<string>())
-    ])
-    semanticPairs = bridges.filter(p => !dismissed.has(`${p.a_id}|${p.b_id}`))
+    const { lo, hi } = BRIDGE_BANDS.verrassend
+    semanticPairs = await fetchSemanticBridges({ bandLo: lo, bandHi: hi, max: 20 })
     return semanticPairs
   }
 

@@ -7,29 +7,20 @@
 // dismissal never comes back, on any device (connection_dismissals). Optional
 // per-batch AI typing via the existing enrich-links function.
 
-import { fetchSemanticBridges, hasEmbeddings, fetchDismissedPairKeys, dismissPair,
-  BRIDGE_MIN_SIMILARITY, STRONG_SIMILARITY, NEAR_DUPLICATE_SIMILARITY, type BridgePair } from '../lib/semantic'
+import { fetchSemanticBridges, hasEmbeddings, dismissPair,
+  BRIDGE_BANDS, STRONG_SIMILARITY, type BridgeBand, type BridgePair } from '../lib/semantic'
 import { createLink, LINK_TYPE_LABELS, type LinkType } from '../lib/links'
 import { fetchNotesByIds, getNoteTitle, type Note } from '../lib/notes'
 import { enrichLinks } from '../lib/ai'
 import { createAiAction } from '../lib/ai-action'
-import { isAiEnabled } from '../lib/nav'
+import { isAiEnabled } from '../lib/ai-prefs'
 import { showToast, esc, errMsg } from '../lib/crud-list'
 import { navigateTo } from '../router'
-
-// Two slices of the similarity range shared with the rest of the app
-// (lib/semantic.ts): "verrassend" is related-but-not-obvious, "dichtbij" runs
-// up to the near-duplicate line.
-const BANDS = {
-  verrassend: { label: 'Verrassend', lo: BRIDGE_MIN_SIMILARITY, hi: STRONG_SIMILARITY },
-  dichtbij:   { label: 'Dichtbij',   lo: STRONG_SIMILARITY,     hi: NEAR_DUPLICATE_SIMILARITY },
-} as const
-type BandKey = keyof typeof BANDS
 
 export async function mountConnections(root: HTMLElement): Promise<void> {
   injectConnectionsStyles()
 
-  let band: BandKey = 'verrassend'
+  let band: BridgeBand = 'verrassend'
   let pairs: BridgePair[] = []
   let noteMap = new Map<string, Note>()
 
@@ -37,9 +28,9 @@ export async function mountConnections(root: HTMLElement): Promise<void> {
     <div class="conn-body">
       <header class="conn-header">
         <div class="conn-bands" role="radiogroup" aria-label="Verwantschapsband">
-          ${(Object.keys(BANDS) as BandKey[]).map(k => `
+          ${(Object.keys(BRIDGE_BANDS) as BridgeBand[]).map(k => `
             <button class="conn-band${k === band ? ' active' : ''}" data-band="${k}" role="radio" aria-checked="${k === band}">
-              ${BANDS[k].label}
+              ${BRIDGE_BANDS[k].label}
             </button>`).join('')}
         </div>
         <div class="conn-ai-host" id="conn-ai-host"></div>
@@ -53,7 +44,7 @@ export async function mountConnections(root: HTMLElement): Promise<void> {
 
   root.querySelectorAll<HTMLButtonElement>('.conn-band').forEach(btn => {
     btn.addEventListener('click', () => {
-      band = btn.dataset['band'] as BandKey
+      band = btn.dataset['band'] as BridgeBand
       root.querySelectorAll('.conn-band').forEach(b => {
         b.classList.toggle('active', b === btn)
         b.setAttribute('aria-checked', String(b === btn))
@@ -108,12 +99,10 @@ export async function mountConnections(root: HTMLElement): Promise<void> {
         return
       }
 
-      const { lo, hi } = BANDS[band]
-      const [bridges, dismissed] = await Promise.all([
-        fetchSemanticBridges({ bandLo: lo, bandHi: hi, max: 20 }),
-        fetchDismissedPairKeys().catch(() => new Set<string>()),
-      ])
-      pairs = bridges.filter(p => !dismissed.has(`${p.a_id}|${p.b_id}`))
+      const { lo, hi } = BRIDGE_BANDS[band]
+      // Already-linked and dismissed pairs are excluded in SQL, so an empty
+      // result means the band really is exhausted.
+      pairs = await fetchSemanticBridges({ bandLo: lo, bandHi: hi, max: 20 })
 
       if (pairs.length === 0) {
         listEl.innerHTML = `
@@ -132,6 +121,15 @@ export async function mountConnections(root: HTMLElement): Promise<void> {
     } catch (err) {
       listEl.innerHTML = `<div class="conn-empty"><p>Laden mislukt: ${esc(errMsg(err))}</p></div>`
     }
+  }
+
+  // A pair was linked or dismissed. When that empties the page, fetch the next
+  // one: the database now leaves out what was just handled, so the queue
+  // keeps going until the band is genuinely exhausted.
+  function resolved(aId: string, bId: string, card: Element): void {
+    pairs = pairs.filter(p => !(p.a_id === aId && p.b_id === bId))
+    card.remove()
+    if (pairs.length === 0) void load()
   }
 
   function renderPair(p: BridgePair): string {
@@ -179,8 +177,7 @@ export async function mountConnections(root: HTMLElement): Promise<void> {
         const reason = card.querySelector<HTMLElement>('.conn-reason')?.dataset['reason'] || 'Semantische brug'
         try {
           await createLink({ sourceId: aId, targetId: bId, type, reason })
-          pairs = pairs.filter(p => !(p.a_id === aId && p.b_id === bId))
-          card.remove()
+          resolved(aId, bId, card)
           showToast('Verbinding gelegd')
         } catch (err) {
           showToast(`Koppelen mislukt: ${errMsg(err)}`)
@@ -189,8 +186,7 @@ export async function mountConnections(root: HTMLElement): Promise<void> {
       card.querySelector('.conn-dismiss')?.addEventListener('click', async () => {
         try {
           await dismissPair(aId, bId)
-          pairs = pairs.filter(p => !(p.a_id === aId && p.b_id === bId))
-          card.remove()
+          resolved(aId, bId, card)
           showToast('Afgewezen — komt niet terug')
         } catch (err) {
           showToast(`Afwijzen mislukt: ${errMsg(err)}`)

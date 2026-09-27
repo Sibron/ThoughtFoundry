@@ -16,7 +16,7 @@
  * summary, themes and section — while content, mini_notes and the source
  * fields are preserved.
  *
- * Sinds migratie 20260718_simplify_model bestaan notes.note_type en notes.tags
+ * Sinds migratie 20260718220604_simplify_model bestaan notes.note_type en notes.tags
  * niet meer; Readwise document-tags landen daarom op de bron (sources.tags).
  *
  * Usage:

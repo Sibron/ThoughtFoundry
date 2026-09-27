@@ -9,10 +9,12 @@
 import { supabase } from './supabase'
 
 // ── Similarity thresholds ───────────────────────────────────────────────────
-// gte-small cosine similarity, calibrated by eye on real notes. These were
-// loose numbers scattered across six files (0.45 in three, 0.72 in three, the
-// band endpoints in two more), which made "retune the band" — issue #36 — a
-// hunt rather than an edit. One place now.
+// gte-small cosine similarity. These were loose numbers scattered across six
+// files (0.45 in three, 0.72 in three, the band endpoints in two more), which
+// made "retune the band" — issue #36 — a hunt rather than an edit. One place
+// now. The values predate gte-small and are not yet calibrated for it (#36):
+// docs/DEPLOY_SEMANTIC_LINKING.md has the procedure, and tests/semantic.test.ts
+// holds how they must relate to each other and to the SQL defaults.
 
 /** Below this a "find me notes like X" hit is too thin to show. */
 export const MATCH_MIN_SIMILARITY = 0.45
@@ -33,6 +35,19 @@ export const BRIDGE_MIN_SIMILARITY = 0.55
  * from the client as from psql. Retuning either means retuning both — see #36.
  */
 export const BRIDGE_MAX_SIMILARITY = 0.82
+
+/**
+ * The two review bands of the Verbindingen queue; "Verbind twee" on the
+ * capture screen uses Verrassend. Together they must cover BRIDGE_MIN to
+ * NEAR_DUPLICATE with no gap, or a pair that falls between them can never be
+ * suggested -- tests/semantic.test.ts holds that, so retuning (#36) cannot
+ * silently open one.
+ */
+export const BRIDGE_BANDS = {
+  verrassend: { label: 'Verrassend', lo: BRIDGE_MIN_SIMILARITY, hi: STRONG_SIMILARITY },
+  dichtbij:   { label: 'Dichtbij',   lo: STRONG_SIMILARITY,     hi: NEAR_DUPLICATE_SIMILARITY },
+} as const
+export type BridgeBand = keyof typeof BRIDGE_BANDS
 
 export interface Neighbor {
   id: string
@@ -65,8 +80,10 @@ export async function fetchNeighbors(noteId: string, count = 8): Promise<Neighbo
 }
 
 /**
- * Non-obvious bridges: semantically close pairs that aren't linked and share no
- * theme — related, not near-duplicate.
+ * Non-obvious bridges: semantically close pairs that aren't linked, share no
+ * theme and haven't been dismissed — related, not near-duplicate. The
+ * dismissal filter is in SQL, before the limit, so working through the queue
+ * brings up the next pairs instead of emptying it (#56).
  */
 export async function fetchSemanticBridges(
   opts: { bandLo?: number; bandHi?: number; max?: number } = {}
@@ -117,19 +134,11 @@ export async function matchNotes(
 
 // ── Suggestion dismissals ───────────────────────────────────────────────────
 // Rejected pairs are persisted (normalized a < b, like semantic_bridges) so a
-// dismissal on one device sticks on every device.
+// dismissal on one device sticks on every device. semantic_bridges excludes
+// them itself; there is no client-side filter to keep in step.
 
 function normalizePair(a: string, b: string): [string, string] {
   return a < b ? [a, b] : [b, a]
-}
-
-/** "a|b" keys of every pair the user rejected. */
-export async function fetchDismissedPairKeys(): Promise<Set<string>> {
-  const { data, error } = await supabase
-    .from('connection_dismissals')
-    .select('a_id, b_id')
-  if (error) throw error
-  return new Set((data ?? []).map((r: { a_id: string; b_id: string }) => `${r.a_id}|${r.b_id}`))
 }
 
 export async function dismissPair(a: string, b: string): Promise<void> {

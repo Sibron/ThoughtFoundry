@@ -3,10 +3,10 @@
 -- Phase 2+ extras (themes, note_links, embeddings, ai_usage) are additive
 -- and can be applied later without breaking Phase 1.
 --
--- NOTE: the dated files in supabase/migrations/ are the source of truth for
--- anything added or changed after this snapshot (semantic RPCs, user_settings,
--- goals-era tables). On a fresh install, run this file first, then every
--- migration in date order.
+-- NOTE: the timestamped files in supabase/migrations/ are the source of truth
+-- for anything added or changed after this snapshot (semantic RPCs,
+-- user_settings, goals-era tables). On a fresh install, run this file first,
+-- then every migration in filename order -- see docs/DEPLOY_BACKEND.md.
 
 -- ── Extensions ──────────────────────────────────────────────────────────────
 create extension if not exists "pgcrypto";
@@ -14,7 +14,11 @@ create extension if not exists "pgcrypto";
 -- pgvector is required for Phase 2 similarity search.
 -- If your region doesn't ship it, comment the next line out — the rest of
 -- the schema still applies; the embedding column just won't exist.
-create extension if not exists "vector";
+-- In the `extensions` schema, where Supabase puts it and where the live
+-- project has it: later migrations name `extensions.vector` and pin
+-- `search_path = public, extensions` for the `<=>` operator, so a fresh build
+-- with vector in `public` stopped at 20260720184137_security_hardening (#49).
+create extension if not exists "vector" with schema extensions;
 
 -- ── Phase 1: notes ──────────────────────────────────────────────────────────
 create table if not exists public.notes (

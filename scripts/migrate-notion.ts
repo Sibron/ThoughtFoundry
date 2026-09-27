@@ -11,7 +11,7 @@
  *   scripts/migration-export.json  (ready to import in ThoughtFoundry Settings)
  *
  * Status: de import is op 2026-06-19 uitgevoerd; de data staat live. Sinds
- * migratie 20260718_simplify_model bestaan notes.note_type en notes.tags niet
+ * migratie 20260718220604_simplify_model bestaan notes.note_type en notes.tags niet
  * meer — dit script schrijft die velden daarom niet meer naar de export.
  */
 

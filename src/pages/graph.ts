@@ -7,7 +7,7 @@ import { pairKey } from '../lib/similarity'
 import { enrichLinks } from '../lib/ai'
 import { getCostStatus } from '../lib/cost'
 import { startAiThinking, AI_PHASES } from '../lib/ai-thinking'
-import { isAiEnabled } from '../lib/nav'
+import { isAiEnabled } from '../lib/ai-prefs'
 import { navigateTo } from '../router'
 import { showToast, esc as escHtml, errMsg } from '../lib/crud-list'
 
@@ -1058,11 +1058,12 @@ function runLayout(nodes: GraphNode[], edges: GraphEdge[], iterations: number): 
  * Undo toast for an action that has ALREADY been committed — tapping undo
  * reverses it.
  *
- * Deliberately not lib/crud-list.ts's showUndoToast, which is the opposite
- * shape: it holds the commit back for six seconds and only fires it if you
- * don't undo. Both are reasonable; mixing them up is not, so this one carries a
- * name that says which it is. (It used to be called showUndoToast too, which
- * read exactly like the shared helper this file does not use.)
+ * Deliberately not lib/crud-list.ts's showDeferredCommitToast, which is the
+ * opposite shape: it holds the commit back for six seconds and only fires it
+ * if you don't undo, so it has to flush when the page goes away. This one has
+ * already committed, so there is nothing to lose and nothing to flush. Both
+ * are reasonable; mixing them up is not, so each carries a name that says
+ * which it is. Left separate on purpose rather than folded in (#54).
  */
 function showRevertToast(msg: string, onUndo: () => void): void {
   const toast = document.getElementById('toast') as HTMLDivElement | null

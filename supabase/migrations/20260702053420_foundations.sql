@@ -11,7 +11,7 @@ create policy "user_settings_delete" on public.user_settings
 
 -- ── 2) Missing indexes for common filters ───────────────────────────────────
 -- tags (array containment) and note_type (inbox pills) were dropped by
--- 20260718_simplify_model; on a fresh rebuild from schema.sql these columns
+-- 20260718220604_simplify_model; on a fresh rebuild from schema.sql these columns
 -- never exist at all, so both indexes are guarded on column existence.
 do $$
 begin
@@ -29,7 +29,7 @@ create index if not exists notes_user_section on public.notes(user_id, section)
 
 -- ── 3) KNN RPCs: probe more ivfflat lists for better recall ─────────────────
 -- semantic_bridges already sets ivfflat.probes = 10 (see
--- 20260626_semantic_bridges_searchpath_fix.sql); note_neighbors and
+-- 20260626165956_semantic_bridges_searchpath_fix.sql); note_neighbors and
 -- match_notes were still on the default of 1 probe, which gives weak recall on
 -- a small single-user corpus. Same signatures, same row shapes — only the
 -- language changes (plpgsql, to allow SET LOCAL) plus the pinned search_path
