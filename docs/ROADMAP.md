@@ -385,11 +385,13 @@ Manual trigger in `/process` only. Never auto-run on capture save.
 
 Automated gate (`ci.yml`, runs on every PR):
 1. `npm test` — Vitest over the pure modules (similarity, markdown, manuscript,
-   cost, paging, the edge-function guards).
+   cost, paging, the edge-function guards), plus the export/import round-trip
+   and the offline queue against an in-memory PostgREST fake and
+   `fake-indexeddb`.
 2. `npm run build` — `tsc` typecheck + bundle.
 
-Not covered by either, and still manual: the offline IndexedDB queue, the
-export/import round-trip against a real schema, and every rendering path.
+Not covered by either, and still manual: every rendering path, and SQL
+(RPCs, RLS) against the real schema.
 
 For each fase with code changes:
 1. Agent opens PR.

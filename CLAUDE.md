@@ -71,8 +71,8 @@ writes nothing. The note changes only when the user accepts it.
   mechanism.
 - **Rendering is client-side string templates**, not server-rendered Jinja. A page is
   `render*(app: HTMLElement)`, which replaces `app.innerHTML` and re-attaches listeners.
-- **Tests are thin, not absent.** Vitest covers the pure modules only; everything that
-  touches Supabase, IndexedDB or the DOM is still verified by hand. Where the other
+- **Tests are thin, not absent.** Vitest covers `lib/` logic, with Supabase and IndexedDB
+  faked in memory; everything that touches the DOM is still verified by hand. Where the other
   projects say "tests are part of the feature", here that holds for `lib/` logic and not
   yet for a page. See "Testing" below.
 - **AI runs server-side in Deno**, not in the app process, so it can hold the key and
@@ -157,18 +157,25 @@ removed: it is a whole browser for one key-value store, and jsdom 30 requires No
 while `ci.yml` pins Node 20, so it passed locally and failed in CI. Keep it that way; a test
 needing a real DOM is a signal to reach for a stub, or to argue the case explicitly.
 
-Covered today -- the pure modules, no Supabase and no network:
+Covered today -- no network and no Supabase project:
 `lib/similarity.ts`, `lib/markdown.ts` (escaping first: it writes into `innerHTML` and
 renders text `analyze-source` fetched from arbitrary sites), `lib/manuscript.ts`,
 `lib/cost.ts` (cap thresholds, via a mocked client), `fetchAllRows` + `isUuid` in
-`lib/supabase.ts`, `lib/sections.ts`, and `functions/_shared/anthropic.ts`.
+`lib/supabase.ts`, `lib/sections.ts`, `functions/_shared/anthropic.ts`, the export ->
+import round-trip in `lib/exporter.ts`, and the offline queue in `lib/notes.ts`.
+
+**Anything that talks to PostgREST is tested against `tests/helpers/fake-supabase.ts`**, an
+in-memory fake that models primary keys, unique constraints, `ON CONFLICT DO NOTHING`,
+statement-level foreign keys, unknown columns, RLS-by-`user_id` and the 1000-row read cap
+-- and nothing else. Extend it when a test needs more; do not fake a query inline.
+`tests/exporter.test.ts` shows the `vi.mock` that swaps it in while keeping the real
+`fetchAllRows`. IndexedDB comes from `fake-indexeddb` (dev-only), imported by the one
+suite that needs it rather than globally.
 
 **Still uncovered, and the honest list of where a regression can still land silently:**
-- `lib/exporter.ts` -- the v1/v2/v3 payload migrations and the theme/source id remapping.
-  The most valuable next suite; needs a fake PostgREST or a Supabase branch.
-- The offline IndexedDB queue in `lib/notes.ts` -- the `node` environment has no IndexedDB;
-  `fake-indexeddb` in `tests/setup.ts` would be the smallest way in.
 - Every rendering path. There are no DOM tests at all.
+- SQL: RPCs and RLS policies are only exercised against the live project. The fake models
+  constraints, not Postgres.
 
 `tsconfig.json` now includes `tests` as well as `src`, so anything a test imports gets
 typechecked -- which is how `functions/_shared/anthropic.ts` is covered. The rest of
