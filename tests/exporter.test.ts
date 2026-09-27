@@ -8,6 +8,7 @@ vi.mock('../src/lib/supabase', async (orig) => ({
 
 const { buildExport, importFromJson } = await import('../src/lib/exporter')
 type ExportPayload = import('../src/lib/exporter').ExportPayload
+type ImportProgress = import('../src/lib/exporter').ImportProgress
 
 const ME = 'user-a'
 
@@ -98,6 +99,88 @@ describe('export → import round-trip', () => {
     const again = await importFromJson(structuredClone(exported))
     expect(again.errors).toEqual([])
     expect(fake.snapshot()).toEqual(once)
+    // Counts are rows actually inserted; existing notes are reported as skipped.
+    expect(again).toMatchObject({ imported: 0, skipped: 3, themes: 0, sources: 0, links: 0, projects: 0, chapters: 0 })
+  })
+
+  it('does not mutate the payload it was given', async () => {
+    seedAccount()
+    const exported = await buildExport()
+    const before = structuredClone(exported)
+    fake.reset()
+    fake.seed('themes', [{ id: 'mine', user_id: ME, name: 'Autisme' }])
+    await importFromJson(exported)
+    expect(exported).toEqual(before)
+  })
+})
+
+describe('batching (#57)', () => {
+  const manyNotes = (n: number) => Array.from({ length: n }, (_, i) => ({ id: `n${String(i).padStart(4, '0')}`, content: `notitie ${i}` }))
+
+  it('issues a handful of requests per stage, not one per row', async () => {
+    const notes = manyNotes(250)
+    const res = await importFromJson(payload({
+      themes: [{ id: 't1', name: 'Thema' }],
+      notes,
+      note_themes: notes.map(n => ({ note_id: n.id, theme_id: 't1' })),
+      note_links: notes.slice(1).map((n, i) => ({ id: `l${i}`, source_id: notes[0].id, target_id: n.id })),
+    }))
+
+    expect(res).toMatchObject({ imported: 250, links: 249, errors: [] })
+    expect(fake.table('note_themes')).toHaveLength(250)
+    expect(fake.requests.filter(r => r.table === 'notes')).toHaveLength(3) // 100-note chunks
+    expect(fake.requests.filter(r => r.table === 'note_themes')).toHaveLength(1)
+    expect(fake.requests.length).toBeLessThan(15)
+  })
+
+  it('retries a failed chunk row by row, so only the bad row is lost and named', async () => {
+    fake.failWrite = (table, _op, rows) =>
+      table === 'notes' && rows.some(r => r['content'] === 'kapot') ? { code: '22P02', message: 'invalid input' } : null
+    const res = await importFromJson(payload({
+      notes: [{ id: 'n1', content: 'goed' }, { id: 'n2', content: 'kapot' }, { id: 'n3', content: 'ook goed' }],
+    }))
+
+    expect(fake.table('notes').map(n => n['id'])).toEqual(['n1', 'n3'])
+    expect(res.errors).toEqual(['n2: invalid input'])
+    expect(res).toMatchObject({ imported: 2, skipped: 0 })
+  })
+
+  it('imports a child theme listed before its parent, and follows a parent merged by name', async () => {
+    fake.seed('themes', [{ id: 'mine', user_id: ME, name: 'Ouder' }])
+    const res = await importFromJson(payload({
+      themes: [
+        { id: 'a-kind', name: 'Kind', parent_id: 'z-ouder' },
+        { id: 'b-kleinkind', name: 'Kleinkind', parent_id: 'a-kind' },
+        { id: 'z-ouder', name: 'Ouder' },
+      ],
+    }))
+
+    expect(res.errors).toEqual([])
+    const byId = Object.fromEntries(fake.table('themes').map(t => [t['id'], t['parent_id']]))
+    expect(byId).toEqual({ mine: undefined, 'a-kind': 'mine', 'b-kleinkind': 'a-kind' })
+  })
+
+  it('merges two themes with the same name inside one file', async () => {
+    await importFromJson(payload({
+      themes: [{ id: 't1', name: 'Dubbel' }, { id: 't2', name: 'Dubbel' }],
+      notes: [{ id: 'n1', content: 'x' }],
+      note_themes: [{ note_id: 'n1', theme_id: 't2' }],
+    }))
+    expect(fake.table('themes').map(t => t['id'])).toEqual(['t1'])
+    expect(fake.table('note_themes')[0]['theme_id']).toBe('t1')
+  })
+
+  it('reports progress per stage, in FK order, ending at the total', async () => {
+    const seen: ImportProgress[] = []
+    await importFromJson(payload({ themes: [{ id: 't1', name: 'T' }], notes: manyNotes(150) }), p => seen.push(p))
+
+    const stages = [...new Set(seen.map(p => p.stage))]
+    expect(stages).toEqual(['themes', 'sources', 'projects', 'notes', 'note_themes', 'links', 'note_projects', 'chapters', 'sections', 'revisions'])
+    expect(seen.filter(p => p.stage === 'notes')).toEqual([
+      { stage: 'notes', done: 0, total: 150 },
+      { stage: 'notes', done: 100, total: 150 },
+      { stage: 'notes', done: 150, total: 150 },
+    ])
   })
 })
 

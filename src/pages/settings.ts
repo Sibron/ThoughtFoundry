@@ -5,7 +5,7 @@ import { renderTopbar, attachTopbar, isAiEnabled, setAiEnabled, getAiQuality, se
 import { navigateTo } from '../router'
 import { getMonthlyCap, setMonthlyCap, getCostStatus, formatUsd } from '../lib/cost'
 import { fetchRecentUsage, summarize, type UsageRow } from '../lib/usage'
-import { buildExport, downloadJson, importFromJson, type ExportPayload } from '../lib/exporter'
+import { buildExport, downloadJson, importFromJson, type ExportPayload, type ImportStage } from '../lib/exporter'
 import { getInstallPrompt, clearInstallPrompt } from '../lib/pwa'
 import { countByStatus, fetchNoteIdsNeedingReprocess } from '../lib/notes'
 import { reprocessNote, embedNotesBatch } from '../lib/ai'
@@ -16,6 +16,19 @@ const WEEKDAYS = ['Zondag', 'Maandag', 'Dinsdag', 'Woensdag', 'Donderdag', 'Vrij
 import { fetchThemes, updateTheme, type Theme } from '../lib/themes'
 import { getDensity, setDensity, getMotion, setMotion, getTheme, setTheme, getFocusMode, setFocusMode, type Theme as DisplayTheme } from '../lib/display'
 import { showToast, esc as escHtml, errMsg, formatRelative } from '../lib/crud-list'
+
+const IMPORT_STAGE_LABELS: Record<ImportStage, string> = {
+  themes: "thema's",
+  sources: 'bronnen',
+  projects: 'projecten',
+  notes: 'notities',
+  note_themes: 'themakoppelingen',
+  links: 'links',
+  note_projects: 'projectkoppelingen',
+  chapters: 'hoofdstukken',
+  sections: 'secties',
+  revisions: 'revisies',
+}
 
 export async function renderSettings(app: HTMLElement): Promise<void> {
   app.innerHTML = `
@@ -526,7 +539,10 @@ export async function renderSettings(app: HTMLElement): Promise<void> {
     btn.disabled = true
     btn.textContent = 'Importeren…'
     try {
-      const result = await importFromJson(pendingImport)
+      // A long import used to be a silent spinner; show which stage it is on.
+      const result = await importFromJson(pendingImport, ({ stage, done, total }) => {
+        if (total > 0) btn.textContent = `Importeren… ${IMPORT_STAGE_LABELS[stage]} ${done}/${total}`
+      })
       const parts = [`${result.imported} notitie${result.imported === 1 ? '' : "s"}`]
       if (result.themes) parts.push(`${result.themes} thema's`)
       if (result.sources) parts.push(`${result.sources} bronnen`)
