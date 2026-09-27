@@ -1,5 +1,12 @@
 # Deploy: semantische deep-linking (dashboard-route, geen CLI)
 
+> **Sinds #32 gaat de backend automatisch** (`.github/workflows/deploy-backend.yml`):
+> functions en migraties bij elke push naar `main` die `supabase/**` raakt. Zie
+> [`DEPLOY_BACKEND.md`](DEPLOY_BACKEND.md), ook voor de handmatige CLI-route. De
+> stappen hieronder zijn de handmatige route van daarvóór; SQL erin kan verouderd
+> zijn — de migraties zijn leidend. **Actueel** zijn "Band ijken" (onder 1b) en
+> de verificatie-queries onderaan.
+
 Volgorde: **migraties → functions → backfill**. Geen externe embedding-dienst en
 geen API-key nodig — embeddings draaien lokaal in de Supabase Edge Runtime
 (`gte-small`, 384-dim). Alles is additief; zonder embeddings valt de app netjes

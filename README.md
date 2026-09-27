@@ -65,10 +65,11 @@ docs/          deploy guides, roadmap, and audit notes
 ## Deploying
 
 - **Frontend**: pushes to `main` trigger `.github/workflows/deploy.yml`, which builds and publishes to GitHub Pages.
-- **Backend**: currently deployed manually against the Supabase project — see `docs/DEPLOY_SEMANTIC_LINKING.md` and `docs/DEPLOY_ANALYZE_SOURCE.md` for the edge-function and migration steps. Automating this is tracked in issue #32.
+- **Backend**: pushes to `main` that touch `supabase/` trigger `.github/workflows/deploy-backend.yml`, which typechecks every edge function, rebuilds the schema from the migrations, then deploys the functions and applies new migrations. It stays idle until its secrets are set — see [`docs/DEPLOY_BACKEND.md`](docs/DEPLOY_BACKEND.md), including the one-time migration-history reconciliation that must come first.
 
 ## More docs
 
 - [`docs/ROADMAP.md`](docs/ROADMAP.md) — build history and current milestone arc.
 - [`docs/CONSOLIDATION-AUDIT.md`](docs/CONSOLIDATION-AUDIT.md) — UI/code consolidation notes.
-- [`docs/DEPLOY_SEMANTIC_LINKING.md`](docs/DEPLOY_SEMANTIC_LINKING.md), [`docs/DEPLOY_ANALYZE_SOURCE.md`](docs/DEPLOY_ANALYZE_SOURCE.md), [`docs/DEPLOY_DOEL_INSTRUMENT.md`](docs/DEPLOY_DOEL_INSTRUMENT.md) — manual backend deploy guides.
+- [`docs/DEPLOY_BACKEND.md`](docs/DEPLOY_BACKEND.md) — how the backend is deployed, and the one-time setup.
+- [`docs/DEPLOY_SEMANTIC_LINKING.md`](docs/DEPLOY_SEMANTIC_LINKING.md) (also: calibrating the similarity band), [`docs/DEPLOY_ANALYZE_SOURCE.md`](docs/DEPLOY_ANALYZE_SOURCE.md), [`docs/DEPLOY_DOEL_INSTRUMENT.md`](docs/DEPLOY_DOEL_INSTRUMENT.md) — the earlier manual guides, kept for their feature notes.

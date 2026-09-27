@@ -1,5 +1,11 @@
 # Deploy: "doel-instrument" arc (M0–M12)
 
+> **Sinds #32 gaat de backend automatisch** (`.github/workflows/deploy-backend.yml`):
+> functions en migraties bij elke push naar `main` die `supabase/**` raakt. Zie
+> [`DEPLOY_BACKEND.md`](DEPLOY_BACKEND.md), ook voor de handmatige CLI-route. Deze
+> gids beschrijft hoe het ging vóór die automatisering en is historisch; SQL
+> hieronder kan verouderd zijn — de migraties zijn leidend.
+
 Wat er op het live Supabase-project moet landen na het mergen van deze branch.
 Volgorde: **eerst de migraties (in datumvolgorde), dan de edge functions.**
 
@@ -14,7 +20,7 @@ supabase functions deploy embed-text write-section \
 
 Zonder CLI: run elke migratie hieronder in de SQL Editor (dashboard) en
 plak/deploy de functies via Edge Functions → editor, zoals in
-`MANUAL_DEPLOY.md` beschreven. De functies importeren uit `_shared/` — bij
+`DEPLOY_SEMANTIC_LINKING.md` (stap 2) beschreven. De functies importeren uit `_shared/` — bij
 dashboard-deploys moet je die imports inlinen of de CLI gebruiken.
 
 ---

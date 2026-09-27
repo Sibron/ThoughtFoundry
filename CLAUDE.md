@@ -66,15 +66,15 @@ writes nothing. The note changes only when the user accepts it.
 - **Postgres, not SQLite**, and the database is remote. There is no `data/` folder and no
   local source of truth; the IndexedDB cache is a cache.
 - **Migrations are timestamped (`YYYYMMDDHHMMSS_slug.sql`), not numbered**, and are applied
-  by hand against the project -- there is no runner and no `user_version` equivalent. The
-  Python projects apply theirs automatically at startup. Same discipline, different
-  mechanism.
+  by the Supabase CLI from CI (`deploy-backend.yml`), which records them in the project's
+  history table -- there is no `user_version` equivalent. The Python projects apply
+  theirs automatically at startup. Same discipline, different mechanism.
 - **Rendering is client-side string templates**, not server-rendered Jinja. A page is
   `render*(app: HTMLElement)`, which replaces `app.innerHTML` and re-attaches listeners.
 - **Tests are thin, not absent.** Vitest covers `lib/` logic, with Supabase and IndexedDB
-  faked in memory; everything that touches the DOM is still verified by hand. Where the other
-  projects say "tests are part of the feature", here that holds for `lib/` logic and not
-  yet for a page. See "Testing" below.
+  faked in memory; everything that touches the DOM is still verified by hand. Where the
+  other projects say "tests are part of the feature", here that holds for `lib/` logic and
+  not yet for a page. See "Testing" below.
 - **AI runs server-side in Deno**, not in the app process, so it can hold the key and
   enforce the budget. `_shared/anthropic.ts` calls the REST API with `fetch` rather than
   the SDK, to keep the cold start small.
@@ -95,11 +95,14 @@ Migration rules, all already followed by the existing files:
   `YYYYMMDD` until 2026-09, when three dates carried two or three files each and a fix
   sorted before the migration it fixed.
 - **Idempotent**: `if not exists`, `drop policy if exists` before create, `do $$` guards
-  around anything that depends on a column existing. Files are re-run by hand and must
-  survive it.
+  around anything that depends on a column existing. Files may be re-run by hand and must
+  survive it; `backend-checks.yml` applies the whole directory twice on every PR to hold
+  that, and builds it from an empty database first.
 - A `--` header saying *why*. `20260718220604_simplify_model.sql` is the model: it drops
   columns and collapses link types, and the header argues the case.
-- Applied manually -- see `docs/DEPLOY_*.md`. Automating this is issue #32.
+- Deployed by `.github/workflows/deploy-backend.yml` on a push to `main` that touches
+  `supabase/`: functions first, then `supabase db push`. See `docs/DEPLOY_BACKEND.md`,
+  which also holds the one-time history reconciliation the workflow waits on.
 - `20260720184137_security_hardening.sql` revokes `execute` on `SECURITY DEFINER` functions
   from `anon`. A new such function must do the same, or it bypasses RLS for anyone with
   the public key.
@@ -174,14 +177,15 @@ suite that needs it rather than globally.
 
 **Still uncovered, and the honest list of where a regression can still land silently:**
 - Every rendering path. There are no DOM tests at all.
-- SQL: RPCs and RLS policies are only exercised against the live project. The fake models
-  constraints, not Postgres.
+- SQL behaviour: RPCs and RLS policies are only exercised against the live project. CI
+  proves every migration *applies* (twice) on an empty Postgres, not that a function
+  returns the right rows; the fake models constraints, not Postgres.
 
-`tsconfig.json` now includes `tests` as well as `src`, so anything a test imports gets
-typechecked -- which is how `functions/_shared/anthropic.ts` is covered. The rest of
-`supabase/functions/` is still not typechecked by `npm run build`; an edge function can
-break without the build noticing. Importing a module from a test is currently the only way
-to pull it into `tsc`.
+`tsconfig.json` includes `tests` as well as `src`, so anything a test imports gets
+typechecked -- which is how `functions/_shared/anthropic.ts` gets its unit tests. The edge
+functions as a whole are typechecked by `deno check` in `backend-checks.yml`, not by
+`npm run build`; run `npx deno@2 check supabase/functions/*/index.ts` locally after
+touching one.
 
 When a bug is fixed, add the test that fails against the old code first, and say in the
 commit that you checked it fails. `tests/manuscript.test.ts` is the worked example.
@@ -222,10 +226,13 @@ npm run build           # tsc typecheck + bundle
 ```
 
 `npm test` and `npm run build` are both gates -- `ci.yml` runs them in that order on every
-pull request. See "Testing" above for what they do and do not cover.
+pull request. `backend-checks.yml` runs alongside: `deno check` over the edge functions,
+and the migration directory rebuilt from scratch and re-applied. See "Testing" above for
+what they do and do not cover.
 
 Credentials are read from `localStorage` first and the build-time env second, so a deployed
 build can be pointed at another project from the Settings page without rebuilding.
 
 Frontend deploys to GitHub Pages on every push to `main` (`deploy.yml`). The backend --
-migrations and edge functions -- is deployed by hand; see `docs/DEPLOY_*.md`.
+edge functions, then migrations -- deploys from `deploy-backend.yml` on a push to `main`
+that touches `supabase/`, once its secrets are set; see `docs/DEPLOY_BACKEND.md`.
