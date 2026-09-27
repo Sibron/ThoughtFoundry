@@ -23,11 +23,11 @@ dashboard-deploys moet je die imports inlinen of de CLI gebruiken.
 
 | Bestand | Wat het doet |
 |---|---|
-| `20260702_foundations.sql` | user_settings delete-policy; GIN-index op tags; note_type/section indexes; ivfflat probes=10 voor `note_neighbors`/`match_notes` |
-| `20260703_vandaag.sql` | `book_projects.target_date`; `user_settings.review_weekday` |
-| `20260704_connection_dismissals.sql` | tabel `connection_dismissals` (+RLS) voor afgewezen verbindingsvoorstellen |
-| `20260705_writing_studio.sql` | tabellen `chapter_sections` + `chapter_section_revisions` (+RLS, trigger, indexes); `chapters.project_id`; backfill van bestaande outlines |
-| `20260706_project_manuscript.sql` | `book_projects.chapter_order` |
+| `20260702053420_foundations.sql` | user_settings delete-policy; GIN-index op tags; note_type/section indexes; ivfflat probes=10 voor `note_neighbors`/`match_notes` |
+| `20260703114838_vandaag.sql` | `book_projects.target_date`; `user_settings.review_weekday` |
+| `20260704115148_connection_dismissals.sql` | tabel `connection_dismissals` (+RLS) voor afgewezen verbindingsvoorstellen |
+| `20260705120421_writing_studio.sql` | tabellen `chapter_sections` + `chapter_section_revisions` (+RLS, trigger, indexes); `chapters.project_id`; backfill van bestaande outlines |
+| `20260706121229_project_manuscript.sql` | `book_projects.chapter_order` |
 
 Alle migraties zijn idempotent — nogmaals draaien is veilig.
 

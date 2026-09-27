@@ -356,7 +356,7 @@ Manual trigger in `/process` only. Never auto-run on capture save.
 ### Data model changes
 - `notes.ai_title` text
 - `notes.processed_at` timestamptz
-- `notes.embedding` vector(384) — gte-small, see `migrations/20260626_embedding_activation.sql`
+- `notes.embedding` vector(384) — gte-small, see `migrations/20260626121750_embedding_activation.sql`
 - `themes`, `note_themes`, `note_links`, `ai_usage`, `chapters`
 
 ### UI

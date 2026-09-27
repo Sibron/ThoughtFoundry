@@ -65,9 +65,10 @@ writes nothing. The note changes only when the user accepts it.
   product: capture has to work from a phone, via the PWA share target.
 - **Postgres, not SQLite**, and the database is remote. There is no `data/` folder and no
   local source of truth; the IndexedDB cache is a cache.
-- **Migrations are dated (`YYYYMMDD_slug.sql`), not numbered**, and are applied by hand
-  against the project -- there is no runner and no `user_version` equivalent. The Python
-  projects apply theirs automatically at startup. Same discipline, different mechanism.
+- **Migrations are timestamped (`YYYYMMDDHHMMSS_slug.sql`), not numbered**, and are applied
+  by hand against the project -- there is no runner and no `user_version` equivalent. The
+  Python projects apply theirs automatically at startup. Same discipline, different
+  mechanism.
 - **Rendering is client-side string templates**, not server-rendered Jinja. A page is
   `render*(app: HTMLElement)`, which replaces `app.innerHTML` and re-attaches listeners.
 - **Tests are thin, not absent.** Vitest covers the pure modules only; everything that
@@ -88,16 +89,20 @@ Supabase Postgres. Core tables: `notes` (with a `vector(384)` embedding), `theme
 
 Migration rules, all already followed by the existing files:
 
-- One dated file per change, `supabase/migrations/YYYYMMDD_slug.sql`.
+- One timestamped file per change, `supabase/migrations/YYYYMMDDHHMMSS_slug.sql` -- the
+  shape `supabase migration new` produces. The Supabase CLI treats the digits as the
+  version, so they must be unique and must sort in apply order. They were plain
+  `YYYYMMDD` until 2026-09, when three dates carried two or three files each and a fix
+  sorted before the migration it fixed.
 - **Idempotent**: `if not exists`, `drop policy if exists` before create, `do $$` guards
   around anything that depends on a column existing. Files are re-run by hand and must
   survive it.
-- A `--` header saying *why*. `20260718_simplify_model.sql` is the model: it drops columns
-  and collapses link types, and the header argues the case.
+- A `--` header saying *why*. `20260718220604_simplify_model.sql` is the model: it drops
+  columns and collapses link types, and the header argues the case.
 - Applied manually -- see `docs/DEPLOY_*.md`. Automating this is issue #32.
-- `20260720_security_hardening.sql` revokes `execute` on `SECURITY DEFINER` functions from
-  `anon`. A new such function must do the same, or it bypasses RLS for anyone with the
-  public key.
+- `20260720184137_security_hardening.sql` revokes `execute` on `SECURITY DEFINER` functions
+  from `anon`. A new such function must do the same, or it bypasses RLS for anyone with
+  the public key.
 
 Client state: module-level closures per page, `localStorage` for preferences, IndexedDB for
 the snapshot cache (`cache.ts`, stale-while-revalidate) and the offline write queue. There
