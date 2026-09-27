@@ -185,44 +185,93 @@ export function formatRelative(iso: string): string {
 }
 
 /**
- * Soft-delete toast — the non-blocking replacement for confirm(): the UI
- * change has already happened; `onCommit` (the real API delete) runs after a
- * 6s grace period unless the user taps Ongedaan maken, which runs `onUndo`
- * (restore the UI) instead. Styling comes from the global .toast-undo rule.
+ * Deferred-commit toast -- the non-blocking replacement for confirm(). The UI
+ * change has already happened; `commit` (the real API write) runs when the
+ * 6-second undo window closes, unless the user taps "Ongedaan maken", which
+ * runs `restore` instead and nothing reaches the database.
+ *
+ * The window also closes early, committing, when:
+ * - a newer deferred toast replaces this one, and
+ * - the page is hidden or unloaded -- tab closed, reloaded, app backgrounded.
+ *   A timer on a page that is going away never fires, so without this a
+ *   delete the user saw happen was silently never sent (#54). This commit is
+ *   best effort: a DELETE sent while the page is hidden goes out with
+ *   `keepalive` (see lib/supabase.ts) so it can outlive the page, but a
+ *   browser may still drop it. On a phone a backgrounded PWA can be killed
+ *   with no further event, so `hidden` is the last reliable moment -- which
+ *   means switching away briefly also ends the undo window. That trade is
+ *   deliberate.
+ *
+ * If `commit` rejects, `restore` runs and the user is told
+ * ("Verwijderen mislukt: …"), so the screen never shows as gone what the
+ * database still has. Callers therefore let the error propagate rather than
+ * catching it.
+ *
+ * The opposite shape -- commit first, undo by reverting -- is graph.ts's
+ * showRevertToast. It has no window to lose, so it needs none of this.
  */
-// A newer undo toast replaces the older one; the older action must then commit
-// immediately (its undo window ends) rather than be silently lost.
-let commitPendingUndo: (() => void) | null = null
-
-export function showUndoToast(
+export function showDeferredCommitToast(
   message: string,
-  onCommit: () => void | Promise<void>,
-  onUndo: () => void
+  commit: () => void | Promise<void>,
+  restore: () => void
 ): void {
-  commitPendingUndo?.()
+  commitPending?.()
+  installFlushOnHide()
+
+  const run = () => {
+    let result: Promise<void>
+    // Called synchronously, not from a microtask, so a flush during unload
+    // has sent its request before the page is torn down.
+    try { result = Promise.resolve(commit()) } catch (err) { result = Promise.reject(err) }
+    result.catch((err: unknown) => {
+      // The view restore() redraws may be gone by now (another route).
+      try { restore() } catch { /* nothing left to restore into */ }
+      showToast(`Verwijderen mislukt: ${errMsg(err)}`)
+    })
+  }
 
   const toast = document.getElementById('toast') as HTMLDivElement | null
-  if (!toast) { void onCommit(); return }
+  if (!toast) { run(); return }
   ensureToastA11y(toast)
   toast.innerHTML = `<span>${esc(message)}</span><button type="button" class="toast-undo">Ongedaan maken</button>`
   toast.classList.add('show')
   let done = false
-  const finish = (commit: boolean) => {
+  const finish = (doCommit: boolean) => {
     if (done) return
     done = true
     clearTimeout(timer)
-    if (commitPendingUndo === commitThis) commitPendingUndo = null
+    if (commitPending === commitThis) commitPending = null
     toast.classList.remove('show')
     setTimeout(() => { if (!toast.classList.contains('show')) toast.textContent = '' }, 250)
-    if (commit) void onCommit()
+    if (doCommit) run()
   }
   const commitThis = () => finish(true)
   const timer = setTimeout(commitThis, 6000)
-  commitPendingUndo = commitThis
+  commitPending = commitThis
   toast.querySelector<HTMLButtonElement>('.toast-undo')?.addEventListener('click', () => {
     finish(false)
-    onUndo()
+    restore()
   })
+}
+
+// At most one deferred commit is pending: a newer toast commits the older one
+// immediately (its undo window ends) rather than losing it.
+let commitPending: (() => void) | null = null
+
+// Installed on first use rather than at import, so importing this module
+// touches no DOM.
+let flushInstalled = false
+function installFlushOnHide(): void {
+  if (flushInstalled) return
+  flushInstalled = true
+  const flush = () => commitPending?.()
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') flush()
+  })
+  // Covers browsers that unload without a visibilitychange first. On a
+  // bfcache navigation the page may come back; the toast is already hidden
+  // by then, so nothing stale reappears.
+  window.addEventListener('pagehide', flush)
 }
 
 // ── Shared layout CSS ───────────────────────────────────────────────────────

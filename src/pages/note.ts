@@ -36,7 +36,7 @@ import { preferredModel } from '../lib/ai-action'
 import { renderTopbar, attachTopbar } from '../lib/nav'
 import { isAiEnabled } from '../lib/ai-prefs'
 import { navigateTo, navigateBack, setLeaveGuard, onRouteLeave } from '../router'
-import { esc as escHtml, errMsg, formatDate, showToast, showUndoToast } from '../lib/crud-list'
+import { esc as escHtml, errMsg, formatDate, showToast, showDeferredCommitToast } from '../lib/crud-list'
 
 const STATUS_LABELS: Record<NoteStatus, string> = {
   inbox: 'Vangbak',
@@ -604,10 +604,13 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
       // runs after the undo window closes (undo restores the form in place).
       const body = document.querySelector('.note-body') as HTMLElement
       body.innerHTML = '<div class="note-loading">Notitie verwijderd…</div>'
-      showUndoToast('Notitie verwijderd',
+      const here = location.hash
+      showDeferredCommitToast('Notitie verwijderd',
         async () => {
-          try { await deleteNote(id); navigateBack('/inbox') }
-          catch (err) { showToast(`Verwijderen mislukt: ${errMsg(err)}`); renderForm() }
+          await deleteNote(id)
+          // The commit can land after the user has already left (the window
+          // is six seconds); only step back if they are still on this note.
+          if (location.hash === here) navigateBack('/inbox')
         },
         () => renderForm())
     })

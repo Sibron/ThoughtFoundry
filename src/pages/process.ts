@@ -11,7 +11,7 @@ import { preferredModel } from '../lib/ai-action'
 import { startAiThinking, AI_PHASES } from '../lib/ai-thinking'
 import { renderTopbar, attachTopbar } from '../lib/nav'
 import { navigateTo } from '../router'
-import { showToast, showUndoToast, esc as escHtml, errMsg, formatDate } from '../lib/crud-list'
+import { showToast, showDeferredCommitToast, esc as escHtml, errMsg, formatDate } from '../lib/crud-list'
 
 export async function renderProcess(app: HTMLElement): Promise<void> {
   app.innerHTML = `
@@ -117,9 +117,10 @@ export async function renderProcess(app: HTMLElement): Promise<void> {
       const prevStatus = note.status
       try {
         // The archive itself is already saved; "commit" here just advances the
-        // queue, and undo restores the previous status.
+        // queue (so a flush on hide writes nothing), and undo restores the
+        // previous status.
         await updateNote(note.id, { status: 'archief' })
-        showUndoToast(
+        showDeferredCommitToast(
           'Gearchiveerd.',
           () => {
             cursor++

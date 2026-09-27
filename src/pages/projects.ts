@@ -11,7 +11,7 @@ import { runGapAnalysis } from '../lib/ai'
 import { createAiAction } from '../lib/ai-action'
 import { openNotePicker } from '../lib/note-picker'
 import { navigateTo } from '../router'
-import { createCrudList, injectCrudStyles, showToast, showUndoToast, esc, errMsg, type CrudListConfig, type CrudDetailCtx } from '../lib/crud-list'
+import { createCrudList, injectCrudStyles, showToast, showDeferredCommitToast, esc, errMsg, type CrudListConfig, type CrudDetailCtx } from '../lib/crud-list'
 
 type ProjectForm = BookProjectInsert & { status: ProjectStatus }
 
@@ -172,11 +172,8 @@ async function mountDetail(project: BookProject, host: HTMLElement, ctx: CrudDet
       // Soft-delete: back to the list now, API delete after the undo window.
       // Notities blijven bestaan.
       ctx.remove(project.id)
-      showUndoToast(`Project "${project.title}" verwijderd`,
-        async () => {
-          try { await deleteProject(project.id) }
-          catch { showToast('Verwijderen mislukt'); await reloadProjects() }
-        },
+      showDeferredCommitToast(`Project "${project.title}" verwijderd`,
+        () => deleteProject(project.id),
         () => { void reloadProjects() })
     })
 

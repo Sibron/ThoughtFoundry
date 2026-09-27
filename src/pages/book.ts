@@ -10,7 +10,7 @@ import { isAiEnabled } from '../lib/ai-prefs'
 import { SECTIONS } from '../lib/sections'
 import { navigateTo } from '../router'
 import { mountProjects } from './projects'
-import { showToast, showUndoToast, esc as escHtml, errMsg, formatDate } from '../lib/crud-list'
+import { showToast, showDeferredCommitToast, esc as escHtml, errMsg, formatDate } from '../lib/crud-list'
 
 export async function mountBook(root: HTMLElement): Promise<void> {
   root.innerHTML = `
@@ -346,8 +346,8 @@ export async function mountBook(root: HTMLElement): Promise<void> {
         const removed = chapters.find(x => x.id === id)
         chapters = chapters.filter(x => x.id !== id)
         renderSaved()
-        showUndoToast('Hoofdstuk verwijderd',
-          async () => { try { await deleteChapter(id) } catch (err) { showToast(`Verwijderen mislukt: ${errMsg(err)}`) } },
+        showDeferredCommitToast('Hoofdstuk verwijderd',
+          () => deleteChapter(id),
           () => {
             if (removed) chapters = [removed, ...chapters]
             renderSaved()
