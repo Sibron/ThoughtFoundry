@@ -1,0 +1,23 @@
+{
+  "version": "5",
+  "redirects": {
+    "https://esm.sh/@supabase/supabase-js@2": "https://esm.sh/@supabase/supabase-js@2.117.2"
+  },
+  "remote": {
+    "https://esm.sh/@supabase/supabase-js@2.117.2": "6da4477d96ad4392b5a8be8f423384a3812cdd651df483e433ba422a69ff879b"
+  },
+  "workspace": {
+    "packageJson": {
+      "dependencies": [
+        "npm:@supabase/supabase-js@^2.104.1",
+        "npm:csv-parse@^5.6.0",
+        "npm:fake-indexeddb@^6.2.5",
+        "npm:tsx@^4.22.4",
+        "npm:typescript@~5.6.3",
+        "npm:vite-plugin-pwa@^1.2.0",
+        "npm:vite@7",
+        "npm:vitest@^3.2.7"
+      ]
+    }
+  }
+}
