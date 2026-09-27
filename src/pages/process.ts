@@ -1,8 +1,7 @@
-import { fetchNotes, fetchNotesByIds, updateNote, type Note } from '../lib/notes'
+import { fetchNotes, fetchNotesByIds, updateNote, saveNote, type Note } from '../lib/notes'
 import {
   fetchThemes,
   createTheme,
-  setThemesForNote,
   type Theme
 } from '../lib/themes'
 import { createLink, LINK_TYPE_LABELS, type LinkType } from '../lib/links'
@@ -321,19 +320,17 @@ export async function renderProcess(app: HTMLElement): Promise<void> {
 
       const allThemeIds = [...checkedThemeIds, ...createdIds]
 
-      // 2) Update the note
-      await updateNote(note.id, {
+      // 2) Update the note and its theme links in one transaction, so a
+      //    failure cannot leave it marked verwerkt with its themes wiped.
+      await saveNote(note.id, {
         ai_title: title || null,
         ai_summary: summary || null,
         status: 'verwerkt',
         processed_at: new Date().toISOString(),
         section: sectionVal || null
-      })
+      }, { themeIds: allThemeIds })
 
-      // 3) Persist theme links
-      await setThemesForNote(note.id, allThemeIds)
-
-      // 4) Persist note links (best-effort, ignore duplicates)
+      // 3) Persist note links (best-effort, ignore duplicates)
       for (const { id: targetId, type: linkType } of checkedRelated) {
         try {
           await createLink({ sourceId: note.id, targetId, type: linkType, reason: 'AI-suggestie' })

@@ -147,6 +147,33 @@ export async function insertNote(note: NoteInsert): Promise<Note> {
   return data as unknown as Note
 }
 
+/**
+ * Saves a note's fields and, when given, its complete set of themes and of book
+ * projects -- in one transaction, via the `save_note` RPC. Either everything
+ * lands or nothing does: the old three-request save could store the content,
+ * report failure, and leave the note with no themes at all (#55).
+ *
+ * Omit `themeIds` / `projectIds` to leave those links untouched. Ids that are
+ * not the user's own themes or projects are ignored by the RPC.
+ */
+export async function saveNote(
+  id: string,
+  updates: NoteUpdate,
+  links: { themeIds?: string[]; projectIds?: string[] } = {}
+): Promise<Note> {
+  const { data, error } = await supabase
+    .rpc('save_note', {
+      p_id: id,
+      p_updates: updates,
+      ...(links.themeIds ? { p_theme_ids: links.themeIds } : {}),
+      ...(links.projectIds ? { p_project_ids: links.projectIds } : {}),
+    })
+    .select(NOTE_COLUMNS)
+    .single()
+  if (error) throw error
+  return data as unknown as Note
+}
+
 export async function updateNote(id: string, note: NoteUpdate): Promise<Note> {
   const { data, error } = await supabase
     .from('notes')
