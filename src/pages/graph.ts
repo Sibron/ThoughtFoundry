@@ -7,7 +7,7 @@ import { pairKey } from '../lib/similarity'
 import { enrichLinks } from '../lib/ai'
 import { getCostStatus } from '../lib/cost'
 import { startAiThinking, AI_PHASES } from '../lib/ai-thinking'
-import { isAiEnabled } from '../lib/nav'
+import { isAiEnabled } from '../lib/ai-prefs'
 import { navigateTo } from '../router'
 import { showToast, esc as escHtml, errMsg } from '../lib/crud-list'
 

@@ -6,7 +6,7 @@ import {
 import { fetchNotesByIds, type Note } from '../lib/notes'
 import { fetchChaptersByProject, fetchSectionStats, type Chapter, type ChapterSectionStats } from '../lib/chapters'
 import { renderBookMarkdown, resolveChapterSections, downloadMarkdown, slugify } from '../lib/manuscript'
-import { isAiEnabled } from '../lib/nav'
+import { isAiEnabled } from '../lib/ai-prefs'
 import { runGapAnalysis } from '../lib/ai'
 import { createAiAction } from '../lib/ai-action'
 import { openNotePicker } from '../lib/note-picker'

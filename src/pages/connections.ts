@@ -13,7 +13,7 @@ import { createLink, LINK_TYPE_LABELS, type LinkType } from '../lib/links'
 import { fetchNotesByIds, getNoteTitle, type Note } from '../lib/notes'
 import { enrichLinks } from '../lib/ai'
 import { createAiAction } from '../lib/ai-action'
-import { isAiEnabled } from '../lib/nav'
+import { isAiEnabled } from '../lib/ai-prefs'
 import { showToast, esc, errMsg } from '../lib/crud-list'
 import { navigateTo } from '../router'
 

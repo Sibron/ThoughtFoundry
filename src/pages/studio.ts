@@ -14,7 +14,8 @@ import { embedText, matchNotes, hasEmbeddings, MATCH_MIN_SIMILARITY } from '../l
 import { renderMarkdownHtml, countWords } from '../lib/markdown'
 import { writeSection, type WriteSectionMode } from '../lib/ai'
 import { createAiAction } from '../lib/ai-action'
-import { renderTopbar, attachTopbar, isAiEnabled } from '../lib/nav'
+import { renderTopbar, attachTopbar } from '../lib/nav'
+import { isAiEnabled } from '../lib/ai-prefs'
 import { showToast, esc, errMsg } from '../lib/crud-list'
 import { navigateTo, navigateBack } from '../router'
 

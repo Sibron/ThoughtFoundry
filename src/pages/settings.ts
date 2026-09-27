@@ -1,7 +1,8 @@
 import { signOut } from '../lib/auth'
 import { supabase, clearSupabaseConfig } from '../lib/supabase'
 import { clearCache } from '../lib/cache'
-import { renderTopbar, attachTopbar, isAiEnabled, setAiEnabled, getAiQuality, setAiQuality, type AiQuality } from '../lib/nav'
+import { renderTopbar, attachTopbar } from '../lib/nav'
+import { isAiEnabled, setAiEnabled, getAiQuality, setAiQuality, type AiQuality } from '../lib/ai-prefs'
 import { navigateTo } from '../router'
 import { getMonthlyCap, setMonthlyCap, getCostStatus, formatUsd } from '../lib/cost'
 import { fetchRecentUsage, summarize, type UsageRow } from '../lib/usage'
@@ -10,7 +11,7 @@ import { getInstallPrompt, clearInstallPrompt } from '../lib/pwa'
 import { countByStatus, fetchNoteIdsNeedingReprocess } from '../lib/notes'
 import { reprocessNote, embedNotesBatch } from '../lib/ai'
 import { getPersona, setPersona, getDefaultPersona } from '../lib/persona'
-import { saveUserSetting, getReviewWeekday } from '../lib/user-settings'
+import { saveUserSetting, getReviewWeekday, resetSettingsCache } from '../lib/user-settings'
 
 const WEEKDAYS = ['Zondag', 'Maandag', 'Dinsdag', 'Woensdag', 'Donderdag', 'Vrijdag', 'Zaterdag']
 import { fetchThemes, updateTheme, type Theme } from '../lib/themes'
@@ -279,6 +280,8 @@ export async function renderSettings(app: HTMLElement): Promise<void> {
   `
 
   document.getElementById('settings-logout')?.addEventListener('click', async () => {
+    // Same sequence as the header's logout in nav.ts.
+    resetSettingsCache()
     await clearCache()
     await signOut()
     navigateTo('/login')

@@ -6,7 +6,7 @@ import { renderChapterMarkdown, resolveChapterSections, downloadMarkdown, slugif
 import { generateChapter, type ChapterPlan } from '../lib/ai'
 import { AI_PHASES } from '../lib/ai-thinking'
 import { createAiAction, type AiActionHandle } from '../lib/ai-action'
-import { isAiEnabled } from '../lib/nav'
+import { isAiEnabled } from '../lib/ai-prefs'
 import { SECTIONS } from '../lib/sections'
 import { navigateTo } from '../router'
 import { mountProjects } from './projects'
