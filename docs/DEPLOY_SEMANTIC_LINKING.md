@@ -1,5 +1,12 @@
 # Deploy: semantische deep-linking (dashboard-route, geen CLI)
 
+> **Sinds #32 gaat de backend automatisch** (`.github/workflows/deploy-backend.yml`):
+> functions en migraties bij elke push naar `main` die `supabase/**` raakt. Zie
+> [`DEPLOY_BACKEND.md`](DEPLOY_BACKEND.md), ook voor de handmatige CLI-route. De
+> stappen hieronder zijn de handmatige route van daarvóór; SQL erin kan verouderd
+> zijn — de migraties zijn leidend. **Actueel** zijn "Band ijken" (onder 1b) en
+> de verificatie-queries onderaan.
+
 Volgorde: **migraties → functions → backfill**. Geen externe embedding-dienst en
 geen API-key nodig — embeddings draaien lokaal in de Supabase Edge Runtime
 (`gte-small`, 384-dim). Alles is additief; zonder embeddings valt de app netjes
@@ -89,68 +96,87 @@ $$;
 
 ### 1b — semantische link-RPC's
 
-```sql
-create or replace function public.note_neighbors(
-  source uuid,
-  match_count int default 8
-)
-returns table (id uuid, ai_title text, content text, similarity float)
-language sql stable as $$
-  with src as (
-    select embedding
-    from public.notes
-    where id = source and user_id = auth.uid() and embedding is not null
-  )
-  select n.id, n.ai_title, n.content,
-         1 - (n.embedding <=> (select embedding from src)) as similarity
-  from public.notes n
-  where n.user_id = auth.uid()
-    and n.embedding is not null
-    and n.id <> source
-    and exists (select 1 from src)
-    and not exists (
-      select 1 from public.note_links l
-      where (l.source_id = source and l.target_id = n.id)
-         or (l.source_id = n.id and l.target_id = source)
-    )
-  order by n.embedding <=> (select embedding from src)
-  limit match_count
-$$;
+**Plak hier geen SQL uit een oudere versie van dit document.** Tot 2026-09 stond
+hier een `semantic_bridges` als O(n²) self-join: die liep op echte accounts in een
+timeout, draaide zonder `security definer` en zonder vaste `search_path`, en wie
+hem plakt draait de fix terug. De huidige definities staan alleen in de migraties,
+in deze volgorde:
 
-create or replace function public.semantic_bridges(
-  band_lo float default 0.55,
-  band_hi float default 0.82,
-  max_pairs int default 20
-)
-returns table (a_id uuid, b_id uuid, similarity float)
-language sql stable as $$
-  select a.id as a_id, b.id as b_id,
-         1 - (a.embedding <=> b.embedding) as similarity
-  from public.notes a
-  join public.notes b
-    on a.user_id = auth.uid()
-   and b.user_id = auth.uid()
-   and a.id < b.id
-   and a.embedding is not null
-   and b.embedding is not null
-   and (1 - (a.embedding <=> b.embedding)) between band_lo and band_hi
-  where not exists (
-      select 1 from public.note_links l
-      where (l.source_id = a.id and l.target_id = b.id)
-         or (l.source_id = b.id and l.target_id = a.id))
-    and not exists (
-      select 1 from public.note_themes ta
-      join public.note_themes tb on ta.theme_id = tb.theme_id
-      where ta.note_id = a.id and tb.note_id = b.id)
-  order by (1 - (a.embedding <=> b.embedding)) desc
-  limit max_pairs
-$$;
-```
+| Migratie | Wat |
+|---|---|
+| `20260626121751_semantic_links.sql` | eerste `note_neighbors` / `semantic_bridges` (vervangen, zie hieronder) |
+| `20260626165956_semantic_bridges_searchpath_fix.sql` | `semantic_bridges` als LATERAL-KNN, `search_path = public, extensions` |
+| `20260702053420_foundations.sql` | `note_neighbors` / `match_notes` als `security definer`, `ivfflat.probes` |
+| `20260720184137_security_hardening.sql` | `execute` ingetrokken voor `anon` |
+| `20260927100200_semantic_bridges_skip_dismissed.sql` | afgewezen paren in SQL uitgesloten (#56) |
 
-> **Band ijken voor gte-small:** de defaults `0.55–0.82` waren voor een ander model.
-> gte-small geeft vaak hogere baseline-similariteit; als de voorgestelde bruggen te
-> "obvious" zijn, verhoog de band (bv. `0.70–0.92`). Te ver-gezocht? Verlaag hem.
-> Je kunt dit los testen: `select * from public.semantic_bridges(0.70, 0.92, 10);`
+Deployen gaat via `docs/DEPLOY_BACKEND.md` (automatisch, of met de CLI). Zonder CLI:
+plak de migraties in bestandsvolgorde; ze zijn idempotent.
+
+### Band ijken voor gte-small (#36)
+
+De drempels staan op één plek in de app, `src/lib/semantic.ts`
+(`BRIDGE_MIN_SIMILARITY` 0.55, `STRONG_SIMILARITY` 0.72,
+`NEAR_DUPLICATE_SIMILARITY` 0.85, `BRIDGE_MAX_SIMILARITY` 0.82), met de twee
+reviewbanden als `BRIDGE_BANDS`: **Verrassend** 0.55–0.72 en **Dichtbij**
+0.72–0.85. De SQL-defaults van `semantic_bridges` (`band_lo` 0.55, `band_hi` 0.82)
+spiegelen `BRIDGE_MIN`/`BRIDGE_MAX`; `tests/semantic.test.ts` faalt als ze uit
+elkaar lopen of als de banden een gat laten.
+
+Die waarden zijn nog **niet** geijkt op gte-small: ze komen van een eerder model, en
+gte-small geeft doorgaans een hogere baseline-similariteit, dus "verrassend" kan te
+voor de hand liggend uitvallen. IJken is een oordeel over echte notities, niet iets
+om uit te rekenen. Zo doe je het:
+
+1. **Verdeling bekijken.** `semantic_bridges` gebruikt `auth.uid()`, dat in de SQL
+   Editor leeg is; zet het binnen een transactie:
+
+   ```sql
+   begin;
+   select set_config('request.jwt.claim.sub', '<jouw user-uuid>', true);
+   -- Hoe zijn de similariteiten van naaste buren verdeeld?
+   select width_bucket(1 - (a.embedding <=> b.embedding), 0.40, 1.00, 12) as bucket,
+          round(min(1 - (a.embedding <=> b.embedding))::numeric, 2) as van,
+          count(*) as paren
+   from public.notes a join public.notes b on a.id < b.id
+   where a.user_id = auth.uid() and b.user_id = auth.uid()
+     and a.embedding is not null and b.embedding is not null
+   group by 1 order by 1;
+   rollback;
+   ```
+
+2. **Paren lezen per kandidaat-band** — bv. 0.55–0.72 (huidig), 0.62–0.78,
+   0.68–0.82, 0.72–0.85 (huidig Dichtbij), 0.78–0.90. Per band ~20 paren:
+
+   ```sql
+   begin;
+   select set_config('request.jwt.claim.sub', '<jouw user-uuid>', true);
+   select round(b.similarity::numeric, 3) as sim,
+          coalesce(na.ai_title, left(na.content, 60)) as a,
+          coalesce(nb.ai_title, left(nb.content, 60)) as b
+   from public.semantic_bridges(0.62, 0.78, 20) b
+   join public.notes na on na.id = b.a_id
+   join public.notes nb on nb.id = b.b_id;
+   rollback;
+   ```
+
+   Oordeel per paar: *niet voor de hand liggend maar wel echt verwant* (goed),
+   *overduidelijk* (band te hoog), *vergezocht* (band te laag).
+
+3. **Let op de KNN-grens.** De functie kijkt per notitie alleen naar de 25
+   dichtstbijzijnde buren. Een band die onder die buren ligt geeft weinig of niets
+   terug, ook al bestaan zulke paren wel; een lege band betekent dus niet vanzelf
+   "te streng".
+
+4. **Vastleggen.** Pas de constanten in `src/lib/semantic.ts` aan, en — als
+   `BRIDGE_MIN`/`BRIDGE_MAX` veranderen — de defaults in een nieuwe migratie met
+   `create or replace` (zelfde signatuur, `security definer`,
+   `search_path = public, extensions`, en de `revoke … from anon` opnieuw). Schrijf
+   de gekozen waarden en waarom hier op. `MATCH_MIN_SIMILARITY` (0.45, zoeken op
+   betekenis) beantwoordt een andere vraag; ijk die apart.
+
+Afgewezen paren (`connection_dismissals`) hoeven na een nieuwe band niet opgeruimd
+te worden: een afwijzing buiten de nieuwe band komt simpelweg nooit meer boven.
 
 ---
 
@@ -579,8 +605,12 @@ from public.notes;
 select * from public.note_neighbors(
   (select id from public.notes where embedding is not null limit 1), 5);
 
--- Niet-voor-de-hand-liggende bruggen (band evt. ijken, zie 1b)
+-- Niet-voor-de-hand-liggende bruggen (band ijken: zie 1b). Heeft auth.uid()
+-- nodig, dus binnen een transactie met de jwt-claim gezet, zoals in 1b.
+begin;
+select set_config('request.jwt.claim.sub', '<jouw user-uuid>', true);
 select * from public.semantic_bridges(0.55, 0.82, 10);
+rollback;
 
 -- Embedding-activiteit deze maand (kosten $0 — lokaal model)
 select operation, count(*), round(sum(cost_usd)::numeric, 4) as usd

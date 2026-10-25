@@ -1,7 +1,7 @@
 -- Fix: "Verbindingen voorstellen" (semantic_bridges RPC) returned HTTP 500.
 --
 -- Background / drift: the semantic_bridges function defined in
--- 20260626_semantic_links.sql was an O(n²) self-join that timed out on real
+-- 20260626121751_semantic_links.sql was an O(n²) self-join that timed out on real
 -- accounts, so it was rewritten directly in the database into the optimized
 -- LATERAL KNN form below — but that rewrite was never committed, and it pinned
 -- `search_path = public`. The pgvector cosine-distance operator `<=>` lives in
@@ -15,7 +15,7 @@
 -- explicit search_path is also kept (rather than dropped) so this SECURITY
 -- DEFINER function does not trip the "function with a role mutable search_path"
 -- security advisor. It supersedes the semantic_bridges definition in
--- 20260626_semantic_links.sql.
+-- 20260626121751_semantic_links.sql.
 --
 -- "Non-obvious bridges": pairs that are semantically close WITHIN A BAND
 -- (related, not near-duplicate), are NOT already linked, and share NO theme.

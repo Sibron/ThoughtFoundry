@@ -78,92 +78,157 @@ export interface ImportResult {
   chapters: number
 }
 
-export async function importFromJson(payload: ExportPayload): Promise<ImportResult> {
+/** The stages of an import, in the FK order they must run in. */
+export type ImportStage =
+  | 'themes' | 'sources' | 'projects' | 'notes' | 'note_themes'
+  | 'links' | 'note_projects' | 'chapters' | 'sections' | 'revisions'
+
+export interface ImportProgress { stage: ImportStage; done: number; total: number }
+
+type Row = Record<string, unknown>
+
+// Rows per request. 1000 keeps a request well inside PostgREST's limits; notes
+// carry their vector(384) embedding (~8 KB of JSON each), so they go in
+// smaller batches.
+const CHUNK = 1000
+const NOTE_CHUNK = 100
+
+/**
+ * Restores an export into the signed-in account.
+ *
+ * Each stage is one batched upsert per chunk rather than one request per row:
+ * a 209-note export used to take ~800 sequential round-trips. The stages run
+ * in FK order -- themes and sources before notes, projects before the
+ * note/project junction and chapters, chapters before sections before
+ * revisions -- and within a stage the rows are independent, so batching them
+ * changes nothing about what lands.
+ *
+ * Merging into an existing account is resolved in memory: the account's themes
+ * and sources are read once, and an incoming theme whose name (or source whose
+ * title) already exists is remapped onto it instead of duplicated.
+ *
+ * Error granularity: a chunk fails as a unit, so a failed chunk is retried one
+ * row at a time. The good rows still land and `errors` names each row that did
+ * not -- the same per-row messages the old importer produced, with the extra
+ * requests paid only when something is wrong.
+ *
+ * Counts are rows actually inserted. Upserts ignore duplicates, so a row that
+ * already exists (same id) is counted in `skipped`, and re-importing the same
+ * file reports nothing imported.
+ */
+export async function importFromJson(
+  payload: ExportPayload,
+  onProgress?: (p: ImportProgress) => void
+): Promise<ImportResult> {
   const { data: { user } } = await supabase.auth.getUser()
   const userId = user?.id
   if (!userId) throw new Error('Niet aangemeld')
 
   const result: ImportResult = { imported: 0, skipped: 0, errors: [], themes: 0, sources: 0, links: 0, projects: 0, chapters: 0 }
+  // Copies: the caller's payload is never mutated, so a failed import can be
+  // retried with the same object.
+  const rowsOf = (list: unknown[] | undefined): Row[] => ((list ?? []) as Row[]).map(r => ({ ...r }))
 
-  // ── Themes — upsert by name, track id remapping ───────────────────────────
+  /**
+   * Upserts `rows` into `table` in chunks, falling back to one row at a time
+   * for a chunk that fails. Returns how many rows were inserted and which rows
+   * failed outright.
+   */
+  async function write(
+    stage: ImportStage,
+    table: string,
+    rows: Row[],
+    onConflict: string,
+    describe: (row: Row) => string,
+    size = CHUNK
+  ): Promise<{ inserted: number; failed: Row[] }> {
+    const send = (batch: Row[]) => supabase
+      .from(table)
+      .upsert(batch, { onConflict, ignoreDuplicates: true, defaultToNull: false })
+      // Returns only the rows actually inserted -- an ignored duplicate is
+      // not in the response -- which is what makes the counts honest.
+      .select(onConflict.split(',')[0])
+    let inserted = 0
+    const failed: Row[] = []
+    onProgress?.({ stage, done: 0, total: rows.length })
+    for (let i = 0; i < rows.length; i += size) {
+      const chunk = rows.slice(i, i + size)
+      const { data, error } = await send(chunk)
+      if (!error) {
+        inserted += (data ?? []).length
+      } else {
+        for (const row of chunk) {
+          const one = await send([row])
+          if (one.error) {
+            failed.push(row)
+            result.errors.push(`${describe(row)}: ${one.error.message}`)
+          } else {
+            inserted += (one.data ?? []).length
+          }
+        }
+      }
+      onProgress?.({ stage, done: Math.min(i + size, rows.length), total: rows.length })
+    }
+    return { inserted, failed }
+  }
+
+  // ── Themes — merge by name, track id remapping ────────────────────────────
+  const existingThemes = await fetchAllRows<{ id: string; name: string }>((from, to) =>
+    supabase.from('themes').select('id, name').eq('user_id', userId).order('id', { ascending: true }).range(from, to))
+  const themeByName = new Map(existingThemes.map(t => [t.name, t.id]))
   const themeIdRemap = new Map<string, string>()
-
-  for (const raw of (payload.themes ?? []) as Record<string, unknown>[]) {
+  const newThemes: Row[] = []
+  for (const raw of rowsOf(payload.themes)) {
     const name = String(raw['name'] ?? '').trim()
     const jsonId = String(raw['id'] ?? '')
     if (!name || !jsonId) continue
-
-    // Check if a theme with this name already exists for this user
-    const { data: existing } = await supabase
-      .from('themes')
-      .select('id')
-      .eq('user_id', userId)
-      .eq('name', name)
-      .maybeSingle()
-
-    if (existing) {
-      themeIdRemap.set(jsonId, existing.id)
-    } else {
-      const { data: inserted, error } = await supabase
-        .from('themes')
-        .insert({ ...raw, user_id: userId, id: jsonId })
-        .select('id')
-        .single()
-      if (error) {
-        result.errors.push(`theme "${name}": ${error.message}`)
-      } else {
-        themeIdRemap.set(jsonId, inserted.id)
-        result.themes++
-      }
-    }
+    const known = themeByName.get(name)
+    if (known) { themeIdRemap.set(jsonId, known); continue }
+    // A second theme with this name later in the same file merges into this one.
+    themeByName.set(name, jsonId)
+    themeIdRemap.set(jsonId, jsonId)
+    newThemes.push({ ...raw, user_id: userId, id: jsonId })
   }
+  // A parent merged onto an existing theme has a different id here. FKs are
+  // checked at the end of each statement, so a child listed before its parent
+  // in the same chunk is fine.
+  for (const t of newThemes) {
+    if (t['parent_id']) t['parent_id'] = themeIdRemap.get(String(t['parent_id'])) ?? t['parent_id']
+  }
+  result.themes = (await write('themes', 'themes', newThemes, 'id',
+    t => `theme "${String(t['name'])}"`)).inserted
 
-  // ── Sources (persons / references) — before notes: notes.source_id FK ─────
+  // ── Sources — before notes (notes.source_id FK); merge by title ───────────
+  const existingSources = await fetchAllRows<{ id: string; title: string }>((from, to) =>
+    supabase.from('sources').select('id, title').eq('user_id', userId).order('id', { ascending: true }).range(from, to))
+  const existingSourceIds = new Set(existingSources.map(s => s.id))
+  const sourceByTitle = new Map<string, string>()
+  for (const s of existingSources) if (!sourceByTitle.has(s.title)) sourceByTitle.set(s.title, s.id)
   const sourceIdRemap = new Map<string, string>()
-
-  for (const raw of (payload.sources ?? []) as Record<string, unknown>[]) {
+  const newSources: Row[] = []
+  for (const raw of rowsOf(payload.sources)) {
     const title = String(raw['title'] ?? '').trim()
     const jsonId = String(raw['id'] ?? '')
     if (!title || !jsonId) continue
-
-    // Merge on title: a source with the same title already exists for this user
-    const { data: existing } = await supabase
-      .from('sources')
-      .select('id')
-      .eq('user_id', userId)
-      .eq('title', title)
-      .maybeSingle()
-
-    if (existing) {
-      sourceIdRemap.set(jsonId, existing.id)
-    } else {
-      const { data: inserted, error } = await supabase
-        .from('sources')
-        .insert({ ...raw, user_id: userId })
-        .select('id')
-        .single()
-      if (error) {
-        result.errors.push(`source "${title}": ${error.message}`)
-      } else {
-        sourceIdRemap.set(jsonId, inserted.id)
-        result.sources++
-      }
-    }
+    const known = sourceByTitle.get(title)
+    if (known) { sourceIdRemap.set(jsonId, known); continue }
+    sourceByTitle.set(title, jsonId)
+    sourceIdRemap.set(jsonId, jsonId)
+    newSources.push({ ...raw, user_id: userId })
   }
+  const sources = await write('sources', 'sources', newSources, 'id', s => `source "${String(s['title'])}"`)
+  result.sources = sources.inserted
+  // A source that failed to land must not be pointed at by a note.
+  for (const s of sources.failed) sourceIdRemap.delete(String(s['id']))
 
-  // ── Book projects — before notes' junction table and chapters.project_id ──
-  for (const raw of (payload.book_projects ?? []) as Record<string, unknown>[]) {
-    if (!raw['id']) continue
-    const { error } = await supabase
-      .from('book_projects')
-      .upsert({ ...raw, user_id: userId }, { onConflict: 'id', ignoreDuplicates: true })
-    if (error) result.errors.push(`project "${String(raw['title'] ?? raw['id'])}": ${error.message}`)
-    else result.projects++
-  }
+  // ── Book projects — before the note/project junction and chapters ─────────
+  const projects = rowsOf(payload.book_projects).filter(r => r['id']).map(r => ({ ...r, user_id: userId }))
+  result.projects = (await write('projects', 'book_projects', projects, 'id',
+    r => `project "${String(r['title'] ?? r['id'])}"`)).inserted
 
   // ── Notes ─────────────────────────────────────────────────────────────────
-  const notes = (payload.notes ?? []) as Record<string, unknown>[]
-  for (const note of notes) {
+  const notes: Row[] = []
+  for (const note of rowsOf(payload.notes)) {
     if (!note['id'] || !note['content']) { result.skipped++; continue }
 
     // Retired columns from v1/v2 exports (model simplification) — strip so the
@@ -175,72 +240,43 @@ export async function importFromJson(payload: ExportPayload): Promise<ImportResu
     // never contained sources) must not reject the whole note.
     const sourceId = note['source_id'] ? String(note['source_id']) : null
     if (sourceId) {
-      const mapped = sourceIdRemap.get(sourceId)
-      if (mapped) {
-        note['source_id'] = mapped
-      } else {
-        const { data: srcExists } = await supabase
-          .from('sources').select('id').eq('id', sourceId).eq('user_id', userId).maybeSingle()
-        if (!srcExists) {
-          note['source_id'] = null
-          result.errors.push(`notitie ${String(note['id'])}: bronkoppeling verwijderd (bron ontbreekt in export)`)
-        }
-      }
+      const mapped = sourceIdRemap.get(sourceId) ?? (existingSourceIds.has(sourceId) ? sourceId : null)
+      note['source_id'] = mapped
+      if (!mapped) result.errors.push(`notitie ${String(note['id'])}: bronkoppeling verwijderd (bron ontbreekt in export)`)
     }
-
-    const { error } = await supabase
-      .from('notes')
-      .upsert({ ...note, user_id: userId }, { onConflict: 'id', ignoreDuplicates: true })
-    if (error) {
-      result.errors.push(String(note['id']) + ': ' + error.message)
-    } else {
-      result.imported++
-    }
+    notes.push({ ...note, user_id: userId })
   }
+  const writtenNotes = await write('notes', 'notes', notes, 'id', n => String(n['id']), NOTE_CHUNK)
+  result.imported = writtenNotes.inserted
+  result.skipped += notes.length - writtenNotes.inserted - writtenNotes.failed.length
 
-  // ── note_themes — remap theme IDs where name-collision renamed the theme ──
-  for (const raw of (payload.note_themes ?? []) as Record<string, unknown>[]) {
-    const noteId = String(raw['note_id'] ?? '')
-    const jsonThemeId = String(raw['theme_id'] ?? '')
-    if (!noteId || !jsonThemeId) continue
-
-    const actualThemeId = themeIdRemap.get(jsonThemeId) ?? jsonThemeId
-    const { error } = await supabase
-      .from('note_themes')
-      .upsert({ note_id: noteId, theme_id: actualThemeId, user_id: userId }, { onConflict: 'note_id,theme_id', ignoreDuplicates: true })
-    if (error) result.errors.push(`note_theme ${noteId}→${actualThemeId}: ${error.message}`)
-  }
+  // ── note_themes — remap theme ids where a name collision merged the theme ─
+  const noteThemes = rowsOf(payload.note_themes)
+    .filter(r => r['note_id'] && r['theme_id'])
+    .map(r => ({
+      note_id: String(r['note_id']),
+      theme_id: themeIdRemap.get(String(r['theme_id'])) ?? String(r['theme_id']),
+      user_id: userId,
+    }))
+  await write('note_themes', 'note_themes', noteThemes, 'note_id,theme_id',
+    r => `note_theme ${String(r['note_id'])}→${String(r['theme_id'])}`)
 
   // ── note_links ────────────────────────────────────────────────────────────
-  for (const raw of (payload.note_links ?? []) as Record<string, unknown>[]) {
-    if (!raw['source_id'] || !raw['target_id']) continue
-    const { error } = await supabase
-      .from('note_links')
-      .upsert({ ...raw, user_id: userId }, { onConflict: 'source_id,target_id', ignoreDuplicates: true })
-    if (error) result.errors.push(`link: ${error.message}`)
-    else result.links++
-  }
+  // The "link" prefix is what settings.ts counts to summarise link failures.
+  const links = rowsOf(payload.note_links).filter(r => r['source_id'] && r['target_id']).map(r => ({ ...r, user_id: userId }))
+  result.links = (await write('links', 'note_links', links, 'source_id,target_id', () => 'link')).inserted
 
   // ── note_book_projects (junction) ─────────────────────────────────────────
-  for (const raw of (payload.note_book_projects ?? []) as Record<string, unknown>[]) {
-    if (!raw['note_id'] || !raw['project_id']) continue
-    const { error } = await supabase
-      .from('note_book_projects')
-      .upsert({ ...raw, user_id: userId }, { onConflict: 'note_id,project_id', ignoreDuplicates: true })
-    if (error) result.errors.push(`note_project: ${error.message}`)
-  }
+  const noteProjects = rowsOf(payload.note_book_projects).filter(r => r['note_id'] && r['project_id']).map(r => ({ ...r, user_id: userId }))
+  await write('note_projects', 'note_book_projects', noteProjects, 'note_id,project_id', () => 'note_project')
 
   // ── Chapters → sections → revisions (FK order) ────────────────────────────
-  for (const raw of (payload.chapters ?? []) as Record<string, unknown>[]) {
-    if (!raw['id']) continue
-    const themeId = raw['theme_id'] ? String(raw['theme_id']) : null
-    if (themeId) raw['theme_id'] = themeIdRemap.get(themeId) ?? themeId
-    const { error } = await supabase
-      .from('chapters')
-      .upsert({ ...raw, user_id: userId }, { onConflict: 'id', ignoreDuplicates: true })
-    if (error) result.errors.push(`hoofdstuk "${String(raw['title'] ?? raw['id'])}": ${error.message}`)
-    else result.chapters++
-  }
+  const chapters = rowsOf(payload.chapters).filter(r => r['id']).map(r => {
+    const themeId = r['theme_id'] ? String(r['theme_id']) : null
+    return { ...r, ...(themeId ? { theme_id: themeIdRemap.get(themeId) ?? themeId } : {}), user_id: userId }
+  })
+  result.chapters = (await write('chapters', 'chapters', chapters, 'id',
+    r => `hoofdstuk "${String(r['title'] ?? r['id'])}"`)).inserted
 
   // 'books' from v1/v2 exports is skipped: boekenbundels zijn opgegaan in
   // projecten en de tabel bestaat niet meer.
@@ -248,21 +284,11 @@ export async function importFromJson(payload: ExportPayload): Promise<ImportResu
     result.errors.push(`${(payload.books ?? []).length} boek(en) overgeslagen (boeken zijn opgegaan in projecten)`)
   }
 
-  for (const raw of (payload.chapter_sections ?? []) as Record<string, unknown>[]) {
-    if (!raw['id']) continue
-    const { error } = await supabase
-      .from('chapter_sections')
-      .upsert({ ...raw, user_id: userId }, { onConflict: 'id', ignoreDuplicates: true })
-    if (error) result.errors.push(`sectie: ${error.message}`)
-  }
+  const sections = rowsOf(payload.chapter_sections).filter(r => r['id']).map(r => ({ ...r, user_id: userId }))
+  await write('sections', 'chapter_sections', sections, 'id', () => 'sectie')
 
-  for (const raw of (payload.chapter_section_revisions ?? []) as Record<string, unknown>[]) {
-    if (!raw['id']) continue
-    const { error } = await supabase
-      .from('chapter_section_revisions')
-      .upsert({ ...raw, user_id: userId }, { onConflict: 'id', ignoreDuplicates: true })
-    if (error) result.errors.push(`revisie: ${error.message}`)
-  }
+  const revisions = rowsOf(payload.chapter_section_revisions).filter(r => r['id']).map(r => ({ ...r, user_id: userId }))
+  await write('revisions', 'chapter_section_revisions', revisions, 'id', () => 'revisie')
 
   // ai_usage and user_settings are exported for completeness (cost history,
   // preferences) but deliberately not imported: usage history belongs to the

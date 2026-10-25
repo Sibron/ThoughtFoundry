@@ -25,7 +25,7 @@
 
 import { AiBudgetError, type AIUsage } from './ai'
 import { getCostStatus } from './cost'
-import { getAiQuality } from './nav'
+import { getAiQuality } from './ai-prefs'
 import { startAiThinking } from './ai-thinking'
 import { showToast, errMsg } from './crud-list'
 

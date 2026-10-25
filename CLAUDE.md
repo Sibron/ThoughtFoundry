@@ -65,15 +65,16 @@ writes nothing. The note changes only when the user accepts it.
   product: capture has to work from a phone, via the PWA share target.
 - **Postgres, not SQLite**, and the database is remote. There is no `data/` folder and no
   local source of truth; the IndexedDB cache is a cache.
-- **Migrations are dated (`YYYYMMDD_slug.sql`), not numbered**, and are applied by hand
-  against the project -- there is no runner and no `user_version` equivalent. The Python
-  projects apply theirs automatically at startup. Same discipline, different mechanism.
+- **Migrations are timestamped (`YYYYMMDDHHMMSS_slug.sql`), not numbered**, and are applied
+  by the Supabase CLI from CI (`deploy-backend.yml`), which records them in the project's
+  history table -- there is no `user_version` equivalent. The Python projects apply
+  theirs automatically at startup. Same discipline, different mechanism.
 - **Rendering is client-side string templates**, not server-rendered Jinja. A page is
   `render*(app: HTMLElement)`, which replaces `app.innerHTML` and re-attaches listeners.
-- **Tests are thin, not absent.** Vitest covers the pure modules only; everything that
-  touches Supabase, IndexedDB or the DOM is still verified by hand. Where the other
-  projects say "tests are part of the feature", here that holds for `lib/` logic and not
-  yet for a page. See "Testing" below.
+- **Tests are thin, not absent.** Vitest covers `lib/` logic, with Supabase and IndexedDB
+  faked in memory; everything that touches the DOM is still verified by hand. Where the
+  other projects say "tests are part of the feature", here that holds for `lib/` logic and
+  not yet for a page. See "Testing" below.
 - **AI runs server-side in Deno**, not in the app process, so it can hold the key and
   enforce the budget. `_shared/anthropic.ts` calls the REST API with `fetch` rather than
   the SDK, to keep the cold start small.
@@ -88,16 +89,23 @@ Supabase Postgres. Core tables: `notes` (with a `vector(384)` embedding), `theme
 
 Migration rules, all already followed by the existing files:
 
-- One dated file per change, `supabase/migrations/YYYYMMDD_slug.sql`.
+- One timestamped file per change, `supabase/migrations/YYYYMMDDHHMMSS_slug.sql` -- the
+  shape `supabase migration new` produces. The Supabase CLI treats the digits as the
+  version, so they must be unique and must sort in apply order. They were plain
+  `YYYYMMDD` until 2026-09, when three dates carried two or three files each and a fix
+  sorted before the migration it fixed.
 - **Idempotent**: `if not exists`, `drop policy if exists` before create, `do $$` guards
-  around anything that depends on a column existing. Files are re-run by hand and must
-  survive it.
-- A `--` header saying *why*. `20260718_simplify_model.sql` is the model: it drops columns
-  and collapses link types, and the header argues the case.
-- Applied manually -- see `docs/DEPLOY_*.md`. Automating this is issue #32.
-- `20260720_security_hardening.sql` revokes `execute` on `SECURITY DEFINER` functions from
-  `anon`. A new such function must do the same, or it bypasses RLS for anyone with the
-  public key.
+  around anything that depends on a column existing. Files may be re-run by hand and must
+  survive it; `backend-checks.yml` applies the whole directory twice on every PR to hold
+  that, and builds it from an empty database first.
+- A `--` header saying *why*. `20260718220604_simplify_model.sql` is the model: it drops
+  columns and collapses link types, and the header argues the case.
+- Deployed by `.github/workflows/deploy-backend.yml` on a push to `main` that touches
+  `supabase/`: functions first, then `supabase db push`. See `docs/DEPLOY_BACKEND.md`,
+  which also holds the one-time history reconciliation the workflow waits on.
+- `20260720184137_security_hardening.sql` revokes `execute` on `SECURITY DEFINER` functions
+  from `anon`. A new such function must do the same, or it bypasses RLS for anyone with
+  the public key.
 
 Client state: module-level closures per page, `localStorage` for preferences, IndexedDB for
 the snapshot cache (`cache.ts`, stale-while-revalidate) and the offline write queue. There
@@ -152,24 +160,32 @@ removed: it is a whole browser for one key-value store, and jsdom 30 requires No
 while `ci.yml` pins Node 20, so it passed locally and failed in CI. Keep it that way; a test
 needing a real DOM is a signal to reach for a stub, or to argue the case explicitly.
 
-Covered today -- the pure modules, no Supabase and no network:
+Covered today -- no network and no Supabase project:
 `lib/similarity.ts`, `lib/markdown.ts` (escaping first: it writes into `innerHTML` and
 renders text `analyze-source` fetched from arbitrary sites), `lib/manuscript.ts`,
 `lib/cost.ts` (cap thresholds, via a mocked client), `fetchAllRows` + `isUuid` in
-`lib/supabase.ts`, `lib/sections.ts`, and `functions/_shared/anthropic.ts`.
+`lib/supabase.ts`, `lib/sections.ts`, `functions/_shared/anthropic.ts`, the export ->
+import round-trip in `lib/exporter.ts`, and the offline queue in `lib/notes.ts`.
+
+**Anything that talks to PostgREST is tested against `tests/helpers/fake-supabase.ts`**, an
+in-memory fake that models primary keys, unique constraints, `ON CONFLICT DO NOTHING`,
+statement-level foreign keys, unknown columns, RLS-by-`user_id` and the 1000-row read cap
+-- and nothing else. Extend it when a test needs more; do not fake a query inline.
+`tests/exporter.test.ts` shows the `vi.mock` that swaps it in while keeping the real
+`fetchAllRows`. IndexedDB comes from `fake-indexeddb` (dev-only), imported by the one
+suite that needs it rather than globally.
 
 **Still uncovered, and the honest list of where a regression can still land silently:**
-- `lib/exporter.ts` -- the v1/v2/v3 payload migrations and the theme/source id remapping.
-  The most valuable next suite; needs a fake PostgREST or a Supabase branch.
-- The offline IndexedDB queue in `lib/notes.ts` -- the `node` environment has no IndexedDB;
-  `fake-indexeddb` in `tests/setup.ts` would be the smallest way in.
 - Every rendering path. There are no DOM tests at all.
+- SQL behaviour: RPCs and RLS policies are only exercised against the live project. CI
+  proves every migration *applies* (twice) on an empty Postgres, not that a function
+  returns the right rows; the fake models constraints, not Postgres.
 
-`tsconfig.json` now includes `tests` as well as `src`, so anything a test imports gets
-typechecked -- which is how `functions/_shared/anthropic.ts` is covered. The rest of
-`supabase/functions/` is still not typechecked by `npm run build`; an edge function can
-break without the build noticing. Importing a module from a test is currently the only way
-to pull it into `tsc`.
+`tsconfig.json` includes `tests` as well as `src`, so anything a test imports gets
+typechecked -- which is how `functions/_shared/anthropic.ts` gets its unit tests. The edge
+functions as a whole are typechecked by `deno check` in `backend-checks.yml`, not by
+`npm run build`; run `npx deno@2 check supabase/functions/*/index.ts` locally after
+touching one.
 
 When a bug is fixed, add the test that fails against the old code first, and say in the
 commit that you checked it fails. `tests/manuscript.test.ts` is the worked example.
@@ -210,10 +226,13 @@ npm run build           # tsc typecheck + bundle
 ```
 
 `npm test` and `npm run build` are both gates -- `ci.yml` runs them in that order on every
-pull request. See "Testing" above for what they do and do not cover.
+pull request. `backend-checks.yml` runs alongside: `deno check` over the edge functions,
+and the migration directory rebuilt from scratch and re-applied. See "Testing" above for
+what they do and do not cover.
 
 Credentials are read from `localStorage` first and the build-time env second, so a deployed
 build can be pointed at another project from the Settings page without rebuilding.
 
 Frontend deploys to GitHub Pages on every push to `main` (`deploy.yml`). The backend --
-migrations and edge functions -- is deployed by hand; see `docs/DEPLOY_*.md`.
+edge functions, then migrations -- deploys from `deploy-backend.yml` on a push to `main`
+that touches `supabase/`, once its secrets are set; see `docs/DEPLOY_BACKEND.md`.

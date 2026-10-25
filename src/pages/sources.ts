@@ -1,7 +1,7 @@
 import { createSource, updateSource, deleteSource, SOURCE_TYPES, SOURCE_TYPE_ORDER, type Source, type SourceInsert, type SourceType } from '../lib/sources'
 import { type Note } from '../lib/notes'
 import { loadSourcesSnapshot } from '../lib/snapshots'
-import { createCrudList, injectCrudStyles, showToast, showUndoToast, esc, errMsg, type CrudListConfig } from '../lib/crud-list'
+import { createCrudList, injectCrudStyles, showToast, showDeferredCommitToast, esc, errMsg, type CrudListConfig } from '../lib/crud-list'
 
 type SourceForm = SourceInsert & { type: SourceType }
 
@@ -153,11 +153,8 @@ function mount(body: HTMLDivElement, sources: Source[], allNotes: Note[]): void 
         // Soft-delete: back to the list now, API delete after the undo window.
         // Gekoppelde notities verliezen alleen de koppeling.
         ctx.remove(source.id)
-        showUndoToast(`Bron "${source.title}" verwijderd`,
-          async () => {
-            try { await deleteSource(source.id) }
-            catch { showToast('Verwijderen mislukt'); void reload() }
-          },
+        showDeferredCommitToast(`Bron "${source.title}" verwijderd`,
+          () => deleteSource(source.id),
           () => { void reload() })
       })
     }

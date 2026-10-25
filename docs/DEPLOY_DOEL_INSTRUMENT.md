@@ -1,5 +1,11 @@
 # Deploy: "doel-instrument" arc (M0–M12)
 
+> **Sinds #32 gaat de backend automatisch** (`.github/workflows/deploy-backend.yml`):
+> functions en migraties bij elke push naar `main` die `supabase/**` raakt. Zie
+> [`DEPLOY_BACKEND.md`](DEPLOY_BACKEND.md), ook voor de handmatige CLI-route. Deze
+> gids beschrijft hoe het ging vóór die automatisering en is historisch; SQL
+> hieronder kan verouderd zijn — de migraties zijn leidend.
+
 Wat er op het live Supabase-project moet landen na het mergen van deze branch.
 Volgorde: **eerst de migraties (in datumvolgorde), dan de edge functions.**
 
@@ -14,7 +20,7 @@ supabase functions deploy embed-text write-section \
 
 Zonder CLI: run elke migratie hieronder in de SQL Editor (dashboard) en
 plak/deploy de functies via Edge Functions → editor, zoals in
-`MANUAL_DEPLOY.md` beschreven. De functies importeren uit `_shared/` — bij
+`DEPLOY_SEMANTIC_LINKING.md` (stap 2) beschreven. De functies importeren uit `_shared/` — bij
 dashboard-deploys moet je die imports inlinen of de CLI gebruiken.
 
 ---
@@ -23,11 +29,11 @@ dashboard-deploys moet je die imports inlinen of de CLI gebruiken.
 
 | Bestand | Wat het doet |
 |---|---|
-| `20260702_foundations.sql` | user_settings delete-policy; GIN-index op tags; note_type/section indexes; ivfflat probes=10 voor `note_neighbors`/`match_notes` |
-| `20260703_vandaag.sql` | `book_projects.target_date`; `user_settings.review_weekday` |
-| `20260704_connection_dismissals.sql` | tabel `connection_dismissals` (+RLS) voor afgewezen verbindingsvoorstellen |
-| `20260705_writing_studio.sql` | tabellen `chapter_sections` + `chapter_section_revisions` (+RLS, trigger, indexes); `chapters.project_id`; backfill van bestaande outlines |
-| `20260706_project_manuscript.sql` | `book_projects.chapter_order` |
+| `20260702053420_foundations.sql` | user_settings delete-policy; GIN-index op tags; note_type/section indexes; ivfflat probes=10 voor `note_neighbors`/`match_notes` |
+| `20260703114838_vandaag.sql` | `book_projects.target_date`; `user_settings.review_weekday` |
+| `20260704115148_connection_dismissals.sql` | tabel `connection_dismissals` (+RLS) voor afgewezen verbindingsvoorstellen |
+| `20260705120421_writing_studio.sql` | tabellen `chapter_sections` + `chapter_section_revisions` (+RLS, trigger, indexes); `chapters.project_id`; backfill van bestaande outlines |
+| `20260706121229_project_manuscript.sql` | `book_projects.chapter_order` |
 
 Alle migraties zijn idempotent — nogmaals draaien is veilig.
 

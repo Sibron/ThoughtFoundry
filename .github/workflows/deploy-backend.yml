@@ -1,0 +1,74 @@
+name: Deploy backend (Supabase)
+
+# Edge functions and migrations, on every push to main that touches supabase/
+# (and on demand). The frontend has its own workflow, deploy.yml.
+#
+# Does nothing until three repository secrets exist: SUPABASE_ACCESS_TOKEN,
+# SUPABASE_PROJECT_REF and SUPABASE_DB_URL. Add them only after the live
+# project's migration history has been reconciled with supabase/migrations/
+# (docs/DEPLOY_BACKEND.md, "Eenmalig") -- before that, `db push` refuses to
+# run, or would try to apply migrations whose effects are already live.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'supabase/**'
+      - '.github/workflows/deploy-backend.yml'
+      - '.github/workflows/backend-checks.yml'
+      - '.github/scripts/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Never two deploys at once, and never cancel one halfway through a migration.
+concurrency:
+  group: supabase-deploy
+  cancel-in-progress: false
+
+jobs:
+  checks:
+    uses: ./.github/workflows/backend-checks.yml
+
+  deploy:
+    name: Deploy
+    needs: checks
+    runs-on: ubuntu-latest
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+      SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+    steps:
+      - name: Check the deploy is configured
+        id: gate
+        run: |
+          if [ -n "$SUPABASE_ACCESS_TOKEN" ] && [ -n "$SUPABASE_PROJECT_REF" ] && [ -n "$SUPABASE_DB_URL" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice title=Backend deploy skipped::Set SUPABASE_ACCESS_TOKEN, SUPABASE_PROJECT_REF and SUPABASE_DB_URL, after reconciling the migration history (docs/DEPLOY_BACKEND.md)."
+          fi
+
+      - name: Checkout
+        if: steps.gate.outputs.configured == 'true'
+        uses: actions/checkout@v4
+
+      - name: Setup Supabase CLI
+        if: steps.gate.outputs.configured == 'true'
+        uses: supabase/setup-cli@v1
+        with:
+          version: 2.118.0
+
+      # Functions before migrations: a migration that drops a column must not
+      # land while a deployed function still reads it. Without names, every
+      # directory under supabase/functions/ is deployed, so a new function
+      # needs no change here. --use-api bundles server-side, without Docker.
+      - name: Deploy edge functions
+        if: steps.gate.outputs.configured == 'true'
+        run: supabase functions deploy --project-ref "$SUPABASE_PROJECT_REF" --use-api
+
+      # Applies only migrations missing from the project's history table, in
+      # filename order, each in its own transaction.
+      - name: Apply migrations
+        if: steps.gate.outputs.configured == 'true'
+        run: supabase db push --db-url "$SUPABASE_DB_URL" --yes

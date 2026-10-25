@@ -26,8 +26,23 @@ export const isConfigured = Boolean(
 // Always create a client so module imports never throw; isConfigured gates usage.
 export const supabase = createClient(
   supabaseUrl     || 'https://placeholder.supabase.co',
-  supabaseAnonKey || 'placeholder'
+  supabaseAnonKey || 'placeholder',
+  { global: { fetch: keepaliveWhenHidden } }
 )
+
+/**
+ * A DELETE sent while the page is hidden goes out with `keepalive`, so it can
+ * outlive the page. That is how a deferred delete flushed as the tab closes
+ * (crud-list's showDeferredCommitToast) still reaches the server.
+ *
+ * Narrow on purpose: keepalive requests share a 64 KB body budget, so setting
+ * it on every request would break large writes such as an import; and while
+ * the page is visible nothing is going away, so the flag has no job to do.
+ */
+function keepaliveWhenHidden(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  const hidden = typeof document !== 'undefined' && document.visibilityState === 'hidden'
+  return fetch(input, hidden && init?.method === 'DELETE' ? { ...init, keepalive: true } : init)
+}
 
 /**
  * Fetch every row of a query, transparently paging past PostgREST's default

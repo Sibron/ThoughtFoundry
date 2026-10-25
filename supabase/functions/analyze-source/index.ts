@@ -43,6 +43,9 @@ interface SourceMeta {
   source_type: 'video' | 'article'
 }
 
+/** How the source text was obtained; the prompt tells the model what to expect of it. */
+type Retrieval = 'captions' | 'pasted' | 'html' | 'supadata'
+
 const VALID_SOURCE_TYPES = new Set(['book', 'article', 'paper', 'podcast', 'video', 'course', 'other'])
 
 // The AI sees at most this many chars of source content (~5k tokens on Haiku).
@@ -164,7 +167,7 @@ Deno.serve(async (req: Request) => {
     source_type: kind === 'youtube' ? 'video' : 'article'
   }
   let content = ''
-  let retrieval: 'captions' | 'pasted' | 'html' | 'supadata' = 'pasted'
+  let retrieval: Retrieval = 'pasted'
 
   if (kind === 'youtube' && url) {
     const videoId = extractYoutubeId(url)
@@ -179,7 +182,7 @@ Deno.serve(async (req: Request) => {
       // SUPADATA_API_KEY secret is set — reliable from datacenter IPs and even
       // transcribes caption-less videos via Whisper. 3) Manual paste.
       let transcript = videoId ? await fetchYoutubeTranscript(videoId) : null
-      let via: typeof retrieval = 'captions'
+      let via: Retrieval = 'captions'
       if (!transcript || transcript.length < 200) {
         const supa = await fetchSupadataTranscript(url.toString())
         if (supa && supa.length >= 200) { transcript = supa; via = 'supadata' }

@@ -103,19 +103,6 @@ export async function fetchNoteProjectIds(noteId: string): Promise<string[]> {
   return (data ?? []).map((r: { project_id: string }) => r.project_id)
 }
 
-export async function setNoteProjects(noteId: string, projectIds: string[]): Promise<void> {
-  const { data: userData } = await supabase.auth.getUser()
-  const userId = userData.user?.id
-  if (!userId) throw new Error('Niet aangemeld')
-
-  await supabase.from('note_book_projects').delete().eq('note_id', noteId)
-  if (projectIds.length === 0) return
-
-  const rows = projectIds.map(pid => ({ note_id: noteId, project_id: pid, user_id: userId }))
-  const { error } = await supabase.from('note_book_projects').insert(rows)
-  if (error) throw error
-}
-
 /** Bulk-attach notes to one project (skips rows that already exist). */
 export async function addNotesToProject(projectId: string, noteIds: string[]): Promise<void> {
   if (noteIds.length === 0) return

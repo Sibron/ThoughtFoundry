@@ -12,6 +12,7 @@
   },
   "devDependencies": {
     "csv-parse": "^5.6.0",
+    "fake-indexeddb": "^6.2.5",
     "tsx": "^4.22.4",
     "typescript": "~5.6.3",
     "vite": "^7.0.0",

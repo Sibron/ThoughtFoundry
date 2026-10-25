@@ -3,7 +3,7 @@ import {
   fetchNotes,
   fetchNotesByIds,
   getNoteTitle,
-  updateNote,
+  saveNote,
   deleteNote,
   type Note,
   type NoteStatus,
@@ -13,7 +13,6 @@ import {
   fetchThemes,
   fetchThemesForNote,
   fetchNoteIdsByThemes,
-  setThemesForNote,
   createTheme,
   type Theme
 } from '../lib/themes'
@@ -27,16 +26,17 @@ import {
   type NoteLink
 } from '../lib/links'
 import { fetchSources, type Source } from '../lib/sources'
-import { fetchProjects, fetchNoteProjectIds, setNoteProjects, type BookProject } from '../lib/projects'
+import { fetchProjects, fetchNoteProjectIds, type BookProject } from '../lib/projects'
 import { isUuid } from '../lib/supabase'
 import { openLinkModal } from '../lib/link-modal'
 import { rankBySimilarity } from '../lib/similarity'
 import { fetchNeighbors } from '../lib/semantic'
 import { processNote, AiBudgetError } from '../lib/ai'
 import { preferredModel } from '../lib/ai-action'
-import { renderTopbar, attachTopbar, isAiEnabled } from '../lib/nav'
+import { renderTopbar, attachTopbar } from '../lib/nav'
+import { isAiEnabled } from '../lib/ai-prefs'
 import { navigateTo, navigateBack, setLeaveGuard, onRouteLeave } from '../router'
-import { esc as escHtml, errMsg, formatDate, showToast, showUndoToast } from '../lib/crud-list'
+import { esc as escHtml, errMsg, formatDate, showToast, showDeferredCommitToast } from '../lib/crud-list'
 
 const STATUS_LABELS: Record<NoteStatus, string> = {
   inbox: 'Vangbak',
@@ -543,19 +543,33 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
     return Array.from(document.querySelectorAll<HTMLInputElement>('.project-check:checked')).map(c => c.value)
   }
 
-  async function save(extra?: Partial<NoteUpdate>): Promise<boolean> {
+  // Saves run one after another: Opslaan and "Markeer als verwerkt" each
+  // disable only their own button, so without this a second save could start
+  // while the first is in flight and the two would race.
+  let saving: Promise<unknown> = Promise.resolve()
+
+  function save(extra?: Partial<NoteUpdate>): Promise<boolean> {
+    const run = saving.then(() => saveNow(extra))
+    saving = run.catch(() => {})
+    return run
+  }
+
+  async function saveNow(extra?: Partial<NoteUpdate>): Promise<boolean> {
     const updates = { ...collectUpdate(), ...extra }
     if (!updates.content) { showToast('Uitwerking mag niet leeg zijn.'); return false }
     const themeIds = checkedThemeIds()
     const projectIds = checkedProjectIds()
+    // Taken now, not after the await: whatever the user types while the save
+    // is in flight is not saved, so it must still count as unsaved.
+    const snapshot = formSnapshot()
     try {
-      const saved = await updateNote(id, updates)
+      // One transaction: the note, its themes and its projects all land, or
+      // none do and the form stays dirty with an honest error.
+      const saved = await saveNote(id, updates, { themeIds, projectIds })
       Object.assign(current, saved)
-      await setThemesForNote(id, themeIds)
       noteThemeIds = themeIds
-      await setNoteProjects(id, projectIds)
       noteProjectIds = projectIds
-      cleanSnapshot = formSnapshot()
+      cleanSnapshot = snapshot
       return true
     } catch (err) {
       showToast(`Opslaan mislukt: ${errMsg(err)}`)
@@ -590,10 +604,13 @@ export async function renderNoteDetail(app: HTMLElement): Promise<void> {
       // runs after the undo window closes (undo restores the form in place).
       const body = document.querySelector('.note-body') as HTMLElement
       body.innerHTML = '<div class="note-loading">Notitie verwijderd…</div>'
-      showUndoToast('Notitie verwijderd',
+      const here = location.hash
+      showDeferredCommitToast('Notitie verwijderd',
         async () => {
-          try { await deleteNote(id); navigateBack('/inbox') }
-          catch (err) { showToast(`Verwijderen mislukt: ${errMsg(err)}`); renderForm() }
+          await deleteNote(id)
+          // The commit can land after the user has already left (the window
+          // is six seconds); only step back if they are still on this note.
+          if (location.hash === here) navigateBack('/inbox')
         },
         () => renderForm())
     })

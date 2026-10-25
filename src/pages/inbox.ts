@@ -10,7 +10,7 @@ import {
 import { renderTopbar, attachTopbar, renderGuidanceBanner } from '../lib/nav'
 import { navigateTo } from '../router'
 import { injectShellStyles } from '../lib/shell'
-import { esc as escHtml, errMsg, showToast, showUndoToast, formatRelative } from '../lib/crud-list'
+import { esc as escHtml, errMsg, showToast, showDeferredCommitToast, formatRelative } from '../lib/crud-list'
 
 export async function renderInbox(app: HTMLElement): Promise<void> {
   // Back-compat for pre-restructure deep-links (/inbox?view=…): graph and
@@ -260,10 +260,9 @@ export async function mountInboxList(root: HTMLElement): Promise<void> {
         renderList()
         updateBulkBar()
 
-        showUndoToast(`${ids.length} notitie${ids.length === 1 ? '' : "s"} verwijderd`,
-          async () => {
-            try { await bulkDelete(ids) } catch { showToast('Verwijderen mislukt.') }
-          },
+        // One DELETE ... WHERE id IN (...): the whole selection goes, or none of it.
+        showDeferredCommitToast(`${ids.length} notitie${ids.length === 1 ? '' : "s"} verwijderd`,
+          () => bulkDelete(ids),
           () => {
             allNotes = [...removed, ...allNotes].sort(
               (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
@@ -326,10 +325,8 @@ export async function mountInboxList(root: HTMLElement): Promise<void> {
         renderList()
         updateBulkBar()
 
-        showUndoToast('Notitie verwijderd',
-          async () => {
-            try { await deleteNote(id) } catch { showToast('Verwijderen mislukt.') }
-          },
+        showDeferredCommitToast('Notitie verwijderd',
+          () => deleteNote(id),
           () => {
             allNotes.splice(noteIdx, 0, note)
             renderList()

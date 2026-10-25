@@ -7,7 +7,7 @@ import {
 import { loadThemesSnapshot, type ThemesSnapshot } from '../lib/snapshots'
 import { renderGuidanceBanner } from '../lib/nav'
 import { navigateTo } from '../router'
-import { showToast, showUndoToast, esc as escHtml, errMsg } from '../lib/crud-list'
+import { showToast, showDeferredCommitToast, esc as escHtml, errMsg } from '../lib/crud-list'
 
 const COLOR_PALETTE = [
   '#4E8A5E', '#4E6E9A', '#C94A24', '#7E5E9E',
@@ -266,11 +266,8 @@ export async function mountThemes(root: HTMLElement): Promise<void> {
     const msg = noteCount > 0
       ? `Thema "${t?.name}" verwijderd — ${noteCount} notitie(s) raken hun koppeling kwijt`
       : `Thema "${t?.name}" verwijderd`
-    showUndoToast(msg,
-      async () => {
-        try { await deleteTheme(id) }
-        catch (err) { showToast(`Verwijderen mislukt: ${errMsg(err)}`) }
-      },
+    showDeferredCommitToast(msg,
+      () => deleteTheme(id),
       () => {
         if (t) themes = [...themes, t].sort((a, b) => a.name.localeCompare(b.name))
         if (removedCount != null) counts[id] = removedCount

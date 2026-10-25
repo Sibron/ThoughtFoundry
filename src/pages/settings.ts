@@ -1,21 +1,35 @@
 import { signOut } from '../lib/auth'
 import { supabase, clearSupabaseConfig } from '../lib/supabase'
 import { clearCache } from '../lib/cache'
-import { renderTopbar, attachTopbar, isAiEnabled, setAiEnabled, getAiQuality, setAiQuality, type AiQuality } from '../lib/nav'
+import { renderTopbar, attachTopbar } from '../lib/nav'
+import { isAiEnabled, setAiEnabled, getAiQuality, setAiQuality, type AiQuality } from '../lib/ai-prefs'
 import { navigateTo } from '../router'
 import { getMonthlyCap, setMonthlyCap, getCostStatus, formatUsd } from '../lib/cost'
 import { fetchRecentUsage, summarize, type UsageRow } from '../lib/usage'
-import { buildExport, downloadJson, importFromJson, type ExportPayload } from '../lib/exporter'
+import { buildExport, downloadJson, importFromJson, type ExportPayload, type ImportStage } from '../lib/exporter'
 import { getInstallPrompt, clearInstallPrompt } from '../lib/pwa'
 import { countByStatus, fetchNoteIdsNeedingReprocess } from '../lib/notes'
 import { reprocessNote, embedNotesBatch } from '../lib/ai'
 import { getPersona, setPersona, getDefaultPersona } from '../lib/persona'
-import { saveUserSetting, getReviewWeekday } from '../lib/user-settings'
+import { saveUserSetting, getReviewWeekday, resetSettingsCache } from '../lib/user-settings'
 
 const WEEKDAYS = ['Zondag', 'Maandag', 'Dinsdag', 'Woensdag', 'Donderdag', 'Vrijdag', 'Zaterdag']
 import { fetchThemes, updateTheme, type Theme } from '../lib/themes'
 import { getDensity, setDensity, getMotion, setMotion, getTheme, setTheme, getFocusMode, setFocusMode, type Theme as DisplayTheme } from '../lib/display'
 import { showToast, esc as escHtml, errMsg, formatRelative } from '../lib/crud-list'
+
+const IMPORT_STAGE_LABELS: Record<ImportStage, string> = {
+  themes: "thema's",
+  sources: 'bronnen',
+  projects: 'projecten',
+  notes: 'notities',
+  note_themes: 'themakoppelingen',
+  links: 'links',
+  note_projects: 'projectkoppelingen',
+  chapters: 'hoofdstukken',
+  sections: 'secties',
+  revisions: 'revisies',
+}
 
 export async function renderSettings(app: HTMLElement): Promise<void> {
   app.innerHTML = `
@@ -266,6 +280,8 @@ export async function renderSettings(app: HTMLElement): Promise<void> {
   `
 
   document.getElementById('settings-logout')?.addEventListener('click', async () => {
+    // Same sequence as the header's logout in nav.ts.
+    resetSettingsCache()
     await clearCache()
     await signOut()
     navigateTo('/login')
@@ -526,7 +542,10 @@ export async function renderSettings(app: HTMLElement): Promise<void> {
     btn.disabled = true
     btn.textContent = 'Importeren…'
     try {
-      const result = await importFromJson(pendingImport)
+      // A long import used to be a silent spinner; show which stage it is on.
+      const result = await importFromJson(pendingImport, ({ stage, done, total }) => {
+        if (total > 0) btn.textContent = `Importeren… ${IMPORT_STAGE_LABELS[stage]} ${done}/${total}`
+      })
       const parts = [`${result.imported} notitie${result.imported === 1 ? '' : "s"}`]
       if (result.themes) parts.push(`${result.themes} thema's`)
       if (result.sources) parts.push(`${result.sources} bronnen`)

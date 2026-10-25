@@ -3,6 +3,9 @@ import { supabase } from './supabase'
 interface UserSettingsRow {
   user_id: string
   ai_enabled: boolean
+  // 'fast' | 'better'. Nullable here because a row read before the
+  // 20260927 migration has no such column at all.
+  ai_quality: string | null
   ai_persona: string | null
   ai_monthly_cap_usd: number
   display_density: string
@@ -17,9 +20,19 @@ export type UserSettingsPatch = Partial<Omit<UserSettingsRow, 'user_id'>>
 // Singleton promise — settings are loaded once per session after login.
 let loadPromise: Promise<void> | null = null
 
-/** Call on logout so the next user gets a fresh load. */
+// Values that belong to the account rather than the device. A user who has
+// never saved a setting has no user_settings row, so hydration leaves
+// localStorage untouched -- and without this list the next person to log in
+// on the same browser would inherit the previous one's AI switch, model
+// quality, spend cap and persona. Display preferences are deliberately not
+// cleared: they are cosmetic, and keeping them stops the login screen from
+// flashing back to the default theme.
+const ACCOUNT_KEYS = ['ai_enabled', 'ai_quality', 'ai_persona', 'ai_monthly_cap_usd', 'review_weekday']
+
+/** Call on logout so the next user gets a fresh load and none of this one's settings. */
 export function resetSettingsCache(): void {
   loadPromise = null
+  for (const k of ACCOUNT_KEYS) localStorage.removeItem(k)
 }
 
 /**
@@ -43,6 +56,12 @@ async function _fetchAndApply(): Promise<void> {
 
   const row = data as UserSettingsRow
   localStorage.setItem('ai_enabled', row.ai_enabled ? 'true' : 'false')
+  // Only a recognised value is copied: never write "null" or junk, which
+  // getAiQuality would read as 'fast' anyway but which would then shadow a
+  // good local value.
+  if (row.ai_quality === 'fast' || row.ai_quality === 'better') {
+    localStorage.setItem('ai_quality', row.ai_quality)
+  }
   if (row.ai_persona != null) {
     localStorage.setItem('ai_persona', row.ai_persona)
   } else {

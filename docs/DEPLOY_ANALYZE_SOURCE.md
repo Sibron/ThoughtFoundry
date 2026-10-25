@@ -1,5 +1,11 @@
 # Deploy: bron analyseren (`analyze-source`)
 
+> **Sinds #32 gaat de backend automatisch** (`.github/workflows/deploy-backend.yml`):
+> functions en migraties bij elke push naar `main` die `supabase/**` raakt. Zie
+> [`DEPLOY_BACKEND.md`](DEPLOY_BACKEND.md), ook voor de handmatige CLI-route. Deze
+> gids beschrijft hoe het ging vóór die automatisering en is historisch; SQL
+> hieronder kan verouderd zijn — de migraties zijn leidend.
+
 Eén edge function. Geen migraties. Vereist de bestaande `ANTHROPIC_API_KEY`.
 De frontend (Capture → "Bron analyseren (AI)") werkt pas nadat deze functie
 live staat; tot die tijd geeft de knop een nette foutmelding.

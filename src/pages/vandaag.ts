@@ -12,7 +12,8 @@ import { fetchProjects, fetchProjectNoteIds, BOOK_STATUSES, type BookProject } f
 import { fetchChaptersByProject, fetchSectionStats, type ChapterSectionStats } from '../lib/chapters'
 import { fetchWeekStats, countCreatedThisWeek } from '../lib/weekstats'
 import { getReviewWeekday } from '../lib/user-settings'
-import { renderTopbar, attachTopbar, isAiEnabled } from '../lib/nav'
+import { renderTopbar, attachTopbar } from '../lib/nav'
+import { isAiEnabled } from '../lib/ai-prefs'
 import { esc } from '../lib/crud-list'
 import { navigateTo } from '../router'
 
